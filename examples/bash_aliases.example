@@ -2,6 +2,94 @@
 # ~/.bash_aliases
 # Tmux boot session management aliases
 
+# Smart window switcher - works from inside cc/claude
+# Usage: tm clev (matches cleverkeys), tm un (matches Unexpected-Keyboard)
+# If window doesn't exist but repo found in ~/git/, creates new window
+tm() {
+  local search="$1"
+
+  if [ -z "$search" ]; then
+    echo "Usage: tm <search>"
+    echo "Example: tm clev (matches cleverkeys)"
+    echo "         tm un   (matches Unexpected-Keyboard)"
+    return 1
+  fi
+
+  # Convert search to lowercase for matching
+  search=$(echo "$search" | tr '[:upper:]' '[:lower:]')
+
+  # Check if boot-session exists
+  if ! tmux has-session -t boot-session 2>/dev/null; then
+    echo "Error: boot-session doesn't exist. Run: tmbr"
+    return 1
+  fi
+
+  # Search for matching window (case-insensitive)
+  local window_list=$(tmux list-windows -t boot-session -F "#{window_index}:#{window_name}" 2>/dev/null)
+  local matched_window=""
+
+  while IFS=: read -r index name; do
+    # Convert window name to lowercase for comparison
+    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+    if [[ "$name_lower" == *"$search"* ]]; then
+      matched_window="$index"
+      echo "Found window: $name (window $index)"
+      break
+    fi
+  done <<< "$window_list"
+
+  # If window found, switch to it
+  if [ -n "$matched_window" ]; then
+    tmux select-window -t boot-session:$matched_window
+    echo "Switched to window $matched_window"
+    return 0
+  fi
+
+  # Window not found, search ~/git/ for matching repo
+  echo "Window not found, searching ~/git/ for repos..."
+  local matched_repo=""
+
+  if [ -d "$HOME/git" ]; then
+    for dir in "$HOME/git"/*/ "$HOME/git"/*/*/; do
+      if [ -d "$dir" ]; then
+        local dirname=$(basename "$dir")
+        local dirname_lower=$(echo "$dirname" | tr '[:upper:]' '[:lower:]')
+
+        if [[ "$dirname_lower" == *"$search"* ]]; then
+          matched_repo="$dir"
+          echo "Found repo: $dirname at $dir"
+          break
+        fi
+      fi
+    done
+  fi
+
+  # If repo found, create new window
+  if [ -n "$matched_repo" ]; then
+    local repo_name=$(basename "$matched_repo")
+    local window_count=$(tmux list-windows -t boot-session | wc -l)
+    local new_index=$window_count
+
+    echo "Creating new window for $repo_name..."
+
+    tmux new-window -t boot-session:$new_index -n "$repo_name"
+    tmux send-keys -t boot-session:$new_index "cd '$matched_repo' && cc" C-m
+    sleep 0.5
+    tmux send-keys -t boot-session:$new_index "go" C-m
+    tmux select-window -t boot-session:$new_index
+
+    echo "✓ Created window $new_index: $repo_name"
+    echo "  Use: tm${new_index} or tmb${new_index} to switch to it"
+    return 0
+  fi
+
+  echo "Error: No window or repo found matching '$search'"
+  echo ""
+  echo "Available windows:"
+  tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
+  return 1
+}
+
 # Core tmux boot session aliases
 alias tmb='tmux attach -t boot-session'
 alias tmbk='tmux kill-session -t boot-session'
@@ -247,4 +335,4 @@ tsendw() {
 }
 
 # Export aliases for subshells
-export -f tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw
+export -f tm tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw

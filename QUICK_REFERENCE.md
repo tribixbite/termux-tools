@@ -2,6 +2,20 @@
 
 All aliases work without needing `Ctrl+b` - just type the command!
 
+## 🚀 PRIMARY COMMAND (Works from inside cc/claude!)
+
+| Command | Description | Examples |
+|---------|-------------|----------|
+| `tm <search>` | **Smart window switcher** - Fuzzy search for windows, auto-creates if repo exists | `tm clev` → cleverkeys<br>`tm un` → Unexpected-Keyboard<br>`tm bun` → creates window for bun-on-termux |
+
+**How it works:**
+1. Searches existing windows (case-insensitive partial match)
+2. If found, switches to that window
+3. If not found, searches `~/git/` for matching repos
+4. If repo found, creates new window and starts `cc` then `go`
+
+**Perfect for use inside Claude Code (`cc`) where Ctrl+b doesn't work!**
+
 ## Boot Session Management
 
 | Alias | Description |
@@ -77,13 +91,24 @@ All aliases work without needing `Ctrl+b` - just type the command!
 
 ## Common Workflows
 
-### Switch Between Projects
+### Switch Between Projects (Primary Method)
+
+**From inside cc/claude or anywhere:**
+```bash
+tm clev    # → cleverkeys
+tm custom  # → CustomCamera
+tm un      # → Unexpected-Keyboard
+tm illust  # → illustrate
+tm disc    # → discord-irc
+```
+
+**Traditional shortcuts (when not in cc):**
 ```bash
 tmb0       # cleverkeys
 tmb1       # CustomCamera
 tmb4       # illustrate
-tn         # Next project
-tp         # Previous project
+tn         # Next project (doesn't work in cc)
+tp         # Previous project (doesn't work in cc)
 ```
 
 ### Create Split View
@@ -125,13 +150,17 @@ tsendw 2 "npm test"
 
 ## Cheat Sheet
 
-**Most Used:**
+**Most Used (works everywhere, including inside cc):**
+```
+tm <search>  - Smart window switcher (PRIMARY COMMAND!)
+```
+
+**Other Common Commands:**
 ```
 tmb     - Attach
-tn/tp   - Next/Previous window
-td      - Detach
-tmb0-5  - Jump to window
-tz      - Zoom pane
+td      - Detach (from within tmux)
+tmb0-5  - Jump to window (when not in cc)
+tz      - Zoom pane (when not in cc)
 ```
 
 **Quick Navigation:**

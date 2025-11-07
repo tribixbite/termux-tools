@@ -14,6 +14,14 @@ Automatically start and manage multiple project sessions in tmux that persist ac
 - Provides aliases for quick navigation between projects
 - Easy repo management (add/remove projects dynamically)
 
+**Primary Command:**
+```bash
+# From inside cc/claude or anywhere - smart window switcher
+tm clev        # Switch to cleverkeys (or any partial match)
+tm un          # Switch to Unexpected-Keyboard
+tm newproject  # Creates window if repo exists in ~/git/
+```
+
 **Quick Start:**
 ```bash
 # Install required packages
@@ -67,7 +75,8 @@ See [examples/startup.sh.example](examples/startup.sh.example) for full configur
 
 Provides convenient aliases for tmux session management.
 
-**Key aliases:**
+**Key commands:**
+- `tm <search>` - **PRIMARY: Smart fuzzy window switcher (works in cc!)**
 - `tmb` - Attach to boot session
 - `tmb0-5` - Switch to specific window
 - `tmba <repo>` - Add repo temporarily
@@ -80,13 +89,18 @@ See [examples/bash_aliases.example](examples/bash_aliases.example) for full alia
 ## 🎯 Common Commands
 
 ```bash
+# PRIMARY: Smart Window Switcher (works inside cc/claude!)
+tm clev      # Switch to cleverkeys (partial match)
+tm un        # Switch to Unexpected-Keyboard
+tm bun       # Creates window if repo exists in ~/git/
+
 # Session Management
 tmb          # Attach to boot session
 tmbi         # Show session info
 tmbr         # Restart session
 tmbk         # Kill session
 
-# Navigation
+# Navigation (when not inside cc)
 tmb0         # Switch to window 0
 tmb1         # Switch to window 1
 tmbw camera  # Find window by name (fuzzy)
@@ -95,6 +109,10 @@ tmbw camera  # Find window by name (fuzzy)
 tmba my-project      # Add temporarily to current session
 tmbp my-project      # Add permanently to startup.sh
 ```
+
+### Why `tm` is Primary
+
+When you're inside Claude Code (`cc`), tmux's `Ctrl+b` shortcuts don't work because Claude takes over those keys. The `tm` command works from anywhere - even inside `cc` - making it the most useful command for daily development.
 
 ## 📦 Installation
 
