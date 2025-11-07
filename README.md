@@ -14,12 +14,17 @@ Automatically start and manage multiple project sessions in tmux that persist ac
 - Provides aliases for quick navigation between projects
 - Easy repo management (add/remove projects dynamically)
 
-**Primary Command:**
+**Primary Commands:**
 ```bash
-# From inside cc/claude or anywhere - smart window switcher
+# From inside cc/claude or anywhere
 tm clev        # Switch to cleverkeys (or any partial match)
 tm un          # Switch to Unexpected-Keyboard
 tm newproject  # Creates window if repo exists in ~/git/
+
+# Send 'go' to a window without switching
+tmgo clev      # Send 'go' to cleverkeys, stay in current window
+tmgo 0         # Send 'go' to window 0 by number
+tmgo un        # Send 'go' to Unexpected-Keyboard
 ```
 
 **Quick Start:**
@@ -77,6 +82,7 @@ Provides convenient aliases for tmux session management.
 
 **Key commands:**
 - `tm <search>` - **PRIMARY: Smart fuzzy window switcher (works in cc!)**
+- `tmgo <search>` - **Send 'go' to window without switching (works in cc!)**
 - `tmb` - Attach to boot session
 - `tmb0-5` - Switch to specific window
 - `tmba <repo>` - Add repo temporarily
@@ -94,6 +100,11 @@ tm clev      # Switch to cleverkeys (partial match)
 tm un        # Switch to Unexpected-Keyboard
 tm bun       # Creates window if repo exists in ~/git/
 
+# Send 'go' to Window (works inside cc/claude!)
+tmgo clev    # Send 'go' to cleverkeys without switching
+tmgo 0       # Send 'go' to window 0
+tmgo un      # Send 'go' to Unexpected-Keyboard
+
 # Session Management
 tmb          # Attach to boot session
 tmbi         # Show session info
@@ -110,9 +121,13 @@ tmba my-project      # Add temporarily to current session
 tmbp my-project      # Add permanently to startup.sh
 ```
 
-### Why `tm` is Primary
+### Why `tm` and `tmgo` are Primary
 
-When you're inside Claude Code (`cc`), tmux's `Ctrl+b` shortcuts don't work because Claude takes over those keys. The `tm` command works from anywhere - even inside `cc` - making it the most useful command for daily development.
+When you're inside Claude Code (`cc`), tmux's `Ctrl+b` shortcuts don't work because Claude takes over those keys. The `tm` and `tmgo` commands work from anywhere - even inside `cc` - making them the most useful commands for daily development.
+
+**Use cases:**
+- `tm` - Switch to a different project window
+- `tmgo` - Send 'go' to resume Claude in another window while staying in your current window
 
 ## 📦 Installation
 

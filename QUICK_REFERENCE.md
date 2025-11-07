@@ -2,17 +2,23 @@
 
 All aliases work without needing `Ctrl+b` - just type the command!
 
-## 🚀 PRIMARY COMMAND (Works from inside cc/claude!)
+## 🚀 PRIMARY COMMANDS (Work from inside cc/claude!)
 
 | Command | Description | Examples |
 |---------|-------------|----------|
 | `tm <search>` | **Smart window switcher** - Fuzzy search for windows, auto-creates if repo exists | `tm clev` → cleverkeys<br>`tm un` → Unexpected-Keyboard<br>`tm bun` → creates window for bun-on-termux |
+| `tmgo <search>` | **Send 'go' to window** - Send 'go' command without switching windows | `tmgo clev` → sends 'go' to cleverkeys<br>`tmgo 0` → sends 'go' to window 0<br>`tmgo un` → sends 'go' to Unexpected-Keyboard |
 
-**How it works:**
+**How tm works:**
 1. Searches existing windows (case-insensitive partial match)
 2. If found, switches to that window
 3. If not found, searches `~/git/` for matching repos
 4. If repo found, creates new window and starts `cc` then `go`
+
+**How tmgo works:**
+1. Searches for window by name or number
+2. Sends 'go' command to that window
+3. Stays in your current window
 
 **Perfect for use inside Claude Code (`cc`) where Ctrl+b doesn't work!**
 
@@ -95,11 +101,17 @@ All aliases work without needing `Ctrl+b` - just type the command!
 
 **From inside cc/claude or anywhere:**
 ```bash
+# Switch to a window
 tm clev    # → cleverkeys
 tm custom  # → CustomCamera
 tm un      # → Unexpected-Keyboard
 tm illust  # → illustrate
 tm disc    # → discord-irc
+
+# Send 'go' to a window (without switching)
+tmgo clev  # Send 'go' to cleverkeys, stay in current window
+tmgo 0     # Send 'go' to window 0
+tmgo un    # Send 'go' to Unexpected-Keyboard
 ```
 
 **Traditional shortcuts (when not in cc):**
@@ -152,7 +164,8 @@ tsendw 2 "npm test"
 
 **Most Used (works everywhere, including inside cc):**
 ```
-tm <search>  - Smart window switcher (PRIMARY COMMAND!)
+tm <search>    - Smart window switcher (PRIMARY!)
+tmgo <search>  - Send 'go' to window without switching
 ```
 
 **Other Common Commands:**

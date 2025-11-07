@@ -90,6 +90,67 @@ tm() {
   return 1
 }
 
+# Send 'go' command to a window (by search term or number)
+# Usage: tmgo clev (sends to cleverkeys), tmgo 0 (sends to window 0)
+tmgo() {
+  local search="$1"
+
+  if [ -z "$search" ]; then
+    echo "Usage: tmgo <search|number>"
+    echo "Example: tmgo clev  (sends 'go' to cleverkeys)"
+    echo "         tmgo 0     (sends 'go' to window 0)"
+    return 1
+  fi
+
+  # Check if boot-session exists
+  if ! tmux has-session -t boot-session 2>/dev/null; then
+    echo "Error: boot-session doesn't exist. Run: tmbr"
+    return 1
+  fi
+
+  local target_window=""
+
+  # Check if it's a number
+  if [[ "$search" =~ ^[0-9]+$ ]]; then
+    # It's a window number
+    target_window="$search"
+
+    # Verify window exists
+    if ! tmux list-windows -t boot-session -F "#{window_index}" | grep -q "^${target_window}$"; then
+      echo "Error: Window $target_window doesn't exist"
+      echo ""
+      echo "Available windows:"
+      tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
+      return 1
+    fi
+  else
+    # It's a search term - find matching window
+    search=$(echo "$search" | tr '[:upper:]' '[:lower:]')
+    local window_list=$(tmux list-windows -t boot-session -F "#{window_index}:#{window_name}" 2>/dev/null)
+
+    while IFS=: read -r index name; do
+      local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
+      if [[ "$name_lower" == *"$search"* ]]; then
+        target_window="$index"
+        echo "Found window: $name (window $index)"
+        break
+      fi
+    done <<< "$window_list"
+
+    if [ -z "$target_window" ]; then
+      echo "Error: No window found matching '$search'"
+      echo ""
+      echo "Available windows:"
+      tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
+      return 1
+    fi
+  fi
+
+  # Send 'go' to the target window
+  tmux send-keys -t boot-session:$target_window "go" C-m
+  echo "✓ Sent 'go' to window $target_window"
+}
+
 # Core tmux boot session aliases
 alias tmb='tmux attach -t boot-session'
 alias tmbk='tmux kill-session -t boot-session'
@@ -335,4 +396,4 @@ tsendw() {
 }
 
 # Export aliases for subshells
-export -f tm tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw
+export -f tm tmgo tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw
