@@ -1,0 +1,53 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ~/.termux/boot/startup.sh
+# Runs automatically when device boots (requires Termux:Boot app)
+
+# Acquire wake lock to prevent sleep during startup
+termux-wake-lock
+
+# Log boot startup
+echo "[$(date)] Boot startup initiated" >> "$HOME/.termux/boot.log"
+
+# Define repositories
+repos=(
+  "$HOME/git/swype/cleverkeys"
+  "$HOME/git/swype/CustomCamera"
+  "$HOME/git/swype/Unexpected-Keyboard"
+  "$HOME/git/pop/popcorn-mobile"
+  "$HOME/git/illustrate"
+  "$HOME/git/discord-irc"
+)
+
+# Start tmux session with windows for each repo
+tmux new-session -d -s boot-session
+
+window_index=0
+for repo in "${repos[@]}"; do
+  if [ -d "$repo" ]; then
+    name=$(basename "$repo")
+
+    if [ $window_index -eq 0 ]; then
+      # First window (already created)
+      tmux rename-window -t boot-session:0 "$name"
+      tmux send-keys -t boot-session:0 "cd '$repo' && cc" C-m
+      sleep 0.5  # Wait for cc to start
+      tmux send-keys -t boot-session:0 "go" C-m
+    else
+      # Create new window
+      tmux new-window -t boot-session:$window_index -n "$name"
+      tmux send-keys -t boot-session:$window_index "cd '$repo' && cc" C-m
+      sleep 0.5  # Wait for cc to start
+      tmux send-keys -t boot-session:$window_index "go" C-m
+    fi
+
+    window_index=$((window_index + 1))
+  fi
+done
+
+# Select first window
+tmux select-window -t boot-session:0
+
+# Release wake lock after setup
+termux-wake-unlock
+
+echo "[$(date)] Boot startup completed - tmux session 'boot-session' created" >> "$HOME/.termux/boot.log"

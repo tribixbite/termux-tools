@@ -1,0 +1,250 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ~/.bash_aliases
+# Tmux boot session management aliases
+
+# Core tmux boot session aliases
+alias tmb='tmux attach -t boot-session'
+alias tmbk='tmux kill-session -t boot-session'
+alias tmbl='tmux list-windows -t boot-session'
+alias tmbs='tmux list-sessions'
+
+# Window navigation aliases (0-5 for current repos)
+alias tmb0='tmux select-window -t boot-session:0'
+alias tmb1='tmux select-window -t boot-session:1'
+alias tmb2='tmux select-window -t boot-session:2'
+alias tmb3='tmux select-window -t boot-session:3'
+alias tmb4='tmux select-window -t boot-session:4'
+alias tmb5='tmux select-window -t boot-session:5'
+
+# Function to add a new repo to boot session
+# Usage: tmba foldername
+# Example: tmba my-new-project
+tmba() {
+  local folder="$1"
+
+  if [ -z "$folder" ]; then
+    echo "Usage: tmba <foldername>"
+    echo "Example: tmba my-project"
+    return 1
+  fi
+
+  # Determine full path
+  local repo_path
+  if [[ "$folder" == /* ]]; then
+    # Absolute path provided
+    repo_path="$folder"
+  elif [[ "$folder" == */* ]]; then
+    # Relative path with subdirs
+    repo_path="$HOME/git/$folder"
+  else
+    # Just folder name
+    repo_path="$HOME/git/$folder"
+  fi
+
+  if [ ! -d "$repo_path" ]; then
+    echo "Error: Directory not found: $repo_path"
+    return 1
+  fi
+
+  # Check if boot-session exists
+  if ! tmux has-session -t boot-session 2>/dev/null; then
+    echo "Error: boot-session doesn't exist. Run ~/.termux/boot/startup.sh first"
+    return 1
+  fi
+
+  local name=$(basename "$repo_path")
+  local window_count=$(tmux list-windows -t boot-session | wc -l)
+  local new_index=$window_count
+
+  echo "Adding $name to boot-session as window $new_index..."
+
+  # Create new window with cc command
+  tmux new-window -t boot-session:$new_index -n "$name"
+  tmux send-keys -t boot-session:$new_index "cd '$repo_path' && cc" C-m
+  sleep 0.5  # Wait for cc to start
+  tmux send-keys -t boot-session:$new_index "go" C-m
+
+  # Select the new window
+  tmux select-window -t boot-session:$new_index
+
+  echo "✓ Window created: $name (tmb$new_index to switch)"
+
+  # Add alias dynamically for this session
+  alias tmb$new_index="tmux select-window -t boot-session:$new_index"
+
+  echo ""
+  echo "To make this permanent, add to ~/.termux/boot/startup.sh:"
+  echo "  \"\$HOME/git/$folder\""
+}
+
+# Function to add repo permanently to startup script
+# Usage: tmbp foldername
+tmbp() {
+  local folder="$1"
+
+  if [ -z "$folder" ]; then
+    echo "Usage: tmbp <foldername>"
+    echo "Permanently adds repo to ~/.termux/boot/startup.sh"
+    return 1
+  fi
+
+  # Determine full path
+  local repo_path
+  if [[ "$folder" == /* ]]; then
+    repo_path="$folder"
+  elif [[ "$folder" == */* ]]; then
+    repo_path="\$HOME/git/$folder"
+  else
+    repo_path="\$HOME/git/$folder"
+  fi
+
+  local startup_script="$HOME/.termux/boot/startup.sh"
+
+  # Check if already in startup script
+  if grep -q "$repo_path" "$startup_script"; then
+    echo "⚠ Repo already exists in startup.sh: $repo_path"
+    return 1
+  fi
+
+  # Find the repos array closing parenthesis and insert before it
+  if sed -i "/^repos=(/,/^)/ {
+    /^)/ i\\  \"$repo_path\"
+  }" "$startup_script"; then
+    echo "✓ Added to startup.sh: $repo_path"
+    echo ""
+    echo "To apply immediately: tmba $folder"
+    echo "To see changes: cat ~/.termux/boot/startup.sh | grep -A 10 'repos='"
+  else
+    echo "✗ Failed to update startup.sh"
+    return 1
+  fi
+}
+
+# Restart boot session (kill and recreate)
+tmbr() {
+  echo "Restarting boot-session..."
+  tmux kill-session -t boot-session 2>/dev/null
+  ~/.termux/boot/startup.sh
+  echo "✓ Boot session restarted"
+  echo "Attach with: tmb"
+}
+
+# Show boot session info
+tmbi() {
+  echo "=== Boot Session Info ==="
+  if tmux has-session -t boot-session 2>/dev/null; then
+    echo "Status: ✓ Running"
+    echo ""
+    echo "Windows:"
+    tmux list-windows -t boot-session | while IFS= read -r line; do
+      local num=$(echo "$line" | cut -d: -f1)
+      echo "  tmb$num - $line"
+    done
+    echo ""
+    echo "Commands:"
+    echo "  tmb       - Attach to session"
+    echo "  tmb0-5    - Switch to window 0-5"
+    echo "  tmbk      - Kill session"
+    echo "  tmbl      - List windows"
+    echo "  tmba NAME - Add new repo window"
+    echo "  tmbp NAME - Add repo permanently"
+    echo "  tmbr      - Restart session"
+  else
+    echo "Status: ✗ Not running"
+    echo ""
+    echo "Start with: ~/.termux/boot/startup.sh"
+    echo "Or restart: tmbr"
+  fi
+}
+
+# Quick attach or create
+tmbb() {
+  if tmux has-session -t boot-session 2>/dev/null; then
+    tmux attach -t boot-session
+  else
+    echo "Boot session doesn't exist. Creating..."
+    ~/.termux/boot/startup.sh
+    tmux attach -t boot-session
+  fi
+}
+
+# Switch to specific window by name (fuzzy)
+tmbw() {
+  local search="$1"
+
+  if [ -z "$search" ]; then
+    echo "Usage: tmbw <window-name>"
+    echo "Example: tmbw clever"
+    return 1
+  fi
+
+  local window=$(tmux list-windows -t boot-session 2>/dev/null | grep -i "$search" | head -1 | cut -d: -f1)
+
+  if [ -z "$window" ]; then
+    echo "Window not found: $search"
+    return 1
+  fi
+
+  tmux select-window -t boot-session:$window
+  echo "Switched to window $window"
+}
+
+# Tmux window navigation shortcuts (no Ctrl+b needed)
+alias tn='tmux next-window'              # Next window
+alias tp='tmux previous-window'          # Previous window
+alias tl='tmux last-window'              # Last window
+alias td='tmux detach'                   # Detach from session
+alias tz='tmux resize-pane -Z'           # Zoom/unzoom current pane
+alias tw='tmux choose-tree -Zw'          # Interactive window list
+
+# Window management
+alias tk='tmux kill-window'              # Kill current window
+alias tnw='tmux new-window'              # New window
+alias trn='tmux rename-window'           # Rename window (usage: trn newname)
+
+# Pane management
+alias tsv='tmux split-window -v'         # Split vertically (top/bottom)
+alias tsh='tmux split-window -h'         # Split horizontally (left/right)
+alias tkp='tmux kill-pane'               # Kill current pane
+
+# Pane navigation
+alias t1='tmux select-pane -t 0'         # Go to pane 0
+alias t2='tmux select-pane -t 1'         # Go to pane 1
+alias t3='tmux select-pane -t 2'         # Go to pane 2
+alias t4='tmux select-pane -t 3'         # Go to pane 3
+
+# Pane movement (arrow-key equivalents)
+alias tu='tmux select-pane -U'           # Up
+alias tdown='tmux select-pane -D'        # Down
+alias tleft='tmux select-pane -L'        # Left
+alias tright='tmux select-pane -R'       # Right
+
+# Session management
+alias tls='tmux list-sessions'           # List all sessions
+alias tas='tmux attach-session -t'       # Attach to session (usage: tas sessionname)
+alias tks='tmux kill-session -t'         # Kill session (usage: tks sessionname)
+
+# Quick send keys to current window (useful for automation)
+tsend() {
+  if [ -z "$1" ]; then
+    echo "Usage: tsend <text>"
+    echo "Sends text to current tmux window"
+    return 1
+  fi
+  tmux send-keys "$*" C-m
+}
+
+# Send to specific window
+tsendw() {
+  local window="$1"
+  shift
+  if [ -z "$window" ] || [ -z "$1" ]; then
+    echo "Usage: tsendw <window-number> <text>"
+    echo "Example: tsendw 0 'npm start'"
+    return 1
+  fi
+  tmux send-keys -t boot-session:$window "$*" C-m
+}
+
+# Export aliases for subshells
+export -f tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw
