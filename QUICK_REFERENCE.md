@@ -2,7 +2,7 @@
 
 All aliases work without needing `Ctrl+b` - just type the command!
 
-## 🚀 PRIMARY COMMANDS (Work from inside cc/claude!)
+## 🚀 PRIMARY COMMANDS
 
 | Command | Description | Examples |
 |---------|-------------|----------|
@@ -20,7 +20,10 @@ All aliases work without needing `Ctrl+b` - just type the command!
 2. Sends 'go' command to that window
 3. Stays in your current window
 
-**Perfect for use inside Claude Code (`cc`) where Ctrl+b doesn't work!**
+**How to use with Claude Code (`cc`):**
+- **Option 1**: Ask Claude to run the command for you (e.g. tell Claude "tm clev")
+- **Option 2**: Use split panes - `cc` in one pane, bash shell in another where you type commands
+- **Option 3**: Use between Claude sessions when you're at bash prompt
 
 ## Boot Session Management
 

@@ -123,11 +123,19 @@ tmbp my-project      # Add permanently to startup.sh
 
 ### Why `tm` and `tmgo` are Primary
 
-When you're inside Claude Code (`cc`), tmux's `Ctrl+b` shortcuts don't work because Claude takes over those keys. The `tm` and `tmgo` commands work from anywhere - even inside `cc` - making them the most useful commands for daily development.
+**The Real Workflow:**
+
+When you're actively inside Claude Code (`cc`) - meaning you're in a conversation with Claude - you can't directly type bash commands. But you CAN:
+
+1. **Ask Claude to run commands for you**: "tm clev", "tmgo custom"
+2. **Or use these commands from a shell in another tmux pane/window**
+
+Traditional tmux shortcuts (Ctrl+b) don't work because you're in Claude's interface.
 
 **Use cases:**
-- `tm` - Switch to a different project window
-- `tmgo` - Send 'go' to resume Claude in another window while staying in your current window
+- **Split pane workflow**: One pane with `cc` running, another pane with bash where you use `tm`/`tmgo`
+- **Ask Claude**: Tell Claude "run tmgo 0" and Claude executes it for you
+- **Between sessions**: Use `tm` to switch projects when NOT actively talking to Claude
 
 ## 📦 Installation
 

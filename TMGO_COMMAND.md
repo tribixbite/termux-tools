@@ -4,7 +4,7 @@ Companion to the `tm` command, `tmgo` sends the 'go' command to any window witho
 
 ## Why `tmgo` Exists
 
-**Scenario**: You're working in one window and want to resume Claude Code in another window without leaving your current work.
+**Scenario**: You're at a bash prompt (or talking to Claude) and want to resume Claude Code in another window.
 
 **Without tmgo:**
 1. Switch to the target window: `tm clev`
@@ -12,8 +12,13 @@ Companion to the `tm` command, `tmgo` sends the 'go' command to any window witho
 3. Switch back to your window: `tm current`
 
 **With tmgo:**
-1. Send go: `tmgo clev`
+1. Send go: `tmgo clev` (or ask Claude: "tmgo clev")
 2. Keep working in current window
+
+**Real usage**:
+- Ask Claude: "tmgo 0" and Claude runs it for you
+- Use from bash prompt when not in Claude session
+- Use from a split pane while Claude runs in another pane
 
 ## Usage
 

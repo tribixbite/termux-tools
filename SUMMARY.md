@@ -15,11 +15,14 @@ tmgo <search>    # Send 'go' to any window (without switching)
 
 **The Problem:**
 - You work in tmux with multiple Claude Code sessions
-- Inside `cc`, Ctrl+b shortcuts don't work (Claude captures them)
-- Traditional tmux navigation is broken
+- When actively talking to Claude (`cc`), you can't type bash commands
+- Traditional tmux Ctrl+b shortcuts don't work in Claude's interface
 
 **The Solution:**
-- `tm` and `tmgo` work from anywhere, even inside `cc`
+- Simple commands: `tm` and `tmgo`
+- Ask Claude to run them for you
+- Or use from bash shell in split pane
+- Or use between Claude sessions
 - Fuzzy search by name (no need to remember window numbers)
 - Auto-create windows if repo exists
 

@@ -4,9 +4,14 @@ The single most important command for daily tmux usage, especially when working 
 
 ## Why `tm` is Primary
 
-**Problem**: When you're inside Claude Code (`cc`), tmux's `Ctrl+b` shortcuts don't work because Claude takes over control keys.
+**Problem**: When you're inside Claude Code (`cc`) - meaning actively in a conversation with Claude - you can't type bash commands or use tmux's `Ctrl+b` shortcuts.
 
-**Solution**: The `tm` command works from anywhere - even inside `cc` sessions - making window switching seamless.
+**Solutions**:
+1. **Ask Claude to run it**: Tell Claude "tm clev" and Claude executes the command for you
+2. **Split pane setup**: Run `cc` in one pane, keep a bash shell in another pane for commands
+3. **Use between sessions**: Run `tm` from bash prompt when not actively talking to Claude
+
+The `tm` command is simpler than remembering window numbers or using Ctrl+b sequences.
 
 ## Usage
 
@@ -131,18 +136,37 @@ Searches both `~/git/*` and `~/git/*/*`:
 
 ## Use Cases
 
-### From Inside cc/claude
+### Working with Claude Code
 
-**Scenario**: You're working in cleverkeys and want to switch to CustomCamera.
+**Scenario**: You're in a Claude session in cleverkeys and want to switch to CustomCamera.
 
-**Traditional tmux** (doesn't work in cc):
+**Traditional tmux** (doesn't work):
 ```bash
-Ctrl+b 1      # ✗ Doesn't work - Claude captures Ctrl+b
+Ctrl+b 1      # ✗ Can't use - you're in Claude's interface
 ```
 
-**With tm** (works everywhere):
+**Solution 1 - Ask Claude**:
 ```bash
-tm custom     # ✓ Works perfectly!
+# Just tell Claude:
+"tm custom"
+# Claude runs it for you
+```
+
+**Solution 2 - Split pane**:
+```bash
+# Setup: Split your window (before starting cc)
+tsh           # Create horizontal split
+# Pane 1: run cc
+# Pane 2: bash shell where you type: tm custom
+```
+
+**Solution 3 - Between sessions**:
+```bash
+# Exit Claude temporarily, run command, continue
+Ctrl+D        # Exit cc
+tm custom     # Switch windows
+cc            # Start Claude again in new window
+go            # Continue
 ```
 
 ### Quick Project Switching
