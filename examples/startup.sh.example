@@ -1,6 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ~/.termux/boot/startup.sh
 # Runs automatically when device boots (requires Termux:Boot app)
+# Creates separate tmux instances for each project
 
 # Acquire wake lock to prevent sleep during startup
 termux-wake-lock
@@ -8,46 +9,54 @@ termux-wake-lock
 # Log boot startup
 echo "[$(date)] Boot startup initiated" >> "$HOME/.termux/boot.log"
 
-# Define repositories
-repos=(
-  "$HOME/git/swype/cleverkeys"
-  "$HOME/git/swype/CustomCamera"
-  "$HOME/git/swype/Unexpected-Keyboard"
-  "$HOME/git/pop/popcorn-mobile"
-  "$HOME/git/illustrate"
-  "$HOME/git/discord-irc"
-)
+# Load repository configuration
+source "$HOME/.termux/boot/repos.conf"
 
-# Start tmux session with windows for each repo
-tmux new-session -d -s boot-session
+# Counter for tracking instances
+instance_count=0
 
-window_index=0
-for repo in "${repos[@]}"; do
-  if [ -d "$repo" ]; then
-    name=$(basename "$repo")
+# Create separate tmux instance for each repo
+for repo in "${!REPOS[@]}"; do
+  # Parse config: auto_go:enabled
+  IFS=':' read -r auto_go enabled <<< "${REPOS[$repo]}"
 
-    if [ $window_index -eq 0 ]; then
-      # First window (already created)
-      tmux rename-window -t boot-session:0 "$name"
-      tmux send-keys -t boot-session:0 "cd '$repo' && cc" C-m
-      sleep 0.5  # Wait for cc to start
-      tmux send-keys -t boot-session:0 "go" C-m
-    else
-      # Create new window
-      tmux new-window -t boot-session:$window_index -n "$name"
-      tmux send-keys -t boot-session:$window_index "cd '$repo' && cc" C-m
-      sleep 0.5  # Wait for cc to start
-      tmux send-keys -t boot-session:$window_index "go" C-m
-    fi
-
-    window_index=$((window_index + 1))
+  # Skip if not enabled
+  if [ "$enabled" != "1" ]; then
+    echo "[$(date)] Skipping disabled repo: $repo" >> "$HOME/.termux/boot.log"
+    continue
   fi
-done
 
-# Select first window
-tmux select-window -t boot-session:0
+  # Verify repo exists
+  if [ ! -d "$repo" ]; then
+    echo "[$(date)] Skipping non-existent repo: $repo" >> "$HOME/.termux/boot.log"
+    continue
+  fi
+
+  # Get repo name for session naming
+  name=$(basename "$repo")
+
+  # Create unique session name (lowercase, no special chars)
+  session_name=$(echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+
+  echo "[$(date)] Creating tmux instance: $session_name" >> "$HOME/.termux/boot.log"
+
+  # Create new detached tmux session
+  tmux new-session -d -s "$session_name" -c "$repo"
+
+  # Start Claude Code in the session
+  tmux send-keys -t "$session_name" "cc" Enter
+
+  # Auto-send 'go' if flagged
+  if [ "$auto_go" = "1" ]; then
+    sleep 1  # Wait for cc to fully start
+    tmux send-keys -t "$session_name" "go" Enter
+    echo "[$(date)] Auto-sent 'go' to $session_name" >> "$HOME/.termux/boot.log"
+  fi
+
+  instance_count=$((instance_count + 1))
+done
 
 # Release wake lock after setup
 termux-wake-unlock
 
-echo "[$(date)] Boot startup completed - tmux session 'boot-session' created" >> "$HOME/.termux/boot.log"
+echo "[$(date)] Boot startup completed - created $instance_count tmux instances" >> "$HOME/.termux/boot.log"

@@ -1,10 +1,10 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # ~/.bash_aliases
-# Tmux boot session management aliases
+# Tmux instance management for boot automation
 
-# Smart window switcher - works from inside cc/claude
+# Smart session switcher - attach to separate tmux instances
 # Usage: tm clev (matches cleverkeys), tm un (matches Unexpected-Keyboard)
-# If window doesn't exist but repo found in ~/git/, creates new window
+# If session doesn't exist but repo found in ~/git/, creates new instance
 tm() {
   local search="$1"
 
@@ -18,35 +18,35 @@ tm() {
   # Convert search to lowercase for matching
   search=$(echo "$search" | tr '[:upper:]' '[:lower:]')
 
-  # Check if boot-session exists
-  if ! tmux has-session -t boot-session 2>/dev/null; then
-    echo "Error: boot-session doesn't exist. Run: tmbr"
+  # Get list of tmux sessions
+  local sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null)
+
+  if [ -z "$sessions" ]; then
+    echo "No tmux sessions found. Run boot startup or create manually."
     return 1
   fi
 
-  # Search for matching window (case-insensitive)
-  local window_list=$(tmux list-windows -t boot-session -F "#{window_index}:#{window_name}" 2>/dev/null)
-  local matched_window=""
+  # Search for matching session (case-insensitive)
+  local matched_session=""
 
-  while IFS=: read -r index name; do
-    # Convert window name to lowercase for comparison
-    local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-    if [[ "$name_lower" == *"$search"* ]]; then
-      matched_window="$index"
-      echo "Found window: $name (window $index)"
+  while read -r session; do
+    # Convert session name to lowercase for comparison
+    local session_lower=$(echo "$session" | tr '[:upper:]' '[:lower:]')
+    if [[ "$session_lower" == *"$search"* ]]; then
+      matched_session="$session"
+      echo "Found session: $session"
       break
     fi
-  done <<< "$window_list"
+  done <<< "$sessions"
 
-  # If window found, switch to it
-  if [ -n "$matched_window" ]; then
-    tmux select-window -t boot-session:$matched_window
-    echo "Switched to window $matched_window"
+  # If session found, attach to it
+  if [ -n "$matched_session" ]; then
+    tmux attach -t "$matched_session"
     return 0
   fi
 
-  # Window not found, search ~/git/ for matching repo
-  echo "Window not found, searching ~/git/ for repos..."
+  # Session not found, search ~/git/ for matching repo
+  echo "Session not found, searching ~/git/ for repos..."
   local matched_repo=""
 
   if [ -d "$HOME/git" ]; then
@@ -64,129 +64,107 @@ tm() {
     done
   fi
 
-  # If repo found, create new window
+  # If repo found, create new instance
   if [ -n "$matched_repo" ]; then
     local repo_name=$(basename "$matched_repo")
-    local window_count=$(tmux list-windows -t boot-session | wc -l)
-    local new_index=$window_count
+    local session_name=$(echo "$repo_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
 
-    echo "Creating new window for $repo_name..."
+    echo "Creating new tmux instance for $repo_name..."
 
-    tmux new-window -t boot-session:$new_index -n "$repo_name"
-    tmux send-keys -t boot-session:$new_index "cd '$matched_repo' && cc" C-m
-    sleep 0.5
-    tmux send-keys -t boot-session:$new_index "go" C-m
-    tmux select-window -t boot-session:$new_index
+    # Create new session
+    tmux new-session -d -s "$session_name" -c "$matched_repo"
+    tmux send-keys -t "$session_name" "cc" Enter
 
-    echo "✓ Created window $new_index: $repo_name"
-    echo "  Use: tm${new_index} or tmb${new_index} to switch to it"
+    echo "✓ Created instance: $session_name"
+    echo "  Use: tm $search to attach"
+
+    # Attach to new session
+    tmux attach -t "$session_name"
     return 0
   fi
 
-  echo "Error: No window or repo found matching '$search'"
+  echo "Error: No session or repo found matching '$search'"
   echo ""
-  echo "Available windows:"
-  tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
+  echo "Available sessions:"
+  tmux list-sessions -F "  #{session_name}"
   return 1
 }
 
-# Send 'go' command to a window (by search term or number)
-# Usage: tmgo clev (sends to cleverkeys), tmgo 0 (sends to window 0)
+# Send 'go' command to a tmux session (by search term)
+# Usage: tmgo clev (sends to cleverkeys session)
 tmgo() {
   local search="$1"
 
   if [ -z "$search" ]; then
-    echo "Usage: tmgo <search|number>"
+    echo "Usage: tmgo <search>"
     echo "Example: tmgo clev  (sends 'go' to cleverkeys)"
-    echo "         tmgo 0     (sends 'go' to window 0)"
+    echo "         tmgo un    (sends 'go' to Unexpected-Keyboard)"
     return 1
   fi
 
-  # Check if boot-session exists
-  if ! tmux has-session -t boot-session 2>/dev/null; then
-    echo "Error: boot-session doesn't exist. Run: tmbr"
+  # Convert search to lowercase for matching
+  search=$(echo "$search" | tr '[:upper:]' '[:lower:]')
+
+  # Get list of tmux sessions
+  local sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null)
+
+  if [ -z "$sessions" ]; then
+    echo "Error: No tmux sessions found"
     return 1
   fi
 
-  local target_window=""
+  # Search for matching session (case-insensitive)
+  local matched_session=""
 
-  # Check if it's a number
-  if [[ "$search" =~ ^[0-9]+$ ]]; then
-    # It's a window number
-    target_window="$search"
-
-    # Verify window exists
-    if ! tmux list-windows -t boot-session -F "#{window_index}" | grep -q "^${target_window}$"; then
-      echo "Error: Window $target_window doesn't exist"
-      echo ""
-      echo "Available windows:"
-      tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
-      return 1
+  while read -r session; do
+    local session_lower=$(echo "$session" | tr '[:upper:]' '[:lower:]')
+    if [[ "$session_lower" == *"$search"* ]]; then
+      matched_session="$session"
+      echo "Found session: $session"
+      break
     fi
-  else
-    # It's a search term - find matching window
-    search=$(echo "$search" | tr '[:upper:]' '[:lower:]')
-    local window_list=$(tmux list-windows -t boot-session -F "#{window_index}:#{window_name}" 2>/dev/null)
+  done <<< "$sessions"
 
-    while IFS=: read -r index name; do
-      local name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-      if [[ "$name_lower" == *"$search"* ]]; then
-        target_window="$index"
-        echo "Found window: $name (window $index)"
-        break
-      fi
-    done <<< "$window_list"
-
-    if [ -z "$target_window" ]; then
-      echo "Error: No window found matching '$search'"
-      echo ""
-      echo "Available windows:"
-      tmux list-windows -t boot-session -F "  #{window_index}: #{window_name}"
-      return 1
-    fi
+  if [ -z "$matched_session" ]; then
+    echo "Error: No session found matching '$search'"
+    echo ""
+    echo "Available sessions:"
+    tmux list-sessions -F "  #{session_name}"
+    return 1
   fi
 
-  # Send 'go' to the target window
-  tmux send-keys -t boot-session:$target_window "go" C-m
-  echo "✓ Sent 'go' to window $target_window"
+  # Send 'go' to the target session (using Enter instead of C-m)
+  tmux send-keys -t "$matched_session" "go" Enter
+  echo "✓ Sent 'go' to session: $matched_session"
 }
 
-# Core tmux boot session aliases
-alias tmb='tmux attach -t boot-session'
-alias tmbk='tmux kill-session -t boot-session'
-alias tmbl='tmux list-windows -t boot-session'
-alias tmbs='tmux list-sessions'
+# Core tmux session management aliases
+alias tmbs='tmux list-sessions'              # List all tmux sessions
+alias tmbka='tmux kill-server'               # Kill all tmux sessions
+alias tmbls='tmux list-sessions -F "#{session_name}: #{session_windows} windows"'  # Detailed session list
 
-# Window navigation aliases (0-5 for current repos)
-alias tmb0='tmux select-window -t boot-session:0'
-alias tmb1='tmux select-window -t boot-session:1'
-alias tmb2='tmux select-window -t boot-session:2'
-alias tmb3='tmux select-window -t boot-session:3'
-alias tmb4='tmux select-window -t boot-session:4'
-alias tmb5='tmux select-window -t boot-session:5'
-
-# Function to add a new repo to boot session
-# Usage: tmba foldername
-# Example: tmba my-new-project
+# Function to create new tmux instance for a repo
+# Usage: tmba foldername [auto_go]
+# Example: tmba my-project    (no auto-go)
+#          tmba my-project 1  (with auto-go)
 tmba() {
   local folder="$1"
+  local auto_go="${2:-0}"
 
   if [ -z "$folder" ]; then
-    echo "Usage: tmba <foldername>"
-    echo "Example: tmba my-project"
+    echo "Usage: tmba <foldername> [auto_go]"
+    echo "Example: tmba my-project     (no auto-go)"
+    echo "         tmba my-project 1   (with auto-go)"
     return 1
   fi
 
   # Determine full path
   local repo_path
   if [[ "$folder" == /* ]]; then
-    # Absolute path provided
     repo_path="$folder"
   elif [[ "$folder" == */* ]]; then
-    # Relative path with subdirs
     repo_path="$HOME/git/$folder"
   else
-    # Just folder name
     repo_path="$HOME/git/$folder"
   fi
 
@@ -195,45 +173,47 @@ tmba() {
     return 1
   fi
 
-  # Check if boot-session exists
-  if ! tmux has-session -t boot-session 2>/dev/null; then
-    echo "Error: boot-session doesn't exist. Run ~/.termux/boot/startup.sh first"
+  local name=$(basename "$repo_path")
+  local session_name=$(echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+
+  # Check if session already exists
+  if tmux has-session -t "$session_name" 2>/dev/null; then
+    echo "⚠ Session already exists: $session_name"
+    echo "Attach with: tm $name"
     return 1
   fi
 
-  local name=$(basename "$repo_path")
-  local window_count=$(tmux list-windows -t boot-session | wc -l)
-  local new_index=$window_count
+  echo "Creating tmux instance for $name..."
 
-  echo "Adding $name to boot-session as window $new_index..."
+  # Create new session
+  tmux new-session -d -s "$session_name" -c "$repo_path"
+  tmux send-keys -t "$session_name" "cc" Enter
 
-  # Create new window with cc command
-  tmux new-window -t boot-session:$new_index -n "$name"
-  tmux send-keys -t boot-session:$new_index "cd '$repo_path' && cc" C-m
-  sleep 0.5  # Wait for cc to start
-  tmux send-keys -t boot-session:$new_index "go" C-m
+  # Auto-send 'go' if flagged
+  if [ "$auto_go" = "1" ]; then
+    sleep 1
+    tmux send-keys -t "$session_name" "go" Enter
+    echo "✓ Created instance: $session_name (with auto-go)"
+  else
+    echo "✓ Created instance: $session_name"
+  fi
 
-  # Select the new window
-  tmux select-window -t boot-session:$new_index
-
-  echo "✓ Window created: $name (tmb$new_index to switch)"
-
-  # Add alias dynamically for this session
-  alias tmb$new_index="tmux select-window -t boot-session:$new_index"
-
+  echo "  Use: tm $name to attach"
   echo ""
-  echo "To make this permanent, add to ~/.termux/boot/startup.sh:"
-  echo "  \"\$HOME/git/$folder\""
+  echo "To make this permanent: tmbp $folder $auto_go"
 }
 
-# Function to add repo permanently to startup script
-# Usage: tmbp foldername
+# Function to add repo permanently to repos.conf
+# Usage: tmbp foldername [auto_go]
 tmbp() {
   local folder="$1"
+  local auto_go="${2:-0}"
 
   if [ -z "$folder" ]; then
-    echo "Usage: tmbp <foldername>"
-    echo "Permanently adds repo to ~/.termux/boot/startup.sh"
+    echo "Usage: tmbp <foldername> [auto_go]"
+    echo "Permanently adds repo to ~/.termux/boot/repos.conf"
+    echo "Example: tmbp my-project     (no auto-go)"
+    echo "         tmbp my-project 1   (with auto-go)"
     return 1
   fi
 
@@ -247,108 +227,82 @@ tmbp() {
     repo_path="\$HOME/git/$folder"
   fi
 
-  local startup_script="$HOME/.termux/boot/startup.sh"
+  local repos_conf="$HOME/.termux/boot/repos.conf"
 
-  # Check if already in startup script
-  if grep -q "$repo_path" "$startup_script"; then
-    echo "⚠ Repo already exists in startup.sh: $repo_path"
+  # Check if already in repos.conf
+  if grep -q "$repo_path" "$repos_conf"; then
+    echo "⚠ Repo already exists in repos.conf: $repo_path"
     return 1
   fi
 
-  # Find the repos array closing parenthesis and insert before it
-  if sed -i "/^repos=(/,/^)/ {
-    /^)/ i\\  \"$repo_path\"
-  }" "$startup_script"; then
-    echo "✓ Added to startup.sh: $repo_path"
-    echo ""
-    echo "To apply immediately: tmba $folder"
-    echo "To see changes: cat ~/.termux/boot/startup.sh | grep -A 10 'repos='"
-  else
-    echo "✗ Failed to update startup.sh"
-    return 1
-  fi
+  # Add to repos.conf
+  echo "REPOS[\"$repo_path\"]=\"$auto_go:1\"" >> "$repos_conf"
+
+  echo "✓ Added to repos.conf: $repo_path"
+  echo "  auto_go: $auto_go, enabled: 1"
+  echo ""
+  echo "To apply immediately: tmba $folder $auto_go"
+  echo "To see changes: cat $repos_conf"
 }
 
-# Restart boot session (kill and recreate)
+# Restart all boot instances (kill all and recreate)
 tmbr() {
-  echo "Restarting boot-session..."
-  tmux kill-session -t boot-session 2>/dev/null
+  echo "Restarting all tmux instances..."
+  tmux kill-server 2>/dev/null
   ~/.termux/boot/startup.sh
-  echo "✓ Boot session restarted"
-  echo "Attach with: tmb"
+  echo "✓ All instances restarted"
+  echo "List sessions: tmbs"
+  echo "Attach to any: tm <name>"
 }
 
-# Show boot session info
+# Show tmux instances info
 tmbi() {
-  echo "=== Boot Session Info ==="
-  if tmux has-session -t boot-session 2>/dev/null; then
-    echo "Status: ✓ Running"
-    echo ""
-    echo "Windows:"
-    tmux list-windows -t boot-session | while IFS= read -r line; do
-      local num=$(echo "$line" | cut -d: -f1)
-      echo "  tmb$num - $line"
-    done
-    echo ""
-    echo "Commands:"
-    echo "  tmb       - Attach to session"
-    echo "  tmb0-5    - Switch to window 0-5"
-    echo "  tmbk      - Kill session"
-    echo "  tmbl      - List windows"
-    echo "  tmba NAME - Add new repo window"
-    echo "  tmbp NAME - Add repo permanently"
-    echo "  tmbr      - Restart session"
-  else
-    echo "Status: ✗ Not running"
+  echo "=== Tmux Instances Info ==="
+  local sessions=$(tmux list-sessions -F "#{session_name}" 2>/dev/null)
+
+  if [ -z "$sessions" ]; then
+    echo "Status: ✗ No sessions running"
     echo ""
     echo "Start with: ~/.termux/boot/startup.sh"
     echo "Or restart: tmbr"
+    return 0
   fi
+
+  echo "Status: ✓ Running"
+  echo ""
+  echo "Active sessions:"
+  tmux list-sessions -F "  #{session_name}: #{session_windows} windows (#{session_attached} attached)"
+  echo ""
+  echo "Commands:"
+  echo "  tm <name>     - Attach to session (fuzzy search)"
+  echo "  tmgo <name>   - Send 'go' to session"
+  echo "  tmbs          - List all sessions"
+  echo "  tmbka         - Kill all sessions"
+  echo "  tmba NAME [1] - Create new instance (1=auto-go)"
+  echo "  tmbp NAME [1] - Add to repos.conf permanently"
+  echo "  tmbr          - Restart all instances"
 }
 
-# Quick attach or create
+# Quick create/restart all instances
 tmbb() {
-  if tmux has-session -t boot-session 2>/dev/null; then
-    tmux attach -t boot-session
+  if tmux list-sessions 2>/dev/null | grep -q .; then
+    echo "Tmux instances already running"
+    tmbi
   else
-    echo "Boot session doesn't exist. Creating..."
+    echo "No instances found. Creating..."
     ~/.termux/boot/startup.sh
-    tmux attach -t boot-session
+    echo "✓ Created. List with: tmbs"
   fi
 }
 
-# Switch to specific window by name (fuzzy)
-tmbw() {
-  local search="$1"
-
-  if [ -z "$search" ]; then
-    echo "Usage: tmbw <window-name>"
-    echo "Example: tmbw clever"
-    return 1
-  fi
-
-  local window=$(tmux list-windows -t boot-session 2>/dev/null | grep -i "$search" | head -1 | cut -d: -f1)
-
-  if [ -z "$window" ]; then
-    echo "Window not found: $search"
-    return 1
-  fi
-
-  tmux select-window -t boot-session:$window
-  echo "Switched to window $window"
-}
-
-# Tmux window navigation shortcuts (no Ctrl+b needed)
-alias tn='tmux next-window'              # Next window
-alias tp='tmux previous-window'          # Previous window
-alias tl='tmux last-window'              # Last window
-alias td='tmux detach'                   # Detach from session
+# Tmux general shortcuts (work in any session)
+alias td='tmux detach'                   # Detach from current session
 alias tz='tmux resize-pane -Z'           # Zoom/unzoom current pane
-alias tw='tmux choose-tree -Zw'          # Interactive window list
+alias tw='tmux choose-tree -Zw'          # Interactive session/window list
 
-# Window management
+# Window management (within current session)
 alias tk='tmux kill-window'              # Kill current window
-alias tnw='tmux new-window'              # New window
+alias tnw='tmux new-window'              # New window in current session
 alias trn='tmux rename-window'           # Rename window (usage: trn newname)
 
 # Pane management
@@ -373,27 +327,27 @@ alias tls='tmux list-sessions'           # List all sessions
 alias tas='tmux attach-session -t'       # Attach to session (usage: tas sessionname)
 alias tks='tmux kill-session -t'         # Kill session (usage: tks sessionname)
 
-# Quick send keys to current window (useful for automation)
+# Quick send keys to current session (useful for automation)
 tsend() {
   if [ -z "$1" ]; then
     echo "Usage: tsend <text>"
-    echo "Sends text to current tmux window"
+    echo "Sends text to current tmux session"
     return 1
   fi
-  tmux send-keys "$*" C-m
+  tmux send-keys "$*" Enter
 }
 
-# Send to specific window
-tsendw() {
-  local window="$1"
+# Send to specific session
+tsends() {
+  local session="$1"
   shift
-  if [ -z "$window" ] || [ -z "$1" ]; then
-    echo "Usage: tsendw <window-number> <text>"
-    echo "Example: tsendw 0 'npm start'"
+  if [ -z "$session" ] || [ -z "$1" ]; then
+    echo "Usage: tsends <session-name> <text>"
+    echo "Example: tsends cleverkeys 'go'"
     return 1
   fi
-  tmux send-keys -t boot-session:$window "$*" C-m
+  tmux send-keys -t "$session" "$*" Enter
 }
 
-# Export aliases for subshells
-export -f tm tmgo tmba tmbp tmbr tmbi tmbb tmbw tsend tsendw
+# Export functions for subshells
+export -f tm tmgo tmba tmbp tmbr tmbi tmbb tsend tsends

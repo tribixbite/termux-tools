@@ -4,27 +4,31 @@ Collection of tools, scripts, and configurations for enhancing Termux productivi
 
 ## 🚀 Features
 
-### Tmux Boot Session Manager
+### Tmux Multi-Instance Manager
 
-Automatically start and manage multiple project sessions in tmux that persist across device reboots.
+Automatically start and manage multiple project sessions in **separate tmux instances** that persist across device reboots.
 
 **What it does:**
-- Creates tmux sessions on boot with one window per project
-- Runs custom commands (like `cc` then `go`) in each window
-- Provides aliases for quick navigation between projects
-- Easy repo management (add/remove projects dynamically)
+- Creates separate tmux instance for each project on boot
+- Automatically sends 'go' command to flagged projects (like cleverkeys)
+- Provides fuzzy-search commands to switch between instances
+- Easy repo management with automation flags
 
 **Primary Commands:**
 ```bash
-# From inside cc/claude or anywhere
-tm clev        # Switch to cleverkeys (or any partial match)
-tm un          # Switch to Unexpected-Keyboard
-tm newproject  # Creates window if repo exists in ~/git/
+# Switch to a tmux instance (fuzzy search)
+tm clev        # Attach to cleverkeys (or any partial match)
+tm un          # Attach to Unexpected-Keyboard
+tm newproject  # Creates new instance if repo exists in ~/git/
 
-# Send 'go' to a window without switching
-tmgo clev      # Send 'go' to cleverkeys, stay in current window
-tmgo 0         # Send 'go' to window 0 by number
+# Send 'go' to an instance without switching
+tmgo clev      # Send 'go' to cleverkeys, stay in current session
 tmgo un        # Send 'go' to Unexpected-Keyboard
+
+# List and manage instances
+tmbs           # List all tmux sessions
+tmbi           # Show detailed instance info
+tmbr           # Restart all instances
 ```
 
 **Quick Start:**
@@ -36,7 +40,9 @@ pkg install tmux termux-api termux-boot
 # https://f-droid.org/packages/com.termux.boot/
 
 # Copy example configs
+mkdir -p ~/.termux/boot
 cp examples/startup.sh.example ~/.termux/boot/startup.sh
+cp examples/repos.conf.example ~/.termux/boot/repos.conf
 cp examples/bash_aliases.example ~/.bash_aliases
 chmod +x ~/.termux/boot/startup.sh
 
@@ -44,37 +50,49 @@ chmod +x ~/.termux/boot/startup.sh
 echo 'if [ -f ~/.bash_aliases ]; then . ~/.bash_aliases; fi' >> ~/.bashrc
 source ~/.bashrc
 
-# Edit repos in startup.sh
-vim ~/.termux/boot/startup.sh
+# Edit repos in repos.conf (add auto_go flags)
+vim ~/.termux/boot/repos.conf
 
 # Test it
 ~/.termux/boot/startup.sh
-tmb  # Attach to boot session
+tmbs  # List all instances
+tm clev  # Attach to cleverkeys
 ```
 
 ## 📚 Documentation
 
-- **[TERMUX_BOOT_QUICKSTART.md](TERMUX_BOOT_QUICKSTART.md)** - Quick reference for boot session setup
+- **[SUMMARY.md](SUMMARY.md)** - Quick overview of features
+- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
+- **[TM_COMMAND.md](TM_COMMAND.md)** - Deep dive on tm command
+- **[TMGO_COMMAND.md](TMGO_COMMAND.md)** - Deep dive on tmgo command
+- **[WORKFLOWS.md](WORKFLOWS.md)** - Real-world usage patterns
 - **[TERMUX_BOOT_SETUP.md](TERMUX_BOOT_SETUP.md)** - Complete boot configuration guide
 - **[TMUX_ALIASES_GUIDE.md](TMUX_ALIASES_GUIDE.md)** - Comprehensive alias reference
-- **[SETUP_CHANGES.md](SETUP_CHANGES.md)** - Summary of system changes
 
 ## 🛠️ Configuration Files
 
-### `~/.termux/boot/startup.sh`
+### `~/.termux/boot/repos.conf`
 
-Creates tmux session with windows for each project directory.
+Defines repositories and automation flags.
 
 **Example:**
 ```bash
-repos=(
-  "$HOME/git/project1"
-  "$HOME/git/project2"
-  "$HOME/git/project3"
-)
+# Format: REPOS["path"]="auto_go:enabled"
+# auto_go: 1 = auto-send 'go', 0 = just start cc
+# enabled: 1 = start on boot, 0 = skip
+
+REPOS["$HOME/git/swype/cleverkeys"]="1:1"  # Auto-go enabled
+REPOS["$HOME/git/swype/CustomCamera"]="0:1"
+REPOS["$HOME/git/pop/popcorn-mobile"]="0:1"
 ```
 
-See [examples/startup.sh.example](examples/startup.sh.example) for full configuration.
+See [examples/repos.conf.example](examples/repos.conf.example) for full configuration.
+
+### `~/.termux/boot/startup.sh`
+
+Reads repos.conf and creates separate tmux instance for each enabled project.
+
+See [examples/startup.sh.example](examples/startup.sh.example) for implementation.
 
 ### `~/.bash_aliases`
 

@@ -1,0 +1,23 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# ~/.termux/boot/repos.conf
+# Repository configuration for boot automation
+# Format: repo_path:auto_go:enabled
+# auto_go: 1 = auto-send 'go' after cc starts, 0 = just start cc
+# enabled: 1 = start on boot, 0 = skip
+
+declare -A REPOS
+
+# Swype projects
+REPOS["$HOME/git/swype/cleverkeys"]="1:1"  # auto_go:enabled
+REPOS["$HOME/git/swype/CustomCamera"]="0:1"
+REPOS["$HOME/git/swype/Unexpected-Keyboard"]="0:1"
+
+# Pop project
+REPOS["$HOME/git/pop/popcorn-mobile"]="0:1"
+
+# Other projects
+REPOS["$HOME/git/illustrate"]="0:1"
+REPOS["$HOME/git/discord-irc"]="0:1"
+
+# Add your own repos:
+# REPOS["$HOME/git/your-project"]="0:1"
