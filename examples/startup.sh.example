@@ -62,3 +62,9 @@ done
 termux-wake-unlock
 
 echo "[$(date)] Boot startup completed - created $instance_count tmux instances" >> "$HOME/.termux/boot.log"
+
+# Start cron daemon for scheduled tasks
+if ! pgrep -x crond > /dev/null; then
+  crond -s -P
+  echo "[$(date)] Started crond" >> "$HOME/.termux/boot.log"
+fi
