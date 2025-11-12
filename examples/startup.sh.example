@@ -44,12 +44,14 @@ for repo in "${!REPOS[@]}"; do
   tmux new-session -d -s "$session_name" -c "$repo"
 
   # Start Claude Code in the session
-  tmux send-keys -t "$session_name" "cc" Enter
+  tmux send-keys -t "$session_name" "cc"
+  tmux send-keys -t "$session_name" Enter
 
   # Auto-send 'go' if flagged
   if [ "$auto_go" = "1" ]; then
     sleep 1  # Wait for cc to fully start
-    tmux send-keys -t "$session_name" "go" Enter
+    tmux send-keys -t "$session_name" "go"
+    tmux send-keys -t "$session_name" Enter
     echo "[$(date)] Auto-sent 'go' to $session_name" >> "$HOME/.termux/boot.log"
   fi
 

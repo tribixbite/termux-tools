@@ -73,7 +73,8 @@ tm() {
 
     # Create new session
     tmux new-session -d -s "$session_name" -c "$matched_repo"
-    tmux send-keys -t "$session_name" "cc" Enter
+    tmux send-keys -t "$session_name" "cc"
+    tmux send-keys -t "$session_name" Enter
 
     echo "✓ Created instance: $session_name"
     echo "  Use: tm $search to attach"
@@ -133,8 +134,10 @@ tmgo() {
     return 1
   fi
 
-  # Send 'go' to the target session (using Enter instead of C-m)
-  tmux send-keys -t "$matched_session" "go" Enter
+  # Send 'go' to the target session
+  # Send text first, then Enter key separately to ensure proper execution
+  tmux send-keys -t "$matched_session" "go"
+  tmux send-keys -t "$matched_session" Enter
   echo "✓ Sent 'go' to session: $matched_session"
 }
 
@@ -187,12 +190,14 @@ tmba() {
 
   # Create new session
   tmux new-session -d -s "$session_name" -c "$repo_path"
-  tmux send-keys -t "$session_name" "cc" Enter
+  tmux send-keys -t "$session_name" "cc"
+  tmux send-keys -t "$session_name" Enter
 
   # Auto-send 'go' if flagged
   if [ "$auto_go" = "1" ]; then
     sleep 1
-    tmux send-keys -t "$session_name" "go" Enter
+    tmux send-keys -t "$session_name" "go"
+    tmux send-keys -t "$session_name" Enter
     echo "✓ Created instance: $session_name (with auto-go)"
   else
     echo "✓ Created instance: $session_name"
@@ -334,7 +339,8 @@ tsend() {
     echo "Sends text to current tmux session"
     return 1
   fi
-  tmux send-keys "$*" Enter
+  tmux send-keys "$*"
+  tmux send-keys Enter
 }
 
 # Send to specific session
@@ -346,7 +352,8 @@ tsends() {
     echo "Example: tsends cleverkeys 'go'"
     return 1
   fi
-  tmux send-keys -t "$session" "$*" Enter
+  tmux send-keys -t "$session" "$*"
+  tmux send-keys -t "$session" Enter
 }
 
 # Export functions for subshells
