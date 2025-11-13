@@ -1,0 +1,11 @@
+@reboot      bash -c "source ~/.bash_aliases && bash ~/.termux/boot/startup.sh"
+0 * * * * ! curl -s https://michigansteamtrain.com/north-pole-express/ | grep -q 'SOLD OUT!' && termux-notification -t '🎟️ Tickets Available!' -c 'North Pole Express might have opened!' && termux-vibrate -d 2000
+# @reboot     GOOGLE_API_KEY=YOUR_GOOGLE_API_KEY_HERE cui-server --skip-auth-token &
+# @reboot cd /data/data/com.termux/files/home && bunx cui-server --no-auth-token
+*/10 * * * * bash -c "source ~/.bash_aliases && tmgo clever"
+*/10 * * * * bash -c "source ~/.bash_aliases && tmgo illus"
+
+# Keep ADB wireless debugging connected (check every 5 minutes)
+*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
+*/10 * * * * bash -c "source ~/.bash_aliases && tmgo cam"
+*/10 * * * * bash -c "source ~/.bash_aliases && tmgo mobile"
