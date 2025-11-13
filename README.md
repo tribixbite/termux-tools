@@ -4,7 +4,7 @@ Collection of tools, scripts, and configurations for enhancing Termux productivi
 
 ## 🚀 Features
 
-### Tmux Multi-Instance Manager
+### 1. Tmux Multi-Instance Manager
 
 Automatically start and manage multiple project sessions in **separate tmux instances** that persist across device reboots.
 
@@ -13,6 +13,17 @@ Automatically start and manage multiple project sessions in **separate tmux inst
 - Automatically sends 'go' command to flagged projects (like cleverkeys)
 - Provides fuzzy-search commands to switch between instances
 - Easy repo management with automation flags
+
+### 2. ADB Wireless Connection Automation
+
+Keeps ADB wireless debugging connected automatically for seamless Android development.
+
+**What it does:**
+- Auto-detects and connects to ADB over WiFi
+- Scans ports in reverse order (highest first) for faster connection
+- Remembers last successful connection for instant reconnect
+- Monitors and maintains connection via cron (every 5 minutes)
+- Supports APK installation over wireless connection
 
 **Primary Commands:**
 ```bash
