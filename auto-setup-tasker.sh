@@ -58,7 +58,7 @@ echo "📁 Creating task files..."
 # We can push a pre-made task XML file
 
 TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
-<TaskerData sr="" dvi="1" tv="6.3">
+<TaskerData sr="" dvi="1" tv="6.3.26">
     <Task sr="task1">
         <cdate>1731564000000</cdate>
         <edate>1731564000000</edate>
@@ -66,22 +66,27 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
         <nme>Termux Health Monitor</nme>
         <pri>100</pri>
         <Action sr="act0" ve="7">
-            <code>130</code>
+            <code>567</code>
             <label>Run Health Check</label>
-            <Str sr="arg0" ve="3">bash /data/data/com.termux/files/home/.shortcuts/check-termux-health.sh</Str>
-            <Int sr="arg1" val="0"/>
-            <Int sr="arg2" val="1"/>
-            <Int sr="arg3" val="0"/>
+            <Str sr="arg0" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
+            <Int sr="arg1" val="60"/>
+            <Str sr="arg2" ve="3">com.termux.tasker</Str>
+            <Str sr="arg3" ve="3"/>
             <Str sr="arg4" ve="3"/>
-            <Int sr="arg5" val="3"/>
-            <Str sr="arg6" ve="3"/>
-            <Str sr="arg7" ve="3"/>
+            <Bundle sr="arg5">
+                <Vals sr="val">
+                    <com.termux.tasker.extra.EXECUTABLE>~/.shortcuts/check-termux-health.sh</com.termux.tasker.extra.EXECUTABLE>
+                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.TERMINAL>false</com.termux.tasker.extra.TERMINAL>
+                    <com.termux.tasker.extra.WAIT_FOR_RESULT>true</com.termux.tasker.extra.WAIT_FOR_RESULT>
+                </Vals>
+            </Bundle>
         </Action>
         <Action sr="act1" ve="7">
             <code>37</code>
             <ConditionList sr="if">
                 <Condition sr="c0" ve="3">
-                    <lhs>%ERRORCODE</lhs>
+                    <lhs>%err</lhs>
                     <op>12</op>
                     <rhs>0</rhs>
                 </Condition>
@@ -89,13 +94,23 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
         </Action>
         <Action sr="act2" ve="7">
             <code>523</code>
+            <label>Show Recovery Notification</label>
             <Str sr="arg0" ve="3">Termux Recovery</Str>
-            <Str sr="arg1" ve="3">Restarting Termux...</Str>
+            <Str sr="arg1" ve="3">Restarting Termux sessions...</Str>
+            <Img sr="arg2" ve="2"/>
+            <Int sr="arg3" val="0"/>
+            <Int sr="arg4" val="0"/>
+            <Str sr="arg5" ve="3"/>
+            <Str sr="arg6" ve="3"/>
+            <Str sr="arg7" ve="3"/>
+            <Str sr="arg8" ve="3"/>
+            <Int sr="arg9" val="0"/>
             <Str sr="arg10" ve="3"/>
             <Int sr="arg11" val="0"/>
         </Action>
         <Action sr="act3" ve="7">
             <code>21</code>
+            <label>Launch Termux</label>
             <App sr="arg0">
                 <appClass>com.termux.app.TermuxActivity</appClass>
                 <appPkg>com.termux</appPkg>
@@ -105,18 +120,32 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
         </Action>
         <Action sr="act4" ve="7">
             <code>30</code>
+            <label>Wait 3 seconds</label>
             <Int sr="arg0" val="0"/>
-            <Int sr="arg1" val="3000"/>
+            <Int sr="arg1" val="3"/>
+            <Int sr="arg2" val="0"/>
+            <Int sr="arg3" val="0"/>
+            <Int sr="arg4" val="0"/>
         </Action>
         <Action sr="act5" ve="7">
-            <code>130</code>
-            <label>Run Startup</label>
-            <Str sr="arg0" ve="3">bash /data/data/com.termux/files/home/.termux/boot/startup.sh</Str>
-            <Int sr="arg1" val="0"/>
-            <Int sr="arg2" val="0"/>
+            <code>567</code>
+            <label>Run Startup Script</label>
+            <Str sr="arg0" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
+            <Int sr="arg1" val="60"/>
+            <Str sr="arg2" ve="3">com.termux.tasker</Str>
+            <Str sr="arg3" ve="3"/>
+            <Str sr="arg4" ve="3"/>
+            <Bundle sr="arg5">
+                <Vals sr="val">
+                    <com.termux.tasker.extra.EXECUTABLE>~/.termux/boot/startup.sh</com.termux.tasker.extra.EXECUTABLE>
+                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.TERMINAL>false</com.termux.tasker.extra.TERMINAL>
+                </Vals>
+            </Bundle>
         </Action>
         <Action sr="act6" ve="7">
             <code>43</code>
+            <label>End If</label>
         </Action>
     </Task>
     <Profile sr="prof1" ve="2">

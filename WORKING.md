@@ -1,6 +1,30 @@
 # Current Working Session - 2025-11-14
 
-## Latest Work: ADB-Automated Tasker Setup
+## Latest Work: Fixed Tasker XML Format Compatibility
+
+### Issue Resolved
+User feedback: "the xml u made isnt compatible with latest termux pls look up proper format"
+
+**Problem:**
+- Initial XML used action code 130 (Shell Script) instead of proper Termux:Tasker plugin format
+- Missing Bundle configuration required by Termux:Tasker plugin
+- Incompatible with latest Tasker version
+
+**Solution:**
+- Researched Tasker-XML-Info and termux-tasker official templates
+- Updated to use action code 567 (Plugin action)
+- Implemented proper Bundle configuration with Termux:Tasker keys:
+  - `com.termux.tasker.extra.EXECUTABLE`
+  - `com.termux.tasker.extra.WORKDIR`
+  - `com.termux.tasker.extra.TERMINAL`
+  - `com.termux.tasker.extra.WAIT_FOR_RESULT`
+- Updated both `/sdcard/Download/TermuxHealthMonitor.prj.xml` and `auto-setup-tasker.sh`
+
+**Files Modified:**
+- `/sdcard/Download/TermuxHealthMonitor.prj.xml` - Corrected format
+- `auto-setup-tasker.sh` - Updated embedded XML template
+
+## Previous Work: ADB-Automated Tasker Setup
 
 ### User Request
 "Can you use ADB to set up Tasker to ensure Termux is launched if it's not running (e.g. because it crashed)?"
