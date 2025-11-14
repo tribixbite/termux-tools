@@ -25,6 +25,25 @@ Keeps ADB wireless debugging connected automatically for seamless Android develo
 - Monitors and maintains connection via cron (every 5 minutes)
 - Supports APK installation over wireless connection
 
+### 3. Tasker Crash Recovery (New!)
+
+Automatically restarts Termux and restores all sessions when it crashes or runs out of RAM.
+
+**What it does:**
+- Detects when Termux force closes or crashes
+- Automatically relaunches Termux
+- Runs boot script to restore all tmux sessions
+- Optionally keeps wireless debugging enabled
+- No manual intervention needed
+
+**Setup:**
+```bash
+# Copy Tasker XML files to Downloads
+cp ~/git/termux-tools/tasker/*.xml ~/storage/downloads/
+
+# Then import in Tasker app (see tasker/QUICK_IMPORT.md)
+```
+
 **Primary Commands:**
 ```bash
 # Switch to a tmux instance (fuzzy search)

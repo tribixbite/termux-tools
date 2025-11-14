@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TaskerData sr="" dvi="1" tv="6.2.21">
+  <Task sr="task2">
+    <cdate>1699800000000</cdate>
+    <edate>1699800000000</edate>
+    <id>2</id>
+    <nme>Wireless Debugging KeepAlive</nme>
+    <pri>100</pri>
+    <Action sr="act0" ve="7">
+      <code>130</code>
+      <label>Open Developer Options</label>
+      <Str sr="arg0" ve="3">com.android.settings</Str>
+      <Str sr="arg1" ve="3">com.android.settings.Settings$DevelopmentSettingsDashboardActivity</Str>
+      <Int sr="arg2" val="0"/>
+    </Action>
+    <Action sr="act1" ve="7">
+      <code>547</code>
+      <label>Wait for settings to open</label>
+      <Str sr="arg0" ve="3">1</Str>
+    </Action>
+    <Action sr="act2" ve="7">
+      <code>127</code>
+      <label>Click Wireless Debugging (AutoInput required)</label>
+      <Bundle sr="arg0">
+        <Vals sr="val">
+          <com.joaomgcd.autoinput.intent.IntentConfiguration>
+            <action>1</action>
+            <text>Wireless debugging</text>
+            <clickType>0</clickType>
+          </com.joaomgcd.autoinput.intent.IntentConfiguration>
+        </Vals>
+      </Bundle>
+      <Str sr="arg1" ve="3">com.joaomgcd.autoinput</Str>
+      <Int sr="arg2" val="1"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+    </Action>
+    <Action sr="act3" ve="7">
+      <code>547</code>
+      <label>Wait</label>
+      <Str sr="arg0" ve="3">1</Str>
+    </Action>
+    <Action sr="act4" ve="7">
+      <code>127</code>
+      <label>Toggle ON if needed (AutoInput)</label>
+      <Bundle sr="arg0">
+        <Vals sr="val">
+          <com.joaomgcd.autoinput.intent.IntentConfiguration>
+            <action>1</action>
+            <checkState>1</checkState>
+            <id>android:id/switch_widget</id>
+          </com.joaomgcd.autoinput.intent.IntentConfiguration>
+        </Vals>
+      </Bundle>
+      <Str sr="arg1" ve="3">com.joaomgcd.autoinput</Str>
+      <Int sr="arg2" val="1"/>
+      <Int sr="arg3" val="0"/>
+      <Int sr="arg4" val="0"/>
+    </Action>
+    <Action sr="act5" ve="7">
+      <code>20</code>
+      <label>Go Home</label>
+      <Int sr="arg0" val="0"/>
+    </Action>
+  </Task>
+</TaskerData>
