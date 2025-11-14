@@ -57,7 +57,8 @@ echo "📁 Creating task files..."
 # Tasker stores tasks in XML format in its data directory
 # We can push a pre-made task XML file
 
-TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
+TASK_XML='
+<?xml version="1.0" encoding="UTF-8"?>
 <TaskerData sr="" dvi="1" tv="6.3.26">
     <Task sr="task1">
         <cdate>1731564000000</cdate>
@@ -66,27 +67,46 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
         <nme>Termux Health Monitor</nme>
         <pri>100</pri>
         <Action sr="act0" ve="7">
-            <code>567</code>
+            <code>1256900802</code>
             <label>Run Health Check</label>
-            <Str sr="arg0" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
-            <Int sr="arg1" val="60"/>
-            <Str sr="arg2" ve="3">com.termux.tasker</Str>
-            <Str sr="arg3" ve="3"/>
-            <Str sr="arg4" ve="3"/>
-            <Bundle sr="arg5">
+            <se>false</se>
+            <Bundle sr="arg0">
                 <Vals sr="val">
+                    <com.termux.execute.arguments></com.termux.execute.arguments>
+                    <com.termux.execute.arguments-type>java.lang.String</com.termux.execute.arguments-type>
                     <com.termux.tasker.extra.EXECUTABLE>~/.shortcuts/check-termux-health.sh</com.termux.tasker.extra.EXECUTABLE>
-                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.EXECUTABLE-type>java.lang.String</com.termux.tasker.extra.EXECUTABLE-type>
                     <com.termux.tasker.extra.TERMINAL>false</com.termux.tasker.extra.TERMINAL>
-                    <com.termux.tasker.extra.WAIT_FOR_RESULT>true</com.termux.tasker.extra.WAIT_FOR_RESULT>
+                    <com.termux.tasker.extra.TERMINAL-type>java.lang.Boolean</com.termux.tasker.extra.TERMINAL-type>
+                    <com.termux.tasker.extra.VERSION_CODE>4</com.termux.tasker.extra.VERSION_CODE>
+                    <com.termux.tasker.extra.VERSION_CODE-type>java.lang.Integer</com.termux.tasker.extra.VERSION_CODE-type>
+                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.WORKDIR-type>java.lang.String</com.termux.tasker.extra.WORKDIR-type>
+                    <com.twofortyfouram.locale.intent.extra.BLURB>~/.shortcuts/check-termux-health.sh</com.twofortyfouram.locale.intent.extra.BLURB>
+                    <com.twofortyfouram.locale.intent.extra.BLURB-type>java.lang.String</com.twofortyfouram.locale.intent.extra.BLURB-type>
+                    <net.dinglisch.android.tasker.RELEVANT_VARIABLES>&lt;StringArray sr=""&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES0&gt;%stdout
+Standard Output
+The &amp;lt;B&amp;gt;stdout&amp;lt;/B&amp;gt; of the command.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES0&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES1&gt;%stderr
+Standard Error
+The &amp;lt;B&amp;gt;stderr&amp;lt;/B&amp;gt; of the command.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES1&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES2&gt;%result
+Exit Code
+The &amp;lt;B&amp;gt;exit code&amp;lt;/B&amp;gt; of the command. 0 often means success and anything else is usually a failure of some sort.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES2&gt;&lt;/StringArray&gt;</net.dinglisch.android.tasker.RELEVANT_VARIABLES>
+                    <net.dinglisch.android.tasker.RELEVANT_VARIABLES-type>[Ljava.lang.String;</net.dinglisch.android.tasker.RELEVANT_VARIABLES-type>
+                    <net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS>com.termux.tasker.extra.EXECUTABLE com.termux.execute.arguments com.termux.tasker.extra.WORKDIR</net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS>
+                    <net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS-type>java.lang.String</net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS-type>
+                    <net.dinglisch.android.tasker.subbundled>true</net.dinglisch.android.tasker.subbundled>
+                    <net.dinglisch.android.tasker.subbundled-type>java.lang.Boolean</net.dinglisch.android.tasker.subbundled-type>
                 </Vals>
             </Bundle>
+            <Str sr="arg1" ve="3">com.termux.tasker</Str>
+            <Str sr="arg2" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
+            <Int sr="arg3" val="10"/>
         </Action>
         <Action sr="act1" ve="7">
             <code>37</code>
             <ConditionList sr="if">
                 <Condition sr="c0" ve="3">
-                    <lhs>%err</lhs>
+                    <lhs>%result</lhs>
                     <op>12</op>
                     <rhs>0</rhs>
                 </Condition>
@@ -128,20 +148,40 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
             <Int sr="arg4" val="0"/>
         </Action>
         <Action sr="act5" ve="7">
-            <code>567</code>
+            <code>1256900802</code>
             <label>Run Startup Script</label>
-            <Str sr="arg0" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
-            <Int sr="arg1" val="60"/>
-            <Str sr="arg2" ve="3">com.termux.tasker</Str>
-            <Str sr="arg3" ve="3"/>
-            <Str sr="arg4" ve="3"/>
-            <Bundle sr="arg5">
+            <se>false</se>
+            <Bundle sr="arg0">
                 <Vals sr="val">
+                    <com.termux.execute.arguments></com.termux.execute.arguments>
+                    <com.termux.execute.arguments-type>java.lang.String</com.termux.execute.arguments-type>
                     <com.termux.tasker.extra.EXECUTABLE>~/.termux/boot/startup.sh</com.termux.tasker.extra.EXECUTABLE>
-                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.EXECUTABLE-type>java.lang.String</com.termux.tasker.extra.EXECUTABLE-type>
                     <com.termux.tasker.extra.TERMINAL>false</com.termux.tasker.extra.TERMINAL>
+                    <com.termux.tasker.extra.TERMINAL-type>java.lang.Boolean</com.termux.tasker.extra.TERMINAL-type>
+                    <com.termux.tasker.extra.VERSION_CODE>4</com.termux.tasker.extra.VERSION_CODE>
+                    <com.termux.tasker.extra.VERSION_CODE-type>java.lang.Integer</com.termux.tasker.extra.VERSION_CODE-type>
+                    <com.termux.tasker.extra.WORKDIR>~</com.termux.tasker.extra.WORKDIR>
+                    <com.termux.tasker.extra.WORKDIR-type>java.lang.String</com.termux.tasker.extra.WORKDIR-type>
+                    <com.twofortyfouram.locale.intent.extra.BLURB>~/.termux/boot/startup.sh</com.twofortyfouram.locale.intent.extra.BLURB>
+                    <com.twofortyfouram.locale.intent.extra.BLURB-type>java.lang.String</com.twofortyfouram.locale.intent.extra.BLURB-type>
+                    <net.dinglisch.android.tasker.RELEVANT_VARIABLES>&lt;StringArray sr=""&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES0&gt;%stdout
+Standard Output
+The &amp;lt;B&amp;gt;stdout&amp;lt;/B&amp;gt; of the command.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES0&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES1&gt;%stderr
+Standard Error
+The &amp;lt;B&amp;gt;stderr&amp;lt;/B&amp;gt; of the command.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES1&gt;&lt;_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES2&gt;%result
+Exit Code
+The &amp;lt;B&amp;gt;exit code&amp;lt;/B&amp;gt; of the command. 0 often means success and anything else is usually a failure of some sort.&lt;/_array_net.dinglisch.android.tasker.RELEVANT_VARIABLES2&gt;&lt;/StringArray&gt;</net.dinglisch.android.tasker.RELEVANT_VARIABLES>
+                    <net.dinglisch.android.tasker.RELEVANT_VARIABLES-type>[Ljava.lang.String;</net.dinglisch.android.tasker.RELEVANT_VARIABLES-type>
+                    <net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS>com.termux.tasker.extra.EXECUTABLE com.termux.execute.arguments com.termux.tasker.extra.WORKDIR</net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS>
+                    <net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS-type>java.lang.String</net.dinglisch.android.tasker.extras.VARIABLE_REPLACE_KEYS-type>
+                    <net.dinglisch.android.tasker.subbundled>true</net.dinglisch.android.tasker.subbundled>
+                    <net.dinglisch.android.tasker.subbundled-type>java.lang.Boolean</net.dinglisch.android.tasker.subbundled-type>
                 </Vals>
             </Bundle>
+            <Str sr="arg1" ve="3">com.termux.tasker</Str>
+            <Str sr="arg2" ve="3">com.termux.tasker.EditConfigurationActivity</Str>
+            <Int sr="arg3" val="10"/>
         </Action>
         <Action sr="act6" ve="7">
             <code>43</code>
@@ -162,7 +202,8 @@ TASK_XML='<?xml version="1.0" encoding="UTF-8"?>
         </Time>
         <nme>Check Termux Every 10min</nme>
     </Profile>
-</TaskerData>'
+</TaskerData>
+'
 
 # Save to Downloads (accessible location)
 TEMP_FILE="/sdcard/Download/TermuxHealthMonitor.prj.xml"
