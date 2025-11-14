@@ -17,7 +17,7 @@ REPOS["$HOME/git/pop/popcorn-mobile"]="0:1"
 
 # Other projects
 REPOS["$HOME/git/illustrate"]="0:1"
-REPOS["$HOME/git/discord-irc"]="0:1"
+# REPOS["$HOME/git/discord-irc"]="0:1"  # Disabled - using dedicated discord-bot section in startup.sh
 
 # Add your own repos:
 # REPOS["$HOME/git/your-project"]="0:1"
