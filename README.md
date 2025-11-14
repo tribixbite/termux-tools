@@ -26,24 +26,35 @@ Keeps ADB wireless debugging connected automatically for seamless Android develo
 - Monitors and maintains connection via cron (every 5 minutes)
 - Supports APK installation over wireless connection
 
-### 3. Tasker Crash Recovery (New!)
+### 3. Tasker Crash Recovery
 
 Automatically restarts Termux and restores all sessions when it crashes or runs out of RAM.
 
 **What it does:**
-- Detects when Termux force closes or crashes
+- Monitors for absence of "Termux Boot" notification
+- Detects when Termux crashes or sessions fail to start
 - Automatically relaunches Termux
 - Runs boot script to restore all tmux sessions
-- Optionally keeps wireless debugging enabled
+- Health check verifies sessions are actually running
 - No manual intervention needed
 
-**Setup:**
+**Quick Setup (ADB-Automated):**
 ```bash
-# Copy Tasker XML files to Downloads
-cp ~/git/termux-tools/tasker/*.xml ~/storage/downloads/
+cd ~/git/termux-tools
 
-# Then import in Tasker app (see tasker/QUICK_IMPORT.md)
+# Fully automated setup via ADB (recommended)
+bash auto-setup-tasker.sh
+
+# OR interactive setup with health checks
+bash setup-tasker-simple.sh
+
+# See TASKER_ADB_SETUP.md for manual setup and troubleshooting
 ```
+
+**How it works:**
+- Runs health check every 10 minutes (adjustable)
+- If unhealthy → launches Termux + runs startup script
+- Much more robust than "App Closed" event detection
 
 **Primary Commands:**
 ```bash
@@ -93,6 +104,7 @@ tm clev  # Attach to cleverkeys
 ## 📚 Documentation
 
 - **[BOOT_ARCHITECTURE.md](BOOT_ARCHITECTURE.md)** - ⭐ Boot system architecture, wake locks, error handling, logging
+- **[TASKER_ADB_SETUP.md](TASKER_ADB_SETUP.md)** - ⭐ Automated Tasker setup via ADB for crash recovery
 - **[SUMMARY.md](SUMMARY.md)** - Quick overview of features
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
 - **[TM_COMMAND.md](TM_COMMAND.md)** - Deep dive on tm command
