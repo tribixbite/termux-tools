@@ -136,8 +136,8 @@ tmgo() {
 
   # Send 'go' to the target session
   # Send text first, then Enter key separately to ensure proper execution
-  tmux send-keys -t "$matched_session" "go"
-  tmux send-keys -t "$matched_session" Enter
+  tmux send-keys -t "$matched_session" "go" Enter
+  tmux send-keys -t "$matched_session" C-m
   echo "✓ Sent 'go' to session: $matched_session"
 }
 
@@ -355,6 +355,9 @@ tsends() {
   tmux send-keys -t "$session" "$*"
   tmux send-keys -t "$session" Enter
 }
+
+# ADB wireless connection alias
+alias adbc='~/git/termux-tools/adb-wireless-connect.sh'
 
 # Export functions for subshells
 export -f tm tmgo tmba tmbp tmbr tmbi tmbb tsend tsends
