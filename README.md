@@ -70,10 +70,10 @@ pkg install tmux termux-api termux-boot
 # Install Termux:Boot app from F-Droid
 # https://f-droid.org/packages/com.termux.boot/
 
-# Copy example configs
-mkdir -p ~/.termux/boot
+# Copy example configs (XDG-compliant structure)
+mkdir -p ~/.termux/boot ~/.config/termux-boot
 cp examples/startup.sh.example ~/.termux/boot/startup.sh
-cp examples/repos.conf.example ~/.termux/boot/repos.conf
+cp examples/repos.conf.example ~/.config/termux-boot/repos.conf
 cp examples/bash_aliases.example ~/.bash_aliases
 chmod +x ~/.termux/boot/startup.sh
 
@@ -92,6 +92,7 @@ tm clev  # Attach to cleverkeys
 
 ## 📚 Documentation
 
+- **[BOOT_ARCHITECTURE.md](BOOT_ARCHITECTURE.md)** - ⭐ Boot system architecture, wake locks, error handling, logging
 - **[SUMMARY.md](SUMMARY.md)** - Quick overview of features
 - **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
 - **[TM_COMMAND.md](TM_COMMAND.md)** - Deep dive on tm command
@@ -102,9 +103,9 @@ tm clev  # Attach to cleverkeys
 
 ## 🛠️ Configuration Files
 
-### `~/.termux/boot/repos.conf`
+### `~/.config/termux-boot/repos.conf`
 
-Defines repositories and automation flags.
+Defines repositories and automation flags. (Fallback: `~/.termux/boot/repos.conf`)
 
 **Example:**
 ```bash
