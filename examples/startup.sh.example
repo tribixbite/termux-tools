@@ -58,6 +58,21 @@ for repo in "${!REPOS[@]}"; do
   instance_count=$((instance_count + 1))
 done
 
+# Start discord-irc bot in separate session
+if [ -d "$HOME/git/dirc" ] && [ -f "$HOME/git/discord-irc/dist/lib/cli.js" ]; then
+  echo "[$(date)] Creating tmux instance: discord-bot" >> "$HOME/.termux/boot.log"
+
+  # Create tmux session for bot
+  tmux new-session -d -s discord-bot -c "$HOME/git/dirc"
+
+  # Start the bot with NODE_ENV=development
+  tmux send-keys -t discord-bot "NODE_ENV=development bun ../discord-irc/dist/lib/cli.js"
+  tmux send-keys -t discord-bot Enter
+
+  echo "[$(date)] Started discord-irc bot" >> "$HOME/.termux/boot.log"
+  instance_count=$((instance_count + 1))
+fi
+
 # Release wake lock after setup
 termux-wake-unlock
 

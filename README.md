@@ -13,6 +13,7 @@ Automatically start and manage multiple project sessions in **separate tmux inst
 - Automatically sends 'go' command to flagged projects (like cleverkeys)
 - Provides fuzzy-search commands to switch between instances
 - Easy repo management with automation flags
+- Supports custom bot sessions (e.g., discord-irc bot with Bun runtime)
 
 ### 2. ADB Wireless Connection Automation
 
