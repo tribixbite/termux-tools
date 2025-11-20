@@ -240,6 +240,14 @@ else
     echo
     echo "❌ Could not establish ADB connection"
     echo
+
+    # Copy 'wifidebug' to clipboard for quick access
+    if command -v termux-clipboard-set &>/dev/null; then
+        echo "wifidebug" | termux-clipboard-set
+        echo "📋 Copied 'wifidebug' to clipboard - paste to enable wireless debugging"
+        echo
+    fi
+
     echo "💡 Troubleshooting:"
     echo "   1. Enable Developer Options on target device"
     echo "   2. Enable 'Wireless debugging' or 'ADB over network'"
