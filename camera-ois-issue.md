@@ -114,6 +114,12 @@ The gyro config exists but the driver isn't registering it.
 | Checked disabled packages (403) | None camera/sensor related |
 | Verified lsm6dsv_0.json config | Gyro config exists |
 | Checked sensor init services | Both stopped |
+| Toggle motion_engine setting | No effect |
+| Kill sensor HAL process | Permission denied (no root) |
+| `am crash` sensor service | No visible effect |
+| `cmd sensorservice` | No reset/restart command available |
+| Airplane mode toggle | Permission denied (no root) |
+| Samsung *#0*# service menu | Requires manual interaction |
 
 ## Potential Fixes (Require Root)
 
@@ -137,17 +143,33 @@ Samsung service menu `*#0*#` → Sensor test may reinitialize sensors.
 
 ## Fixes Without Root
 
-### 1. Samsung Service Menu
-- Dial `*#0*#` → Go to Sensor test
-- May trigger sensor reinitialization
+### 1. Samsung Service Menu (RECOMMENDED - TRY THIS FIRST)
+- Dial `*#0*#` in the Phone app (not via ADB)
+- Wait for service menu to auto-launch
+- Navigate to **Sensor** test
+- Run **Gyro Selftest** with phone on a **flat surface**
+- This may trigger sensor reinitialization
+- **Important**: Place device on desk/table before running test
 
-### 2. Factory Reset (Last Resort)
+### 2. Calibrate via Settings
+- Settings → Motion/Sensors → Calibrate Gyroscope
+- Follow on-screen instructions
+- Note: May not appear if gyroscope isn't detected
+
+### 3. Check for Magnetic Interference
+- Remove phone case (especially if it has magnets)
+- Move away from metallic objects
+- Magnets can interfere with IMU calibration
+
+### 4. Factory Reset (Last Resort)
 - Full factory reset may restore sensor registry
-- **Warning**: Data loss
+- **Warning**: Complete data loss
+- Backup everything first
 
-### 3. Samsung Service Center
+### 5. Samsung Service Center
 - If gyroscope hardware is damaged, requires repair
 - Samsung Members app → Support → Service request
+- Hardware replacement may be necessary
 
 ## Device Information
 
@@ -167,6 +189,12 @@ Samsung service menu `*#0*#` → Sensor test may reinitialize sensors.
 
 ---
 
-**Report Updated**: 2025-12-05 01:20 UTC
+**Report Updated**: 2025-12-05 06:50 UTC
 **Investigation Tool**: Claude Code with ADB
 **Device**: Samsung Galaxy S23 FE (SM-S938U1)
+
+## References
+
+- [Samsung Gyroscope Sensor FAIL - Community](https://r1.community.samsung.com/t5/galaxy-s/gyroscope-sensor-fail/td-p/23561530)
+- [Gyroscope Not Working Samsung - Troubleshooting Guide](https://gyroplacecl.com/gyroscope-not-working-samsung-troubleshooting-guide/)
+- [Galaxy S22 gyroscope/accelerometer issue - Samsung Community](https://eu.community.samsung.com/t5/galaxy-s22-series/galaxy-s22-gyroscope-accelerometer-issue/td-p/6397111)
