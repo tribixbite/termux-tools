@@ -82,6 +82,77 @@ Simply re-enabling `com.samsung.android.ssco` and `com.samsung.android.mocca` al
 
 ---
 
-**Report Updated**: 2025-12-06 07:15 UTC
+## Recurring Issue - December 9, 2025
+
+### Scenario: Packages Enabled But Gyro Missing
+
+On December 9, 2025, the gyroscope was again missing despite packages being enabled:
+
+**State Check:**
+```bash
+# All packages show enabled=1
+dumpsys package com.samsung.android.ssco | grep "User 0:"
+# stopped=true, enabled=1  ← Enabled but stopped
+
+dumpsys package com.samsung.android.mocca | grep "User 0:"
+# stopped=false, enabled=1 ← Running
+
+dumpsys sensorservice | grep Total
+# Total 24 h/w sensors ← Missing gyro (should be 40)
+```
+
+**Key Finding: Kernel sees gyro, HAL doesn't initialize it**
+```bash
+ls /sys/class/sensors/
+# gyro_sensor exists! ← Kernel/driver layer works
+
+# But SSC_DAEMON algo_id:21 (gyroscope algorithm) failed to load at boot
+```
+
+### Why Reboot is Required (Without Root)
+
+The gyroscope algorithm initialization happens at boot time. Without root access, these cannot be done:
+
+1. **Cannot restart sensor HAL**: `android.hardware.sensors-service.multihal` (PID 1892)
+2. **Cannot restart SSC daemon**: `factory.ssc` (PID 1994)
+3. **Cannot write to sysfs**: `/sys/class/sensors/gyro_sensor/` requires root
+4. **Cannot re-run init services**: `vendor-sensor-sh` is oneshot
+5. **Cannot send BOOT_COMPLETED**: Requires system permission
+
+### Distinction from Previous Issue
+
+| Scenario | Package State | Fix Required |
+|----------|---------------|--------------|
+| **Dec 6** | DISABLED (enabled=0/4) | Enable packages + reboot |
+| **Dec 9** | ENABLED but stopped (enabled=1, stopped=true) | Reboot only |
+
+### Resolution
+
+**A reboot is required** when:
+- Packages are enabled (`enabled=1`)
+- But gyroscope is missing from sensorservice
+- And kernel shows `/sys/class/sensors/gyro_sensor/` exists
+
+The algo_id:21 (gyroscope algorithm) needs to reinitialize at boot time. No userspace workaround exists without root.
+
+### Quick Diagnostic Commands
+
+```bash
+# Check sensor count (should be ~40, not 24)
+adb shell "dumpsys sensorservice | grep Total"
+
+# Check if gyro sysfs exists (kernel level)
+adb shell "ls /sys/class/sensors/ | grep gyro"
+
+# Check package states
+adb shell "dumpsys package com.samsung.android.ssco | grep 'stopped=\|enabled='"
+adb shell "dumpsys package com.samsung.android.mocca | grep 'stopped=\|enabled='"
+
+# If gyro_sensor exists in sysfs but not in sensorservice → reboot needed
+```
+
+---
+
+**Report Updated**: 2025-12-09 00:35 UTC
 **Investigation Tool**: Claude Code with ADB
-**Status**: RESOLVED
+**Status**: REQUIRES REBOOT for current instance
