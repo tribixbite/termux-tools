@@ -153,6 +153,80 @@ adb shell "dumpsys package com.samsung.android.mocca | grep 'stopped=\|enabled='
 
 ---
 
-**Report Updated**: 2025-12-09 00:35 UTC
-**Investigation Tool**: Claude Code with ADB
-**Status**: REQUIRES REBOOT for current instance
+## Persistent Issue - December 9, 2025 (After Reboot)
+
+### Scenario: Gyro Algo Fails Even After Reboot
+
+After reboot, the gyroscope algorithm **still fails to initialize**:
+
+**Logs show hardware detected but algorithm fails:**
+```
+# Gyro gain sysfs read SUCCESSFUL - hardware is present
+I UniDataManager: gyro gain sysfs read success! xgg = 0.284000, ygg = 0.283000
+
+# But enable fails with ENODEV
+E Unihal: LoadSensorImpl: 163: Failed to enable sensor : ret=-19, sensor=GYROSCOPE
+
+# And the SSC algorithm keeps failing
+E SSC_DAEMON: sendFactoryCmdToAlgo error algo_id:21
+I SSC_DAEMON: printFactoryDebugLog:348, _suid_map dataType:gyro
+```
+
+**Camera OIS logs:**
+```
+E CamX: LPAI OIS[0] Fail to create OIS channel API instance
+E CamX: OIS submodule creation failed
+E CamX: [Gravity] Sensor probe failed during boot, is probe: 0, conn state : 3
+```
+
+### Key Diagnostic Findings
+
+| Check | Result |
+|-------|--------|
+| Gyro hardware | ✓ Detected (sysfs gain read success) |
+| Gyro in SLPI suid_map | ✓ Present (dataType:gyro) |
+| algo_id:21 (gyro) | ✗ FAILS to initialize |
+| Sensor count | 24 (missing gyro, should be ~40) |
+| OIS | ✗ Cannot create channel |
+
+### Possible Root Causes (Per Gemini Analysis)
+
+1. **Corrupted sensor calibration data** in `/mnt/vendor/persist/sensors/registry/` (cannot verify without root)
+2. **Firmware/driver mismatch** from failed OTA or flash
+3. **SELinux denials** blocking ssc_daemon (none found in logs)
+4. **Sensor registry corruption** (`sns.reg` file)
+
+### Config Files Present
+
+```
+/vendor/etc/sensors/config/lsm6dsv_0.json  # Has .gyro section defined
+/vendor/etc/sensors/sns_reg_config         # Points to persist partition
+```
+
+The config defines gyro but the persist partition registry may be corrupted.
+
+### Commands That May Help (With Root)
+
+```bash
+# Check persist partition sensor registry
+ls -lZ /mnt/vendor/persist/sensors/registry/
+
+# Check for zero-byte calibration files
+find /mnt/vendor/persist /efs -name "sns.reg" -exec ls -l {} +
+
+# Restart sensor HAL (requires root)
+stop vendor.sensors-hal-2-1 && start vendor.sensors-hal-2-1
+```
+
+### Status
+
+**UNRESOLVED** - Gyro algo_id:21 fails even after reboot. May require:
+- Root access to inspect/repair persist partition
+- Factory reset (risk of data loss)
+- Re-flash stock firmware
+
+---
+
+**Report Updated**: 2025-12-09 20:55 UTC
+**Investigation Tool**: Claude Code with ADB + Zen MCP (Gemini)
+**Status**: UNRESOLVED - algo_id:21 fails even after reboot
