@@ -42,6 +42,9 @@ com.samsung.android.aremojieditor
 com.samsung.android.app.dofviewer
 com.samsung.android.sdk.handwriting
 com.samsung.android.internal.overlay.config.default_contextual_search
+com.samsung.android.rubin.app
+com.sec.automation
+com.samsung.faceservice
 "
 
 echo "Enabling camera/sensor packages..."
