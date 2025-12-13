@@ -8,8 +8,11 @@
 #   - /sys/devices/virtual/sensors/accelerometer_sensor/ has all attributes (same lsm6dsv_0 chip!)
 #   - sensorservice shows 24 sensors but no gyro
 #   - Error -19 (ENODEV) when trying to enable gyroscope
+#   - Unihal logs: "Failed to enable sensor : ret=-19, sensor=GYROSCOPE"
+#   - Camera OIS driver crashes: CamX::LPAIOIS::IsOISDriverOutputSync()
+# IMPACT: Camera COMPLETELY FAILS (not just OIS) - "Camera failed" error dialog
 # CONCLUSION: Gyro init fails at SLPI/SSC level - cannot restart without ROOT or REBOOT
-# Package enabling prepares for next reboot
+# Package enabling prepares for next reboot - REBOOT IS REQUIRED
 #
 # IMPORTANT: com.samsung.android.ssco MUST be enabled for camera to work!
 # This was the root cause of camera failures - SSCO was disabled (enabled=0)
