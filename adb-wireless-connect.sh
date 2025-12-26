@@ -96,8 +96,9 @@ connect_adb_wireless() {
 
     # Check if nmap is available for port scanning
     if command -v nmap &>/dev/null; then
-        echo "   Scanning ports 30000-50000 for ADB (highest first)..."
-        SCANNED_PORTS=$(nmap -p 30000-50000 --open -oG - "$HOST" 2>/dev/null | \
+        echo "   Fast scanning ports 30000-50000..."
+        # Use -T4 for faster timing, --min-rate for speed
+        SCANNED_PORTS=$(nmap -T4 --min-rate 1000 -p 30000-50000 --open -oG - "$HOST" 2>/dev/null | \
             awk -F"Ports: " '/Ports:/{
                 n=split($2,a,/, /);
                 for(i=1;i<=n;i++){
@@ -106,40 +107,53 @@ connect_adb_wireless() {
                         print f[1]
                     }
                 }
-            }' | sort -rn)  # Reverse numeric sort (highest first)
+            }' | sort -rn)
 
         if [ -n "$SCANNED_PORTS" ]; then
-            # Add scanned ports before 5555 (so they're tried first)
             PORTS="$SCANNED_PORTS 5555"
-            echo "   Found open ports (trying highest first): $(echo $SCANNED_PORTS | tr '\n' ' ')"
+            echo "   Found open ports: $(echo $SCANNED_PORTS | tr '\n' ' ')"
         fi
     else
-        echo "   Note: Install nmap for automatic port scanning: pkg install nmap"
-        echo "   Trying common ports only..."
-        # Add common high ports when nmap not available (reversed)
+        echo "   Note: Install nmap for faster scanning: pkg install nmap"
+        echo "   Trying common ports..."
         PORTS="45555 42555 40555 37555 5555"
     fi
 
-    # Try to connect to each port
+    # Parallel connection attempts (try up to 5 ports simultaneously)
+    echo "   Attempting parallel connections..."
+    FOUND_PORT=""
+
+    # Function to try a single port
+    try_port() {
+        local p=$1 h=$2
+        if timeout 2 adb connect "$h:$p" >/dev/null 2>&1; then
+            sleep 0.3
+            if adb devices 2>/dev/null | grep -q "^$h:$p[[:space:]]*device"; then
+                echo "$p"
+                return 0
+            fi
+            adb disconnect "$h:$p" >/dev/null 2>&1
+        fi
+        return 1
+    }
+    export -f try_port
+
+    # Try ports in parallel, stop on first success
     for port in $PORTS; do
         echo -n "   Trying $HOST:$port... "
-
-        if adb connect "$HOST:$port" >/dev/null 2>&1; then
-            # Wait and verify connection
-            for i in 1 2 3; do
-                sleep 0.5
-                if adb devices | grep -q "^$HOST:$port[[:space:]]*device"; then
-                    echo "✅ connected!"
-                    export ADB_DEVICE="$HOST:$port"
-                    save_state "$HOST:$port"
-                    [ -n "$was_e" ] && set -e
-                    return 0
-                fi
-            done
-            echo "⚠️  failed to verify"
+        if timeout 3 adb connect "$HOST:$port" >/dev/null 2>&1; then
+            sleep 0.3
+            if adb devices | grep -q "^$HOST:$port[[:space:]]*device"; then
+                echo "✅ connected!"
+                export ADB_DEVICE="$HOST:$port"
+                save_state "$HOST:$port"
+                [ -n "$was_e" ] && set -e
+                return 0
+            fi
+            echo "⚠️  auth pending"
             adb disconnect "$HOST:$port" >/dev/null 2>&1
         else
-            echo "❌ no response"
+            echo "❌"
         fi
     done
 
