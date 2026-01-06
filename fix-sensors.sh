@@ -11,13 +11,20 @@
 #   - Unihal logs: "Failed to enable sensor : ret=-19, sensor=GYROSCOPE"
 #   - Camera OIS driver crashes: CamX::LPAIOIS::IsOISDriverOutputSync()
 # IMPACT: Camera COMPLETELY FAILS (not just OIS) - "Camera failed" error dialog
-# CONCLUSION: Gyro init fails at SLPI/SSC level - cannot restart without ROOT or REBOOT
-# Package enabling prepares for next reboot - REBOOT IS REQUIRED
+#
+# FIX WITHOUT REBOOT (discovered 2026-01-05):
+#   adb shell "pm clear com.sec.android.app.camera"
+#   This forces camera to use NCS OIS (camxncsoischannelapi.cpp) instead of
+#   LPAI OIS (camxlpaiois.cpp). NCS OIS doesn't require gyro!
+#   Camera app caches OIS path choice - clearing data resets to fallback.
 #
 # IMPORTANT: com.samsung.android.ssco MUST be enabled for camera to work!
 # This was the root cause of camera failures - SSCO was disabled (enabled=0)
 #
-# ONE-LINER (copy-paste if camera fails after debloating):
+# QUICK FIX (no reboot needed):
+# adb shell "pm clear com.sec.android.app.camera"
+#
+# ONE-LINER to enable packages (copy-paste if camera fails after debloating):
 # adb shell "for p in com.samsung.android.ssco com.samsung.android.mocca com.samsung.sree com.samsung.android.visionintelligence com.samsung.android.aicore com.samsung.android.cameraxservice com.samsung.android.camerasdkservice com.samsung.android.app.cameraassistant com.samsung.android.bixbyvision.framework com.sec.android.app.hwmoduletest com.sem.factoryapp com.sec.android.diagmonagent; do pm enable \$p 2>/dev/null; done"
 
 PACKAGES="
@@ -76,5 +83,9 @@ for pkg in $PACKAGES; do
 done
 
 echo ""
-echo "Check gyro: adb shell 'dumpsys sensorservice | grep -i gyro'"
-echo "If still failing, reboot: adb reboot"
+echo "Clearing camera data to force NCS OIS fallback..."
+adb shell "pm clear com.sec.android.app.camera" 2>/dev/null
+
+echo ""
+echo "Done! Camera should work now (using NCS OIS instead of LPAI OIS)."
+echo "If still failing: adb reboot"
