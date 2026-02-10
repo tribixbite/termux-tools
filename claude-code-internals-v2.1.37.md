@@ -1,7 +1,7 @@
 # Claude Code CLI v2.1.37 — Internal Features, Codenames & Hidden Configuration
 
 > Binary analysis of `@anthropic-ai/claude-code@2.1.37`
-> Built: 2026-02-07T18:38:23Z | Analyzed: 2026-02-09
+> Built: 2026-02-07T18:38:23Z | Analyzed: 2026-02-09 | Updated: 2026-02-10
 > Internal CLI ID: `claude-cli-external-build-2137`
 
 ---
@@ -55,44 +55,44 @@ export ANTHROPIC_BETAS="adaptive-thinking-2026-01-28,research-preview-2026-02-01
 |---|---|---|---|
 | `tengu_amber_flint` | `true` | **Agent Teams** — multi-agent team coordination | Also requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=true` |
 | `tengu_cache_plum_violet` | `false` | Disables **microcompact** (tool result compaction) | Set to `true` in settings cache |
-| `tengu_chomp_inflection` | ? | Internal optimization | Server-side only |
-| `tengu_chrome_auto_enable` | ? | Auto-enable **Claude in Chrome** integration | `--chrome` CLI flag |
-| `tengu_code_diff_cli` | ? | Code diff display in CLI | Server-side only |
-| `tengu_compact_cache_prefix` | ? | Prompt cache optimization during compaction | Server-side only |
-| `tengu_compact_streaming_retry` | ? | Retry logic for compact streaming | Server-side only |
+| `tengu_chomp_inflection` | `true` | **Prompt suggestions** — controls auto-suggest prompts | Server-side only |
+| `tengu_chrome_auto_enable` | `false` | Auto-enable **Claude in Chrome** integration | `--chrome` CLI flag / `CLAUDE_CODE_ENABLE_CFC=true` |
+| `tengu_code_diff_cli` | `false` | **Code diff footer** — shows diffs in CLI output | Patch cli.js |
+| `tengu_compact_cache_prefix` | `false` | **Cache-aware compaction** — better prompt caching during compact | Patch cli.js |
+| `tengu_compact_streaming_retry` | `false` | Retry logic for compact streaming | Patch cli.js |
 | `tengu_copper_lantern` | `false` | **Extra usage promo** — "$50 free" for Pro/Max users | Server-side only |
-| `tengu_coral_fern` | ? | Unknown | Server-side only |
-| `tengu_cork_m4q` | ? | Unknown | Server-side only |
-| `tengu_file_write_optimization` | ? | File write optimizations | Server-side only |
-| `tengu_keybinding_customization_release` | ? | Custom keybinding support | Server-side only |
-| `tengu_kv7_prompt_sort` | ? | Prompt sorting optimization | Server-side only |
+| `tengu_coral_fern` | `false` | **Past session access** — adds session history/memory to system prompt | Patch cli.js (PATCHED) |
+| `tengu_cork_m4q` | `false` | **Bash risk policy** — injects command risk classification policy | Patch cli.js |
+| `tengu_file_write_optimization` | `false` | **Shorter write responses** — less verbose file write output | Patch cli.js |
+| `tengu_keybinding_customization_release` | `false` | Custom keybinding support release | Patch cli.js |
+| `tengu_kv7_prompt_sort` | `false` | Prompt sorting optimization | Patch cli.js |
 | `tengu_marble_anvil` | `false` | **Adaptive Thinking / Clear Thinking** — `clear_thinking_20251015` with `keep:"all"` | `ANTHROPIC_BETAS=adaptive-thinking-2026-01-28` |
-| `tengu_marble_kite` | ? | Unknown | Server-side only |
-| `tengu_marble_lantern_disabled` | ? | Unknown (disables something) | Server-side only |
-| `tengu_mcp_tool_search` | `true` | **Tool Search for MCP** — dynamic tool loading for MCP tools | `ENABLE_TOOL_SEARCH=true` |
-| `tengu_oboe` | ? | Unknown | Server-side only |
+| `tengu_marble_kite` | `false` | **Skip read-before-write** — Write tool doesn't require Read first | Patch cli.js |
+| `tengu_marble_lantern_disabled` | `false` | Disables premium UI elements when `true` | Patch cli.js |
+| `tengu_mcp_tool_search` | `true` | **Tool Search for MCP** — dynamic tool loading for MCP tools | `ENABLE_TOOL_SEARCH=true` (already on) |
+| `tengu_oboe` | `false` | **Auto-memory** — auto-generates MEMORY.md per session | Patch cli.js (PATCHED) |
 | `tengu_penguin_mode_promo` | `{discountPercent:50, endDate:"Feb 16"}` | **Fast Mode promo pricing** — 50% discount | Server-side only |
-| `tengu_penguins_enabled` | `true` | **Fast Mode (Penguin Mode)** — streaming Opus 4.6 | `/fast` command to toggle |
+| `tengu_penguins_enabled` | `true` | **Fast Mode (Penguin Mode)** — streaming Opus 4.6 | `/fast` command to toggle (already on) |
 | `tengu_penguins_off` | `null` | **Fast Mode kill switch** — reason string when disabled | Server-side only |
-| `tengu_permission_explainer` | ? | Permission request explanation | Server-side only |
-| `tengu_pid_based_version_locking` | ? | PID-based version locking (auto-updater) | Server-side only |
-| `tengu_plan_mode_interview_phase` | ? | Plan mode interview phase | `CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE` |
-| `tengu_plum_vx3` | ? | Unknown | Server-side only |
-| `tengu_pr_status_cli` | ? | PR status display in CLI | Server-side only |
-| `tengu_quartz_lantern` | ? | Unknown | Server-side only |
+| `tengu_permission_explainer` | `false` | **AI permission explanations** — explains why tools need permissions | Patch cli.js |
+| `tengu_pid_based_version_locking` | `false` | PID-based version locking (auto-updater) | Patch cli.js |
+| `tengu_plan_mode_interview_phase` | `false` | Plan mode interview phase | `CLAUDE_CODE_PLAN_MODE_INTERVIEW_PHASE` |
+| `tengu_plum_vx3` | `false` | **Disables thinking for web search** — faster web search responses | Patch cli.js |
+| `tengu_pr_status_cli` | `false` | **PR status footer** — shows PR status in CLI | Patch cli.js |
+| `tengu_quartz_lantern` | `false` | **File diff computation** — computes diffs for edit tool results (remote) | Patch cli.js |
 | `tengu_quiet_fern` | `false` | Unknown — also sent to VS Code extension | Server-side only |
-| `tengu_remote_backend` | ? | **Teleport / Remote sessions** backend | `CLAUDE_CODE_REMOTE=true` |
-| `tengu_scarf_coffee` | ? | Unknown | Server-side only |
+| `tengu_remote_backend` | `false` | **Teleport / Remote sessions** backend | `CLAUDE_CODE_REMOTE=true` |
+| `tengu_scarf_coffee` | `false` | Extra **beta header** for first-party API | Patch cli.js |
 | `tengu_session_memory` | `false` | **Session Memory** — persistence across compactions | `ENABLE_CLAUDE_CODE_SM_COMPACT=true` |
 | `tengu_silver_lantern` | `false` | **Opus 4.6 launch banner** in feed | Server-side only |
 | `tengu_sm_compact` | `false` | **Session Memory Compaction** — auto-compact with memory | `ENABLE_CLAUDE_CODE_SM_COMPACT=true` |
 | `tengu_system_prompt_global_cache` | `false` | **Global system prompt caching** (`cacheScope:"global"`) | `CLAUDE_CODE_FORCE_GLOBAL_CACHE=true` |
 | `tengu_tool_search_unsupported_models` | `["haiku"]` | Models excluded from tool search | Server-side only |
 | `tengu_tst_kx7` | `false` | **Tool search experiment** — enables below threshold | Server-side only |
-| `tengu_tst_names_in_messages` | ? | Tool names in messages | Server-side only |
-| `tengu_vinteuil_phrase` | ? | Unknown | Server-side only |
-| `tengu_workout2` | ? | Unknown | Server-side only |
-| `tengu_attribution_header` | ? | Attribution header | Server-side only |
+| `tengu_tst_names_in_messages` | `false` | Include tool names in message content | Patch cli.js |
+| `tengu_vinteuil_phrase` | `false` | **Alternate system prompt** — switches to simpler prompt path | Patch cli.js |
+| `tengu_workout2` | `false` | **Opus 4.6-specific** feature flag | Patch cli.js |
+| `tengu_attribution_header` | `true` | Attribution header in API requests | Already on |
 
 ### Boolean Gates (`sY()` — on/off)
 
