@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      padding: 16px;
+    }
+    h1 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #f0f0f0;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .status-dot.connected { background: #4caf50; }
+    .status-dot.connecting { background: #ff9800; animation: pulse 1s infinite; }
+    .status-dot.disconnected { background: #f44336; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+    .info {
+      font-size: 12px;
+      color: #999;
+      margin-bottom: 8px;
+    }
+    .info span { color: #ccc; }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      padding: 4px 0;
+      border-bottom: 1px solid #2a2a3e;
+    }
+    .row:last-child { border: none; }
+    .label { color: #888; }
+    .value { color: #ddd; font-family: monospace; }
+
+    button {
+      width: 100%;
+      margin-top: 12px;
+      padding: 8px;
+      background: #2a2a4e;
+      border: 1px solid #3a3a5e;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button:hover { background: #3a3a5e; }
+    button:active { background: #4a4a6e; }
+  </style>
+</head>
+<body>
+  <h1>
+    <span class="status-dot" id="statusDot"></span>
+    Claude Code Bridge
+  </h1>
+
+  <div class="row">
+    <span class="label">Status</span>
+    <span class="value" id="statusText">—</span>
+  </div>
+  <div class="row">
+    <span class="label">Server</span>
+    <span class="value" id="wsUrl">—</span>
+  </div>
+  <div class="row">
+    <span class="label">Tabs</span>
+    <span class="value" id="tabCount">0</span>
+  </div>
+
+  <button id="reconnectBtn">Reconnect</button>
+
+  <script src="popup.js"></script>
+</body>
+</html>
