@@ -1,7 +1,7 @@
 # Claude Code CLI v2.1.37 — Internal Features, Codenames & Hidden Configuration
 
 > Binary analysis of `@anthropic-ai/claude-code@2.1.37`
-> Built: 2026-02-07T18:38:23Z | Analyzed: 2026-02-09 | Updated: 2026-02-10
+> Built: 2026-02-07T18:38:23Z | Analyzed: 2026-02-09 | Updated: 2026-02-11
 > Internal CLI ID: `claude-cli-external-build-2137`
 
 ---
@@ -550,6 +550,83 @@ export ANTHROPIC_BETAS="adaptive-thinking-2026-01-28,research-preview-2026-02-01
 # export CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE=80
 # export CLAUDE_CODE_GLOB_TIMEOUT_SECONDS=30
 ```
+
+---
+
+## Binary Patching Guide
+
+The bundled `cli.js` is a minified single-file bundle (~561KB). Feature gates default to `false` (minified as `!1`) and can be flipped to `true` (`!0`) with a text editor or `sed`. The unpatched file is archived at commit `f461cab`.
+
+### Patching Methodology
+
+1. **Archive the original** — `cp cli.js cli.js.orig` (or use git)
+2. **Find the gate** — search for the gate codename in cli.js (e.g., `tengu_oboe`)
+3. **Identify the check** — gates use `y8("gate_name",!1)` for value-based or `sY("gate_name")` for boolean
+4. **Flip the default** — change `!1` to `!0` in the default argument, or replace the check with `true`
+
+### Applied Patches (v2.1.37)
+
+| Gate | Original | Patched | Effect |
+|---|---|---|---|
+| `tengu_oboe` | `y8("tengu_oboe",!1)` | `y8("tengu_oboe",!0)` | Auto-memory enabled — generates MEMORY.md per session |
+| `tengu_coral_fern` | `y8("tengu_coral_fern",!1)` | `y8("tengu_coral_fern",!0)` | Past session access — session history/memory in system prompt |
+| `tengu_thinkback` | `isEnabled:()=>sY("tengu_thinkback")` | `isEnabled:()=>true` | /think-back and /thinkback-play commands unlocked |
+
+### Patch Commands
+
+```bash
+# Backup original
+cp cli.js cli.js.bak
+
+# Enable auto-memory (tengu_oboe)
+sed -i 's/y8("tengu_oboe",!1)/y8("tengu_oboe",!0)/g' cli.js
+
+# Enable past session access (tengu_coral_fern)
+sed -i 's/y8("tengu_coral_fern",!1)/y8("tengu_coral_fern",!0)/g' cli.js
+
+# Enable thinkback commands
+sed -i 's/isEnabled:()=>sY("tengu_thinkback")/isEnabled:()=>true/g' cli.js
+```
+
+### Patchable Gates (confirmed safe to flip)
+
+These gates default to `false` and control client-side behavior. Flipping to `!0` enables them without server-side dependencies:
+
+| Gate | Pattern to Find | Feature |
+|---|---|---|
+| `tengu_oboe` | `y8("tengu_oboe",!1)` | Auto-memory (MEMORY.md) |
+| `tengu_coral_fern` | `y8("tengu_coral_fern",!1)` | Past session history in prompt |
+| `tengu_cork_m4q` | `y8("tengu_cork_m4q",!1)` | Bash risk classification policy |
+| `tengu_code_diff_cli` | `y8("tengu_code_diff_cli",!1)` | Code diff footer in CLI |
+| `tengu_compact_cache_prefix` | `y8("tengu_compact_cache_prefix",!1)` | Cache-aware compaction |
+| `tengu_file_write_optimization` | `y8("tengu_file_write_optimization",!1)` | Shorter write responses |
+| `tengu_keybinding_customization_release` | `y8("tengu_keybinding_customization_release",!1)` | Custom keybindings |
+| `tengu_marble_kite` | `y8("tengu_marble_kite",!1)` | Skip read-before-write |
+| `tengu_permission_explainer` | `y8("tengu_permission_explainer",!1)` | AI permission explanations |
+| `tengu_plum_vx3` | `y8("tengu_plum_vx3",!1)` | Disable thinking for web search |
+| `tengu_pr_status_cli` | `y8("tengu_pr_status_cli",!1)` | PR status footer |
+| `tengu_quartz_lantern` | `y8("tengu_quartz_lantern",!1)` | File diff computation |
+| `tengu_vinteuil_phrase` | `y8("tengu_vinteuil_phrase",!1)` | Alternate system prompt |
+| `tengu_tst_names_in_messages` | `y8("tengu_tst_names_in_messages",!1)` | Tool names in messages |
+
+### Gates That Require Server-Side Support (do NOT patch)
+
+These won't work with just a client flip — they need API/server cooperation:
+
+- `tengu_copper_lantern` — promo requires account eligibility
+- `tengu_silver_lantern` — feed banner (server-rendered)
+- `tengu_penguin_mode_promo` — pricing (server-side)
+- `tengu_quiet_fern` — VS Code extension coordination
+- `tengu_tool_search_unsupported_models` — model list (server config)
+- `tengu_tst_kx7` — A/B experiment threshold (server-side)
+
+### Gate Function Reference
+
+| Function | Signature | Usage |
+|---|---|---|
+| `y8(name, default)` | Value-based gate | Returns feature value or default; used for most gates |
+| `sY(name)` | Boolean gate | Returns `true`/`false`; used for on/off toggles |
+| `Rp(name, default)` | Dynamic config | Returns structured config object |
 
 ---
 
