@@ -1,6 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # Claude Edge Bridge — One-time Setup
-# Verifies dependencies, packages extension, prints install instructions.
+# Verifies deps, builds CRX3, copies to Downloads, tests bridge,
+# prints Edge Canary install steps.
 
 set -euo pipefail
 
@@ -8,27 +9,32 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 EXT_DIR="$SCRIPT_DIR/edge-claude-ext"
 BRIDGE_TS="$SCRIPT_DIR/claude-chrome-bridge.ts"
 CLI_JS="$HOME/.bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
+CRX_KEY="$SCRIPT_DIR/edge-claude-ext.pem"
+CRX_FILE="$SCRIPT_DIR/claude-code-bridge.crx"
+DOWNLOAD_DIR="$HOME/storage/shared/Download"
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-ok()   { echo -e "${GREEN}✓${NC} $1"; }
-warn() { echo -e "${YELLOW}!${NC} $1"; }
-fail() { echo -e "${RED}✗${NC} $1"; exit 1; }
-info() { echo -e "${BLUE}→${NC} $1"; }
+ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
+warn() { echo -e "  ${YELLOW}!${NC} $1"; }
+fail() { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+info() { echo -e "  ${BLUE}→${NC} $1"; }
 
-echo "═══════════════════════════════════════════════════"
-echo "  Claude Code → Edge Android Bridge Setup"
-echo "═══════════════════════════════════════════════════"
+echo
+echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
+echo -e "${BOLD}  Claude Code → Edge Canary Bridge Setup${NC}"
+echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
 echo
 
 # --- Check dependencies -------------------------------------------------------
 
-info "Checking dependencies..."
+echo -e "${BOLD}[1/5] Checking dependencies${NC}"
 
 # Bun
 if command -v bun &>/dev/null; then
@@ -40,102 +46,154 @@ fi
 # Claude Code
 if [ -f "$CLI_JS" ]; then
   VERSION=$(grep -oP 'VERSION:"[^"]+' "$CLI_JS" | head -1 | cut -d'"' -f2)
-  ok "claude-code v${VERSION:-unknown} found"
+  ok "claude-code v${VERSION:-unknown}"
 else
   fail "claude-code not found at $CLI_JS"
 fi
 
 # Bridge server
 if [ -f "$BRIDGE_TS" ]; then
-  ok "Bridge server: $BRIDGE_TS"
+  ok "bridge server"
 else
-  fail "Bridge server not found: $BRIDGE_TS"
+  fail "bridge server not found: $BRIDGE_TS"
 fi
 
-# Extension
+# Extension source
 if [ -d "$EXT_DIR" ] && [ -f "$EXT_DIR/manifest.json" ]; then
-  ok "Extension directory: $EXT_DIR"
+  ok "extension source"
 else
-  fail "Extension not found: $EXT_DIR"
+  fail "extension not found: $EXT_DIR"
+fi
+
+# crx3 tool
+if command -v crx3 &>/dev/null; then
+  ok "crx3 packager"
+else
+  info "Installing crx3..."
+  npm install -g crx3 >/dev/null 2>&1
+  if command -v crx3 &>/dev/null; then
+    ok "crx3 installed"
+  else
+    fail "Failed to install crx3 (npm install -g crx3)"
+  fi
+fi
+
+# openssl (for key generation)
+if command -v openssl &>/dev/null; then
+  ok "openssl"
+else
+  fail "openssl not found. Install: pkg install openssl-tool"
 fi
 
 echo
 
-# --- Package extension as ZIP -------------------------------------------------
+# --- Build CRX3 ---------------------------------------------------------------
 
-info "Packaging extension..."
-EXT_ZIP="$SCRIPT_DIR/claude-edge-ext.zip"
-(cd "$EXT_DIR" && zip -q -r "$EXT_ZIP" . -x "*.DS_Store" "*.swp")
-ok "Extension packaged: $EXT_ZIP ($(du -h "$EXT_ZIP" | cut -f1))"
+echo -e "${BOLD}[2/5] Building CRX3 extension${NC}"
+
+# Generate signing key if missing
+if [ ! -f "$CRX_KEY" ]; then
+  info "Generating RSA signing key..."
+  openssl genrsa -out "$CRX_KEY" 2048 2>/dev/null
+  ok "Key generated: $(basename "$CRX_KEY")"
+else
+  ok "Signing key exists"
+fi
+
+# Build CRX3
+info "Packaging CRX3..."
+crx3 "$EXT_DIR" -p "$CRX_KEY" -o "$CRX_FILE" >/dev/null 2>&1
+CRX_SIZE=$(du -h "$CRX_FILE" | cut -f1)
+ok "Built: $(basename "$CRX_FILE") (${CRX_SIZE})"
+
+# Verify it's a valid CRX3
+CRX_TYPE=$(file "$CRX_FILE" 2>/dev/null)
+if echo "$CRX_TYPE" | grep -q "Chrome extension, version 3"; then
+  ok "Valid CRX3 format"
+else
+  warn "File type: $CRX_TYPE"
+fi
+
+# Copy to Downloads for Edge to access
+if [ -d "$DOWNLOAD_DIR" ]; then
+  cp "$CRX_FILE" "$DOWNLOAD_DIR/claude-code-bridge.crx"
+  ok "Copied to Downloads: ${DOWNLOAD_DIR}/claude-code-bridge.crx"
+else
+  warn "Shared storage not linked — run 'termux-setup-storage' first"
+  warn "Then copy manually: cp $CRX_FILE ~/storage/shared/Download/"
+fi
 
 echo
 
-# --- Quick bridge test --------------------------------------------------------
+# --- Test bridge server -------------------------------------------------------
 
-info "Testing bridge server startup..."
-timeout 5 bun "$BRIDGE_TS" &
+echo -e "${BOLD}[3/5] Testing bridge server${NC}"
+
+timeout 5 bun "$BRIDGE_TS" >/dev/null 2>&1 &
 BRIDGE_PID=$!
 sleep 2
 
 if kill -0 "$BRIDGE_PID" 2>/dev/null; then
   HEALTH=$(curl -sf http://127.0.0.1:18963/health 2>/dev/null || echo '{}')
   if echo "$HEALTH" | grep -q '"status":"ok"'; then
-    ok "Bridge server responds on :18963"
+    ok "Bridge responds on ws://127.0.0.1:18963"
   else
-    warn "Bridge started but /health failed: $HEALTH"
+    warn "Bridge started but /health check failed"
   fi
   kill "$BRIDGE_PID" 2>/dev/null
   wait "$BRIDGE_PID" 2>/dev/null || true
 else
-  warn "Bridge server failed to start (may need debugging)"
+  warn "Bridge failed to start (check logs)"
 fi
 
 echo
 
-# --- CFC feature gate check ---------------------------------------------------
+# --- CFC feature gate ---------------------------------------------------------
 
-info "Checking CFC feature gate..."
+echo -e "${BOLD}[4/5] Checking CFC feature gate${NC}"
+
 SETTINGS="$HOME/.claude/settings.json"
 if [ -f "$SETTINGS" ]; then
   if grep -q "claudeInChromeDefaultEnabled" "$SETTINGS"; then
-    ok "CFC setting found in settings.json"
+    ok "CFC enabled in settings.json"
   else
-    warn "CFC not enabled in settings.json — will use env var CLAUDE_CODE_ENABLE_CFC=true"
+    warn "CFC not in settings.json — launch script uses CLAUDE_CODE_ENABLE_CFC=true"
   fi
+else
+  warn "No settings.json found"
 fi
 
 echo
-echo "═══════════════════════════════════════════════════"
-echo "  Installation Instructions"
-echo "═══════════════════════════════════════════════════"
+
+# --- Install instructions -----------------------------------------------------
+
+echo -e "${BOLD}[5/5] Edge Canary Install Instructions${NC}"
 echo
-echo -e "${BLUE}Option A: Edge Android (developer mode)${NC}"
-echo "  1. Open Edge → edge://flags"
-echo "     Enable 'Extension developer mode'"
-echo "     Enable 'Extensions on Edge' if present"
-echo "  2. Open edge://extensions"
-echo "     Enable 'Developer mode' toggle"
-echo "  3. Load the extension:"
-echo "     - If 'Load unpacked' available → browse to:"
-echo "       $EXT_DIR"
-echo "     - If only CRX/ZIP → load:"
-echo "       $EXT_ZIP"
-echo "  4. Grant all requested permissions"
+echo -e "  ${BOLD}Step 1: Enable developer options in Edge Canary${NC}"
+echo "    Open Edge Canary → Settings → About"
+echo "    Tap the Edge build number 5 times"
+echo "    (e.g. 'Edge Canary 136.0.xxxx.x')"
 echo
-echo -e "${BLUE}Option B: Termux X11 + Chromium (full API support)${NC}"
-echo "  pkg install chromium"
-echo "  # Start Termux:X11, then:"
-echo "  DISPLAY=:0 chromium --no-sandbox \\"
-echo "    --load-extension=$EXT_DIR"
+echo -e "  ${BOLD}Step 2: Install CRX${NC}"
+echo "    Settings → Developer Options → Extension install by CRX"
+echo "    Browse to: Download/claude-code-bridge.crx"
+echo "    Confirm install → grant permissions"
 echo
-echo -e "${BLUE}Usage:${NC}"
-echo "  # Start bridge + Claude:"
-echo "  ./claude-edge-bridge.sh"
+echo -e "  ${BOLD}Step 3: Start the bridge${NC}"
+echo "    ./claude-edge-bridge.sh"
 echo
-echo -e "${BLUE}Manual start:${NC}"
-echo "  # Terminal 1 — bridge:"
-echo "  CLAUDE_CODE_ENABLE_CFC=true bun $BRIDGE_TS"
-echo "  # Terminal 2 — Claude:"
-echo "  CLAUDE_CODE_ENABLE_CFC=true claude"
+echo -e "  ${BOLD}Step 4: Verify connection${NC}"
+echo "    Tap the extension icon in Edge Canary"
+echo "    Status should show 'connected'"
 echo
-echo -e "${GREEN}Setup complete.${NC}"
+echo -e "  ${BOLD}Alternative: Chrome Canary${NC}"
+echo "    chrome://flags → #extension-mime-request-handling → Always prompt"
+echo "    Open the CRX file from Downloads → install"
+echo
+echo -e "  ${BOLD}Alternative: Termux X11 + Chromium${NC}"
+echo "    pkg install chromium"
+echo "    DISPLAY=:0 chromium --no-sandbox --load-extension=$EXT_DIR"
+echo
+echo -e "${GREEN}${BOLD}Setup complete.${NC} CRX ready at:"
+echo -e "  ${DOWNLOAD_DIR}/claude-code-bridge.crx"
+echo
