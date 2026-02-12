@@ -108,11 +108,20 @@ Daily use: starts bridge in background, launches Claude with `CLAUDE_CODE_ENABLE
 
 ## Installation Options
 
-### Option A: Edge Android (developer mode)
+### Option A: Edge Canary Android (CRX sideload)
 
-1. `edge://flags` → Enable extension developer mode
-2. `edge://extensions` → Developer mode toggle → Load unpacked or ZIP
-3. Grant permissions
+1. Run `./claude-edge-setup.sh` — builds CRX3, copies to Downloads
+2. Edge Canary → Settings → About → tap build number 5x (enables Developer Options)
+3. Settings → Developer Options → "Extension install by CRX"
+4. Browse to `Download/claude-code-bridge.crx` → install → grant permissions
+
+Requires Edge Canary (`com.microsoft.emmx.canary`). Stable Edge does not
+expose the CRX install UI.
+
+### Option A2: Chrome Canary Android
+
+1. `chrome://flags` → `#extension-mime-request-handling` → "Always prompt for install"
+2. Open `claude-code-bridge.crx` from Downloads → install
 
 Limitations: Some `chrome.*` APIs may be unavailable on mobile.
 
