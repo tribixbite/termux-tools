@@ -56,9 +56,17 @@ const MAX_CONSOLE_MESSAGES = 100;
 // persistent port that stays open across multiple tool calls.
 
 let port = null;
+let portReconnectAttempts = 0;
 
 function connectPort() {
-  port = chrome.runtime.connect({ name: "cfc-content" });
+  try {
+    port = chrome.runtime.connect({ name: "cfc-content" });
+  } catch {
+    // Extension context invalidated — stop retrying
+    return;
+  }
+  portReconnectAttempts = 0; // reset on successful connect
+
   port.onMessage.addListener((msg) => {
     if (!msg.action || !msg._reqId) return;
     // Decouple from port message handler to avoid blocking
@@ -72,12 +80,15 @@ function connectPort() {
         });
     }, 0);
   });
+
   port.onDisconnect.addListener(() => {
     port = null;
-    // Reconnect after brief delay if extension is still alive
+    portReconnectAttempts++;
+    // Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 60s
+    const delay = Math.min(1000 * Math.pow(2, portReconnectAttempts - 1), 60000);
     setTimeout(() => {
       try { connectPort(); } catch {}
-    }, 1000);
+    }, delay);
   });
 }
 connectPort();
@@ -439,26 +450,16 @@ async function javascriptExec(params) {
       return { result: JSON.stringify(val) };
     }
 
-    // Pattern: document.getElementById('x').property
-    const getByIdMatch = trimmed.match(
-      /^document\.getElementById\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*(textContent|innerText|innerHTML|outerHTML|value|className|id|tagName|checked|disabled|href|src|alt|title|placeholder|type|name|style\.cssText)$/
+    // Pattern: document.getElementById('x').prop or document.querySelector('sel').prop
+    const READABLE_PROPS = "textContent|innerText|innerHTML|outerHTML|value|className|id|tagName|checked|disabled|href|src|alt|title|placeholder|type|name";
+    const elPropMatch = trimmed.match(
+      new RegExp(`^document\\.(getElementById|querySelector)\\(\\s*['"]([^'"]+)['"]\\s*\\)\\s*\\.\\s*(${READABLE_PROPS})$`)
     );
-    if (getByIdMatch) {
-      const el = document.getElementById(getByIdMatch[1]);
+    if (elPropMatch) {
+      const [, method, selector, prop] = elPropMatch;
+      const el = method === "getElementById" ? document.getElementById(selector) : document.querySelector(selector);
       if (!el) return { result: "null" };
-      const prop = getByIdMatch[2];
-      const val = prop === "style.cssText" ? el.style.cssText : el[prop];
-      return { result: JSON.stringify(val) };
-    }
-
-    // Pattern: document.querySelector('sel').property
-    const qsMatch = trimmed.match(
-      /^document\.querySelector\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*(textContent|innerText|innerHTML|outerHTML|value|className|id|tagName|checked|disabled|href|src|alt|title|placeholder|type|name)$/
-    );
-    if (qsMatch) {
-      const el = document.querySelector(qsMatch[1]);
-      if (!el) return { result: "null" };
-      return { result: JSON.stringify(el[qsMatch[2]]) };
+      return { result: JSON.stringify(el[prop]) };
     }
 
     // Pattern: document.querySelectorAll('sel').length

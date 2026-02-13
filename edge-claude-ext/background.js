@@ -479,7 +479,13 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     contentPorts.delete(tabId);
-    addLog("info", `Content port disconnected for tab ${tabId}`);
+    // Clean up any pending requests to prevent memory leaks and stale resolves
+    for (const [reqId, pending] of pendingPortRequests.entries()) {
+      clearTimeout(pending.timer);
+      pending.resolve({ error: `Content port disconnected for tab ${tabId}` });
+    }
+    pendingPortRequests.clear();
+    addLog("info", `Content port disconnected for tab ${tabId}, cleared ${pendingPortRequests.size} pending requests`);
   });
 });
 

@@ -15,15 +15,13 @@
 
 import { spawn, type Subprocess } from "bun";
 import { resolve, dirname } from "path";
-import { existsSync } from "fs";
-
 // --- Configuration -----------------------------------------------------------
 
 // Read version from extension manifest — single source of truth
 const MANIFEST_PATH = resolve(import.meta.dir, "edge-claude-ext/manifest.json");
-const BRIDGE_VERSION: string = (() => {
+const BRIDGE_VERSION: string = await (async () => {
   try {
-    const manifest = JSON.parse(require("fs").readFileSync(MANIFEST_PATH, "utf-8"));
+    const manifest = JSON.parse(await Bun.file(MANIFEST_PATH).text());
     return manifest.version ?? "0.0.0";
   } catch {
     return "0.0.0";
@@ -42,22 +40,22 @@ const GLOBAL_CLI = resolve(
   process.env.HOME ?? "~",
   ".bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
 );
-const CLI_PATH = existsSync(REPO_CLI) ? REPO_CLI : GLOBAL_CLI;
+const CLI_PATH = (await Bun.file(REPO_CLI).exists()) ? REPO_CLI : GLOBAL_CLI;
 
 // Resolve bun binary — process.execPath returns the glibc loader on Termux,
 // so we resolve from PATH via which, or fall back to known locations.
-function findBun(): string {
+async function findBun(): Promise<string> {
   const candidates = [
     resolve(process.env.HOME ?? "~", ".bun/bin/bun"),
     "/data/data/com.termux/files/home/.bun/bin/bun",
     "/usr/local/bin/bun",
   ];
   for (const p of candidates) {
-    if (existsSync(p)) return p;
+    if (await Bun.file(p).exists()) return p;
   }
   return "bun"; // hope it's in PATH
 }
-const BUN_PATH = findBun();
+const BUN_PATH = await findBun();
 
 // --- Logging -----------------------------------------------------------------
 
