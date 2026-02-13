@@ -141,6 +141,16 @@ async function handleToolRequest(msg) {
   const { method, params } = msg;
   console.log("[bridge] Tool request:", method, params);
 
+  // MCP server wraps tool calls as {method: "execute_tool", params: {tool, args}}
+  // Unwrap and re-dispatch with the actual tool name
+  if (method === "execute_tool" && params?.tool) {
+    return handleToolRequest({
+      type: msg.type,
+      method: params.tool,
+      params: params.args || {},
+    });
+  }
+
   try {
     let result;
     switch (method) {
@@ -175,16 +185,17 @@ async function handleToolRequest(msg) {
         result = { error: `Unsupported tool: ${method}` };
     }
 
+    // CRITICAL: Do NOT include `method` in response — cli.js response classifier
+    // M7z() checks `"method" in A` first and misclassifies as notification,
+    // causing handleResponse() to never fire and the tool call to timeout.
     sendMessage({
       type: "tool_response",
-      method,
       result,
     });
   } catch (err) {
     console.error(`[bridge] Tool ${method} failed:`, err);
     sendMessage({
       type: "tool_response",
-      method,
       error: err.message || String(err),
     });
   }
@@ -200,26 +211,31 @@ async function handleJavascriptTool(params) {
   const tid = resolveTabId(tabId);
 
   try {
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tid },
-      func: (code) => {
-        try {
-          // Wrap in async IIFE to support await
-          const fn = new Function(`return (async () => { return (${code}); })();`);
-          return fn();
-        } catch (syncErr) {
-          // If expression eval fails, try as statements
+    // chrome.scripting.executeScript can hang on Android Edge —
+    // race with a 10s timeout, then fall through to content script
+    const results = await Promise.race([
+      chrome.scripting.executeScript({
+        target: { tabId: tid },
+        func: (code) => {
           try {
-            const fn2 = new Function(`return (async () => { ${code} })();`);
-            return fn2();
-          } catch (stmtErr) {
-            return { __error: stmtErr.message };
+            const fn = new Function(`return (async () => { return (${code}); })();`);
+            return fn();
+          } catch (syncErr) {
+            try {
+              const fn2 = new Function(`return (async () => { ${code} })();`);
+              return fn2();
+            } catch (stmtErr) {
+              return { __error: stmtErr.message };
+            }
           }
-        }
-      },
-      args: [text],
-      world: "MAIN",
-    });
+        },
+        args: [text],
+        world: "MAIN",
+      }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("chrome.scripting timeout")), 10000)
+      ),
+    ]);
 
     const result = results?.[0]?.result;
     if (result && typeof result === "object" && result.__error) {
@@ -228,6 +244,7 @@ async function handleJavascriptTool(params) {
     return { result: typeof result === "undefined" ? "undefined" : JSON.stringify(result) };
   } catch (err) {
     // Fallback: execute via content script message
+    console.log("[bridge] chrome.scripting failed, falling back to content script:", err.message);
     return await executeViaContentScript(tid, "javascript_exec", { code: text });
   }
 }
