@@ -386,31 +386,38 @@ function formInput(params) {
  * Execute arbitrary JS in the page's MAIN world by injecting a <script> tag.
  * MV3 content scripts cannot use new Function() / eval() due to CSP, but
  * they CAN create <script> elements that execute in the page context.
- * Results are communicated back via a custom DOM event.
+ *
+ * Results are communicated back via a CustomEvent on document.
+ * window.postMessage does NOT cross MAIN→isolated world on Android Edge,
+ * but DOM CustomEvents DO propagate across world boundaries.
  */
 async function javascriptExec(params) {
   const { code } = params;
   const callbackId = `__cfc_js_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const eventName = `__cfc_result_${callbackId}`;
 
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
-      window.removeEventListener("message", handler);
+      document.removeEventListener(eventName, handler);
       resolve({ error: "javascript_exec timeout (10s)" });
     }, 10000);
 
     function handler(event) {
-      if (event.source !== window || event.data?.id !== callbackId) return;
-      window.removeEventListener("message", handler);
+      document.removeEventListener(eventName, handler);
       clearTimeout(timeout);
-      resolve(event.data.payload);
+      try {
+        resolve(JSON.parse(event.detail));
+      } catch {
+        resolve({ error: "Failed to parse result" });
+      }
     }
-    window.addEventListener("message", handler);
+    document.addEventListener(eventName, handler);
 
-    // Inject <script> that runs in MAIN world, captures result, posts back
+    // Inject <script> that runs in MAIN world, captures result, dispatches CustomEvent
     const script = document.createElement("script");
     script.textContent = `
       (async () => {
-        const __id = ${JSON.stringify(callbackId)};
+        const __evName = ${JSON.stringify(eventName)};
         try {
           let __result;
           try {
@@ -419,9 +426,9 @@ async function javascriptExec(params) {
             __result = await eval(${JSON.stringify(`(async () => { ${code} })()`)});
           }
           const __serialized = typeof __result === "undefined" ? "undefined" : JSON.stringify(__result);
-          window.postMessage({ id: __id, payload: { result: __serialized } }, "*");
+          document.dispatchEvent(new CustomEvent(__evName, { detail: JSON.stringify({ result: __serialized }) }));
         } catch (__err) {
-          window.postMessage({ id: __id, payload: { error: __err.message || String(__err) } }, "*");
+          document.dispatchEvent(new CustomEvent(__evName, { detail: JSON.stringify({ error: __err.message || String(__err) }) }));
         }
       })();
     `;
