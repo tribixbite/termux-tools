@@ -50,19 +50,47 @@ const MAX_CONSOLE_MESSAGES = 100;
 
 // --- Message handler ---------------------------------------------------------
 
+// --- Persistent port for reliable messaging on Android Edge ------------------
+// chrome.runtime.onMessage + sendResponse is unreliable on Android Edge:
+// message ports corrupt after 2-3 calls. Use chrome.runtime.connect for a
+// persistent port that stays open across multiple tool calls.
+
+let port = null;
+
+function connectPort() {
+  port = chrome.runtime.connect({ name: "cfc-content" });
+  port.onMessage.addListener((msg) => {
+    if (!msg.action || !msg._reqId) return;
+    // Decouple from port message handler to avoid blocking
+    setTimeout(() => {
+      handleAction(msg.action, msg.params || {})
+        .then((result) => {
+          try { port.postMessage({ _reqId: msg._reqId, result }); } catch {}
+        })
+        .catch((err) => {
+          try { port.postMessage({ _reqId: msg._reqId, result: { error: err.message || String(err) } }); } catch {}
+        });
+    }, 0);
+  });
+  port.onDisconnect.addListener(() => {
+    port = null;
+    // Reconnect after brief delay if extension is still alive
+    setTimeout(() => {
+      try { connectPort(); } catch {}
+    }, 1000);
+  });
+}
+connectPort();
+
+// Keep legacy onMessage as fallback for backward compatibility
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg.action) return;
-
-  // Use setTimeout(0) to decouple handler from message port —
-  // on Android Edge, synchronous DOM event dispatch (clicks, key events)
-  // can corrupt the message channel if done inside the listener callback.
   setTimeout(() => {
     handleAction(msg.action, msg.params || {})
       .then((result) => { try { sendResponse(result); } catch {} })
       .catch((err) => { try { sendResponse({ error: err.message || String(err) }); } catch {} });
   }, 0);
-
-  return true; // async response
+  return true;
 });
 
 async function handleAction(action, params) {
