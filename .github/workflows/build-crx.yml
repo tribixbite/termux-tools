@@ -6,6 +6,7 @@ on:
       - 'edge-claude-ext/**'
       - 'scripts/build-crx.js'
       - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/build-crx.yml'
   pull_request:
     paths:
