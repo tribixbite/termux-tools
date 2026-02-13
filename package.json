@@ -1,0 +1,11 @@
+{
+  "name": "termux-tools",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build:crx": "node scripts/build-crx.js"
+  },
+  "devDependencies": {
+    "crx3": "^1.1.3"
+  }
+}

@@ -1,0 +1,49 @@
+name: Build CRX
+
+on:
+  push:
+    paths:
+      - 'edge-claude-ext/**'
+      - 'scripts/build-crx.js'
+      - 'package.json'
+      - '.github/workflows/build-crx.yml'
+  pull_request:
+    paths:
+      - 'edge-claude-ext/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read extension version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./edge-claude-ext/manifest.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building CRX v$VERSION"
+
+      - name: Build CRX
+        env:
+          CRX_PEM: ${{ secrets.CRX_SIGNING_KEY }}
+        run: npm run build:crx
+
+      - name: Upload CRX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-bridge-v${{ steps.version.outputs.version }}
+          path: dist/claude-code-bridge-v*.crx
+
+      - name: Attach CRX to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/claude-code-bridge-v*.crx
