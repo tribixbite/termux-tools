@@ -383,101 +383,87 @@ function formInput(params) {
 // --- javascript_exec ---------------------------------------------------------
 
 /**
- * Execute arbitrary JS in the page's MAIN world by injecting a <script> tag.
- * MV3 content scripts cannot use new Function() / eval() due to CSP, but
- * they CAN create <script> elements that execute in the page context.
+ * Execute JavaScript — limited on Android Edge.
  *
- * Results are communicated back via a shared DOM element — the content script
- * creates a hidden <div>, the injected script writes the result to its
- * data-result attribute, and a MutationObserver in the content script picks
- * it up. The DOM is shared across world boundaries so attribute mutations
- * are visible in both MAIN and isolated worlds.
+ * Android Edge blocks ALL MAIN-world code execution from extensions:
+ * - chrome.scripting.executeScript(world:"MAIN") hangs indefinitely
+ * - new Function() / eval() blocked by MV3 extension CSP in isolated world
+ * - <script> tag injection from content scripts doesn't execute
+ * - blob: URL scripts don't execute either
+ *
+ * Fallback: handle common DOM property reads directly in the isolated world.
+ * Content scripts share the DOM so reads work, but page-level JS variables
+ * and functions are NOT accessible.
+ *
+ * TODO: full javascript_exec requires chrome.debugger API or X11 Chromium
  */
 async function javascriptExec(params) {
   const { code } = params;
-  const callbackId = `__cfc_js_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const trimmed = code.trim();
 
-  // Create hidden DOM node for cross-world result passing
-  const resultNode = document.createElement("div");
-  resultNode.id = callbackId;
-  resultNode.style.display = "none";
-  document.documentElement.appendChild(resultNode);
+  try {
+    // Pattern: simple global properties
+    // document.title, document.URL, document.readyState, location.href, etc.
+    if (/^(document\.(title|URL|readyState|domain|referrer|characterSet|contentType|lastModified)|location\.(href|hostname|pathname|search|hash|origin|protocol|port))$/.test(trimmed)) {
+      const parts = trimmed.split(".");
+      let val = window;
+      for (const p of parts) val = val[p];
+      return { result: JSON.stringify(val) };
+    }
 
-  return new Promise((resolve) => {
-    const cleanup = () => {
-      observer.disconnect();
-      clearTimeout(timer);
-      try { resultNode.remove(); } catch {}
+    // Pattern: document.getElementById('x').property
+    const getByIdMatch = trimmed.match(
+      /^document\.getElementById\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*(textContent|innerText|innerHTML|outerHTML|value|className|id|tagName|checked|disabled|href|src|alt|title|placeholder|type|name|style\.cssText)$/
+    );
+    if (getByIdMatch) {
+      const el = document.getElementById(getByIdMatch[1]);
+      if (!el) return { result: "null" };
+      const prop = getByIdMatch[2];
+      const val = prop === "style.cssText" ? el.style.cssText : el[prop];
+      return { result: JSON.stringify(val) };
+    }
+
+    // Pattern: document.querySelector('sel').property
+    const qsMatch = trimmed.match(
+      /^document\.querySelector\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*(textContent|innerText|innerHTML|outerHTML|value|className|id|tagName|checked|disabled|href|src|alt|title|placeholder|type|name)$/
+    );
+    if (qsMatch) {
+      const el = document.querySelector(qsMatch[1]);
+      if (!el) return { result: "null" };
+      return { result: JSON.stringify(el[qsMatch[2]]) };
+    }
+
+    // Pattern: document.querySelectorAll('sel').length
+    const qsaLenMatch = trimmed.match(/^document\.querySelectorAll\(\s*['"]([^'"]+)['"]\s*\)\.length$/);
+    if (qsaLenMatch) {
+      return { result: JSON.stringify(document.querySelectorAll(qsaLenMatch[1]).length) };
+    }
+
+    // Pattern: document.body.innerText / .innerHTML / .textContent
+    const bodyMatch = trimmed.match(/^document\.body\.(innerText|innerHTML|textContent)$/);
+    if (bodyMatch) {
+      const text = document.body[bodyMatch[1]];
+      return { result: JSON.stringify(text.length > 50000 ? text.slice(0, 50000) + "..." : text) };
+    }
+
+    // Pattern: window.innerWidth, window.innerHeight, window.scrollX, etc.
+    const winMatch = trimmed.match(/^window\.(innerWidth|innerHeight|outerWidth|outerHeight|scrollX|scrollY|devicePixelRatio)$/);
+    if (winMatch) {
+      return { result: JSON.stringify(window[winMatch[1]]) };
+    }
+
+    // Pattern: JSON.stringify({...}) with known DOM properties — used by Claude tools
+    // e.g. JSON.stringify({a: 1, b: "hello"})
+    // Can't safely parse arbitrary JSON.stringify calls
+
+    return {
+      error: "javascript_exec limited on Android Edge — only DOM property reads are supported " +
+        "(document.title, getElementById('x').textContent, querySelector('sel').value, " +
+        "window.innerWidth, etc.). Use read_page, find, or form_input tools instead.",
     };
-
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve({ error: "javascript_exec timeout (10s)" });
-    }, 10000);
-
-    // MutationObserver watches for the data-result attribute being set
-    const observer = new MutationObserver(() => {
-      const raw = resultNode.getAttribute("data-result");
-      if (raw === null) return;
-      cleanup();
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        resolve({ error: "Failed to parse result" });
-      }
-    });
-    observer.observe(resultNode, { attributes: true, attributeFilter: ["data-result"] });
-
-    // JS payload that writes result to the shared DOM node
-    const payload = `
-      (async () => {
-        var __node = document.getElementById(${JSON.stringify(callbackId)});
-        if (!__node) return;
-        try {
-          var __result;
-          try {
-            __result = await eval(${JSON.stringify(`(async () => { return (${code}); })()`)});
-          } catch (__exprErr) {
-            __result = await eval(${JSON.stringify(`(async () => { ${code} })()`)});
-          }
-          var __serialized = typeof __result === "undefined" ? "undefined" : JSON.stringify(__result);
-          __node.setAttribute("data-result", JSON.stringify({ result: __serialized }));
-        } catch (__err) {
-          __node.setAttribute("data-result", JSON.stringify({ error: __err.message || String(__err) }));
-        }
-      })();
-    `;
-
-    // Strategy 1: blob URL <script src="blob:..."> — bypasses inline CSP
-    try {
-      const blob = new Blob([payload], { type: "application/javascript" });
-      const url = URL.createObjectURL(blob);
-      const s1 = document.createElement("script");
-      s1.src = url;
-      s1.onload = () => { URL.revokeObjectURL(url); s1.remove(); };
-      s1.onerror = () => {
-        URL.revokeObjectURL(url);
-        s1.remove();
-        inlineStrategy();
-      };
-      document.documentElement.appendChild(s1);
-    } catch {
-      inlineStrategy();
-    }
-
-    // Strategy 2: inline <script textContent>
-    function inlineStrategy() {
-      try {
-        const s2 = document.createElement("script");
-        s2.textContent = payload;
-        document.documentElement.appendChild(s2);
-        s2.remove();
-      } catch {
-        cleanup();
-        resolve({ error: "Script injection blocked by browser CSP" });
-      }
-    }
-  });
+  } catch (err) {
+    return { error: err.message || String(err) };
+  }
 }
 
 // --- click, type, key, scroll, hover -----------------------------------------
