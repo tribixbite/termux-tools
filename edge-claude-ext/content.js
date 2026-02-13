@@ -428,28 +428,55 @@ async function javascriptExec(params) {
     });
     observer.observe(resultNode, { attributes: true, attributeFilter: ["data-result"] });
 
-    // Inject <script> that runs in MAIN world, writes result to shared DOM node
-    const script = document.createElement("script");
-    script.textContent = `
+    // JS payload that writes result to the shared DOM node
+    const payload = `
       (async () => {
-        const __node = document.getElementById(${JSON.stringify(callbackId)});
+        var __node = document.getElementById(${JSON.stringify(callbackId)});
         if (!__node) return;
         try {
-          let __result;
+          var __result;
           try {
             __result = await eval(${JSON.stringify(`(async () => { return (${code}); })()`)});
           } catch (__exprErr) {
             __result = await eval(${JSON.stringify(`(async () => { ${code} })()`)});
           }
-          const __serialized = typeof __result === "undefined" ? "undefined" : JSON.stringify(__result);
+          var __serialized = typeof __result === "undefined" ? "undefined" : JSON.stringify(__result);
           __node.setAttribute("data-result", JSON.stringify({ result: __serialized }));
         } catch (__err) {
           __node.setAttribute("data-result", JSON.stringify({ error: __err.message || String(__err) }));
         }
       })();
     `;
-    document.documentElement.appendChild(script);
-    script.remove();
+
+    // Strategy 1: blob URL <script src="blob:..."> — bypasses inline CSP
+    try {
+      const blob = new Blob([payload], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      const s1 = document.createElement("script");
+      s1.src = url;
+      s1.onload = () => { URL.revokeObjectURL(url); s1.remove(); };
+      s1.onerror = () => {
+        URL.revokeObjectURL(url);
+        s1.remove();
+        inlineStrategy();
+      };
+      document.documentElement.appendChild(s1);
+    } catch {
+      inlineStrategy();
+    }
+
+    // Strategy 2: inline <script textContent>
+    function inlineStrategy() {
+      try {
+        const s2 = document.createElement("script");
+        s2.textContent = payload;
+        document.documentElement.appendChild(s2);
+        s2.remove();
+      } catch {
+        cleanup();
+        resolve({ error: "Script injection blocked by browser CSP" });
+      }
+    }
   });
 }
 
