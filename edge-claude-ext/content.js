@@ -53,9 +53,14 @@ const MAX_CONSOLE_MESSAGES = 100;
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg.action) return;
 
-  handleAction(msg.action, msg.params || {})
-    .then(sendResponse)
-    .catch((err) => sendResponse({ error: err.message || String(err) }));
+  // Use setTimeout(0) to decouple handler from message port —
+  // on Android Edge, synchronous DOM event dispatch (clicks, key events)
+  // can corrupt the message channel if done inside the listener callback.
+  setTimeout(() => {
+    handleAction(msg.action, msg.params || {})
+      .then((result) => { try { sendResponse(result); } catch {} })
+      .catch((err) => { try { sendResponse({ error: err.message || String(err) }); } catch {} });
+  }, 0);
 
   return true; // async response
 });
