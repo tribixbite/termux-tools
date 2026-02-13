@@ -261,6 +261,13 @@ const server = Bun.serve<WsData>({
       );
     }
 
+    // Test page — a proper HTML page for CFC tool testing
+    if (url.pathname === "/test") {
+      return new Response(TEST_PAGE_HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+
     // WebSocket upgrade
     if (url.pathname === "/ws" || url.pathname === "/") {
       // Token auth check (if configured)
@@ -412,3 +419,115 @@ log("info", `Claude Chrome Bridge started on ws://${WS_HOST}:${WS_PORT}`);
 log("info", `CLI path: ${CLI_PATH}`);
 log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
 log("info", "Waiting for WebSocket connections...");
+
+// --- Test page HTML ----------------------------------------------------------
+
+const TEST_PAGE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CFC Bridge Test Page</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,system-ui,sans-serif;padding:20px;min-height:100vh}
+  h1{font-size:20px;color:#f0f6fc;margin-bottom:4px}
+  .sub{font-size:12px;color:#8b949e;margin-bottom:20px}
+  .card{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:14px;margin-bottom:12px}
+  .card h2{font-size:14px;color:#58a6ff;margin-bottom:8px}
+  label{display:block;font-size:12px;color:#8b949e;margin-bottom:4px}
+  input,select,textarea{width:100%;padding:8px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#c9d1d9;font-size:13px;margin-bottom:8px;font-family:inherit}
+  textarea{min-height:60px;resize:vertical}
+  button{padding:8px 16px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;font-size:12px;cursor:pointer;margin-right:6px;margin-bottom:6px}
+  button:hover{background:#30363d}
+  button.primary{background:#238636;border-color:#2ea043;color:#fff}
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600}
+  .badge.green{background:#23863633;color:#3fb950}
+  .badge.blue{background:#388bfd33;color:#58a6ff}
+  .badge.yellow{background:#d2992233;color:#d29922}
+  #output{font-family:"SF Mono",monospace;font-size:11px;background:#010409;border:1px solid #21262d;border-radius:6px;padding:10px;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:#7ee787}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .grid .card{margin-bottom:0}
+  .stat{font-size:24px;font-weight:700;color:#f0f6fc;font-family:monospace}
+  .stat-label{font-size:10px;color:#8b949e;text-transform:uppercase}
+  a{color:#58a6ff;text-decoration:none}
+  a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<h1>CFC Bridge Test Page</h1>
+<p class="sub">Interactive test surface for Claude in Chrome tools &mdash; served from bridge at 127.0.0.1:${WS_PORT}</p>
+
+<div class="grid">
+  <div class="card"><div class="stat" id="clock">--:--:--</div><div class="stat-label">Live Clock</div></div>
+  <div class="card"><div class="stat" id="counter">0</div><div class="stat-label">Click Counter</div></div>
+</div>
+
+<div class="card">
+  <h2>Form Elements</h2>
+  <label for="name-input">Name</label>
+  <input id="name-input" type="text" placeholder="Enter your name..." value="">
+  <label for="email-input">Email</label>
+  <input id="email-input" type="email" placeholder="user@example.com" value="">
+  <label for="color-select">Favorite Color</label>
+  <select id="color-select">
+    <option value="">Select...</option>
+    <option value="red">Red</option>
+    <option value="green">Green</option>
+    <option value="blue">Blue</option>
+    <option value="purple">Purple</option>
+  </select>
+  <label for="notes-textarea">Notes</label>
+  <textarea id="notes-textarea" placeholder="Type notes here..."></textarea>
+  <label><input type="checkbox" id="agree-checkbox"> I agree to the terms</label>
+</div>
+
+<div class="card">
+  <h2>Interactive Elements</h2>
+  <button class="primary" id="btn-increment" onclick="increment()">Increment Counter</button>
+  <button id="btn-reset" onclick="resetCounter()">Reset</button>
+  <button id="btn-timestamp" onclick="addTimestamp()">Add Timestamp</button>
+  <button id="btn-toggle" onclick="toggleTheme()">Toggle Theme</button>
+  <div style="margin-top:8px">
+    <span class="badge green">Connected</span>
+    <span class="badge blue">v1.0</span>
+    <span class="badge yellow">Test Mode</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Output Console</h2>
+  <div id="output">Ready for testing...</div>
+</div>
+
+<div class="card">
+  <h2>Navigation Links</h2>
+  <a href="#section-top" id="link-top">Back to top</a> &middot;
+  <a href="http://127.0.0.1:${WS_PORT}/health" id="link-health">Bridge Health</a> &middot;
+  <a href="http://127.0.0.1:${WS_PORT}/test" id="link-reload">Reload Test Page</a>
+</div>
+
+<script>
+  let count = 0;
+  function increment() { count++; document.getElementById('counter').textContent = count; log('Counter: ' + count); }
+  function resetCounter() { count = 0; document.getElementById('counter').textContent = 0; log('Counter reset'); }
+  function addTimestamp() { log('Timestamp: ' + new Date().toISOString()); }
+  function toggleTheme() {
+    const b = document.body;
+    const isDark = b.style.background !== 'white';
+    b.style.background = isDark ? 'white' : '#0d1117';
+    b.style.color = isDark ? '#1a1a1a' : '#c9d1d9';
+    log('Theme: ' + (isDark ? 'light' : 'dark'));
+  }
+  function log(msg) {
+    const el = document.getElementById('output');
+    el.textContent += '\\n' + msg;
+    el.scrollTop = el.scrollHeight;
+  }
+  setInterval(() => {
+    document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8);
+  }, 1000);
+  document.getElementById('clock').textContent = new Date().toTimeString().slice(0, 8);
+</script>
+</body>
+</html>`;
