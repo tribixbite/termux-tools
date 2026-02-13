@@ -9,9 +9,12 @@
 // --- Configuration -----------------------------------------------------------
 
 const WS_URL = "ws://127.0.0.1:18963/ws";
+const BRIDGE_HEALTH_URL = "http://127.0.0.1:18963/health";
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const KEEPALIVE_INTERVAL_MS = 20000;
+const SCRIPTING_TIMEOUT_MS = 10000;
+const CONTENT_SCRIPT_TIMEOUT_MS = 30000;
 
 // --- State -------------------------------------------------------------------
 
@@ -24,7 +27,41 @@ let connectionState = "disconnected"; // disconnected | connecting | connected
 
 // MCP tab group tracking
 let mcpTabGroup = new Map(); // tabId -> tab info
-let nextRefId = 1;
+
+// Message log ring buffer for popup diagnostics
+const messageLog = [];
+const MAX_LOG_ENTRIES = 200;
+
+// Stats
+const stats = {
+  connectedAt: null,
+  toolRequestsReceived: 0,
+  toolResponsesSent: 0,
+  toolErrors: 0,
+  reconnects: 0,
+  lastToolName: null,
+  lastToolTime: null,
+  wsMessagesSent: 0,
+  wsMessagesReceived: 0,
+};
+
+// --- Logging -----------------------------------------------------------------
+
+function addLog(level, msg, data) {
+  const entry = {
+    ts: Date.now(),
+    level, // info | warn | error | tool | ws
+    msg,
+    data: data ? JSON.stringify(data).slice(0, 500) : undefined,
+  };
+  messageLog.push(entry);
+  if (messageLog.length > MAX_LOG_ENTRIES) messageLog.shift();
+
+  // Also console.log for devtools
+  const prefix = `[bridge:${level}]`;
+  if (level === "error") console.error(prefix, msg, data || "");
+  else console.log(prefix, msg, data || "");
+}
 
 // --- WebSocket Connection ----------------------------------------------------
 
@@ -35,25 +72,25 @@ function connect() {
 
   connectionState = "connecting";
   broadcastState();
+  addLog("ws", "Connecting to bridge...", { url: WS_URL });
 
   try {
     ws = new WebSocket(WS_URL);
   } catch (err) {
-    console.error("[bridge] WebSocket creation failed:", err);
+    addLog("error", "WebSocket creation failed", { error: err.message });
     scheduleReconnect();
     return;
   }
 
   ws.onopen = () => {
-    console.log("[bridge] Connected to bridge server");
     connectionState = "connected";
     reconnectAttempts = 0;
+    stats.connectedAt = Date.now();
+    addLog("ws", "Connected to bridge server");
     broadcastState();
 
-    // Send initial ping
     sendMessage({ type: "ping" });
 
-    // Start keepalive
     clearInterval(keepaliveTimer);
     keepaliveTimer = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) {
@@ -63,25 +100,27 @@ function connect() {
   };
 
   ws.onmessage = (event) => {
+    stats.wsMessagesReceived++;
     try {
       const msg = JSON.parse(event.data);
       handleBridgeMessage(msg);
     } catch (err) {
-      console.error("[bridge] Failed to parse message:", err);
+      addLog("error", "Failed to parse message", { error: err.message });
     }
   };
 
   ws.onclose = (event) => {
-    console.log("[bridge] Disconnected:", event.code, event.reason);
+    addLog("ws", "Disconnected", { code: event.code, reason: event.reason });
     connectionState = "disconnected";
     ws = null;
+    stats.connectedAt = null;
     clearInterval(keepaliveTimer);
     broadcastState();
     scheduleReconnect();
   };
 
-  ws.onerror = (event) => {
-    console.error("[bridge] WebSocket error:", event);
+  ws.onerror = () => {
+    addLog("error", "WebSocket error");
   };
 }
 
@@ -92,7 +131,8 @@ function scheduleReconnect() {
     RECONNECT_MAX_MS
   );
   reconnectAttempts++;
-  console.log(`[bridge] Reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
+  stats.reconnects++;
+  addLog("ws", `Reconnecting in ${delay}ms`, { attempt: reconnectAttempts });
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connect();
@@ -102,6 +142,7 @@ function scheduleReconnect() {
 function sendMessage(msg) {
   if (ws?.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
+    stats.wsMessagesSent++;
     return true;
   }
   return false;
@@ -113,13 +154,18 @@ async function handleBridgeMessage(msg) {
   switch (msg.type) {
     case "pong":
     case "heartbeat":
+      break;
+
     case "bridge_connected":
+      addLog("info", "Bridge handshake", msg);
+      break;
+
     case "status_response":
-      // Informational, no action needed
+      addLog("info", "Bridge status", msg);
       break;
 
     case "mcp_connected":
-      console.log("[bridge] MCP server connected to native host");
+      addLog("info", "MCP server connected to native host");
       break;
 
     case "tool_request":
@@ -127,11 +173,11 @@ async function handleBridgeMessage(msg) {
       break;
 
     case "error":
-      console.error("[bridge] Error from bridge:", msg.error);
+      addLog("error", "Bridge error", { error: msg.error });
       break;
 
     default:
-      console.log("[bridge] Unknown message type:", msg.type);
+      addLog("warn", `Unknown message type: ${msg.type}`, msg);
   }
 }
 
@@ -139,17 +185,22 @@ async function handleBridgeMessage(msg) {
 
 async function handleToolRequest(msg) {
   const { method, params } = msg;
-  console.log("[bridge] Tool request:", method, params);
+  stats.toolRequestsReceived++;
 
-  // MCP server wraps tool calls as {method: "execute_tool", params: {tool, args}}
-  // Unwrap and re-dispatch with the actual tool name
+  // Unwrap execute_tool wrapper from MCP server
   if (method === "execute_tool" && params?.tool) {
+    addLog("tool", `Unwrap execute_tool → ${params.tool}`, { args: params.args });
     return handleToolRequest({
       type: msg.type,
       method: params.tool,
       params: params.args || {},
     });
   }
+
+  const startTime = Date.now();
+  stats.lastToolName = method;
+  stats.lastToolTime = startTime;
+  addLog("tool", `→ ${method}`, params);
 
   try {
     let result;
@@ -185,34 +236,31 @@ async function handleToolRequest(msg) {
         result = { error: `Unsupported tool: ${method}` };
     }
 
+    const elapsed = Date.now() - startTime;
+    stats.toolResponsesSent++;
+    addLog("tool", `← ${method} OK (${elapsed}ms)`, { resultPreview: JSON.stringify(result).slice(0, 200) });
+
     // CRITICAL: Do NOT include `method` in response — cli.js response classifier
     // M7z() checks `"method" in A` first and misclassifies as notification,
     // causing handleResponse() to never fire and the tool call to timeout.
-    sendMessage({
-      type: "tool_response",
-      result,
-    });
+    sendMessage({ type: "tool_response", result });
   } catch (err) {
-    console.error(`[bridge] Tool ${method} failed:`, err);
-    sendMessage({
-      type: "tool_response",
-      error: err.message || String(err),
-    });
+    const elapsed = Date.now() - startTime;
+    stats.toolErrors++;
+    addLog("error", `← ${method} FAIL (${elapsed}ms)`, { error: err.message });
+    sendMessage({ type: "tool_response", error: err.message || String(err) });
   }
 }
 
 // --- Tool Implementations ----------------------------------------------------
 
-/**
- * Execute JavaScript in page context via chrome.scripting.executeScript
- */
 async function handleJavascriptTool(params) {
   const { text, tabId } = params;
   const tid = resolveTabId(tabId);
 
   try {
     // chrome.scripting.executeScript can hang on Android Edge —
-    // race with a 10s timeout, then fall through to content script
+    // race with timeout, then fall through to content script
     const results = await Promise.race([
       chrome.scripting.executeScript({
         target: { tabId: tid },
@@ -233,7 +281,7 @@ async function handleJavascriptTool(params) {
         world: "MAIN",
       }),
       new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("chrome.scripting timeout")), 10000)
+        setTimeout(() => reject(new Error("chrome.scripting timeout")), SCRIPTING_TIMEOUT_MS)
       ),
     ]);
 
@@ -243,19 +291,14 @@ async function handleJavascriptTool(params) {
     }
     return { result: typeof result === "undefined" ? "undefined" : JSON.stringify(result) };
   } catch (err) {
-    // Fallback: execute via content script message
-    console.log("[bridge] chrome.scripting failed, falling back to content script:", err.message);
+    addLog("warn", "chrome.scripting failed, trying content script", { error: err.message });
     return await executeViaContentScript(tid, "javascript_exec", { code: text });
   }
 }
 
-/**
- * Read page accessibility tree via content script
- */
 async function handleReadPage(params) {
   const { tabId, filter, depth, ref_id, max_chars } = params;
   const tid = resolveTabId(tabId);
-
   return await executeViaContentScript(tid, "read_page", {
     filter: filter || "all",
     depth: depth || 15,
@@ -264,19 +307,12 @@ async function handleReadPage(params) {
   });
 }
 
-/**
- * Find elements by natural language query via content script
- */
 async function handleFind(params) {
   const { query, tabId } = params;
   const tid = resolveTabId(tabId);
-
   return await executeViaContentScript(tid, "find", { query });
 }
 
-/**
- * Navigate to URL or forward/back
- */
 async function handleNavigate(params) {
   const { url, tabId } = params;
   const tid = resolveTabId(tabId);
@@ -290,7 +326,6 @@ async function handleNavigate(params) {
     return { result: "Navigated forward" };
   }
 
-  // Add protocol if missing
   let fullUrl = url;
   if (!/^https?:\/\//i.test(fullUrl)) {
     fullUrl = "https://" + fullUrl;
@@ -298,7 +333,6 @@ async function handleNavigate(params) {
 
   await chrome.tabs.update(tid, { url: fullUrl });
 
-  // Wait for page load
   await new Promise((resolve) => {
     const listener = (updatedTabId, changeInfo) => {
       if (updatedTabId === tid && changeInfo.status === "complete") {
@@ -307,7 +341,6 @@ async function handleNavigate(params) {
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    // Timeout fallback
     setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
       resolve();
@@ -317,37 +350,22 @@ async function handleNavigate(params) {
   return { result: `Navigated to ${fullUrl}` };
 }
 
-/**
- * Set form input values via content script
- */
 async function handleFormInput(params) {
   const { ref, value, tabId } = params;
   const tid = resolveTabId(tabId);
-
   return await executeViaContentScript(tid, "form_input", { ref, value });
 }
 
-/**
- * Computer tool — handle mouse/keyboard/screenshot actions
- */
 async function handleComputer(params) {
   const { action, tabId, coordinate, text } = params;
   const tid = resolveTabId(tabId);
 
   switch (action) {
     case "screenshot":
-      // captureVisibleTab may not be available on Android Edge
       try {
-        const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-          format: "png",
-        });
-        return {
-          result: dataUrl,
-          type: "image/png",
-          encoding: "base64",
-        };
+        const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+        return { result: dataUrl, type: "image/png", encoding: "base64" };
       } catch (err) {
-        // Fallback: use html2canvas via content script
         return await executeViaContentScript(tid, "screenshot", {});
       }
 
@@ -364,9 +382,7 @@ async function handleComputer(params) {
       });
 
     case "scroll_to":
-      return await executeViaContentScript(tid, "scroll_to", {
-        ref: params.ref_id,
-      });
+      return await executeViaContentScript(tid, "scroll_to", { ref: params.ref_id });
 
     case "left_click":
     case "right_click":
@@ -395,15 +411,10 @@ async function handleComputer(params) {
   }
 }
 
-/**
- * Get tab group context
- */
 async function handleTabsContext(params) {
   const { createIfEmpty } = params;
-
   const tabs = await chrome.tabs.query({});
 
-  // If we have no tracked MCP tabs, initialize from current tabs
   if (mcpTabGroup.size === 0 && tabs.length > 0) {
     for (const tab of tabs) {
       mcpTabGroup.set(tab.id, {
@@ -415,7 +426,6 @@ async function handleTabsContext(params) {
     }
   }
 
-  // Create a new tab if requested and group is empty
   if (createIfEmpty && mcpTabGroup.size === 0) {
     const newTab = await chrome.tabs.create({ url: "about:blank" });
     mcpTabGroup.set(newTab.id, {
@@ -426,7 +436,6 @@ async function handleTabsContext(params) {
     });
   }
 
-  // Refresh tab info
   const tabList = [];
   for (const [tabId] of mcpTabGroup) {
     try {
@@ -440,7 +449,6 @@ async function handleTabsContext(params) {
       mcpTabGroup.set(tabId, info);
       tabList.push(info);
     } catch {
-      // Tab no longer exists
       mcpTabGroup.delete(tabId);
     }
   }
@@ -453,9 +461,6 @@ async function handleTabsContext(params) {
   };
 }
 
-/**
- * Create a new tab in the MCP group
- */
 async function handleTabsCreate(_params) {
   const newTab = await chrome.tabs.create({ url: "about:blank" });
   mcpTabGroup.set(newTab.id, {
@@ -467,55 +472,42 @@ async function handleTabsCreate(_params) {
   return { result: { tabId: newTab.id } };
 }
 
-/**
- * Read console messages (limited — no persistent console access on mobile)
- */
 async function handleReadConsole(params) {
   const { tabId } = params;
   const tid = resolveTabId(tabId);
-
   return await executeViaContentScript(tid, "read_console", {});
 }
 
 // --- Content Script Communication --------------------------------------------
 
-/**
- * Send a command to the content script in the given tab and await response
- */
 function executeViaContentScript(tabId, action, params) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Content script timeout for ${action}`));
-    }, 30000);
+    }, CONTENT_SCRIPT_TIMEOUT_MS);
 
-    chrome.tabs.sendMessage(
-      tabId,
-      { action, params },
-      (response) => {
-        clearTimeout(timeout);
-        if (chrome.runtime.lastError) {
-          // Content script not injected yet — try injecting first
-          injectAndRetry(tabId, action, params)
-            .then(resolve)
-            .catch(reject);
-          return;
-        }
-        resolve(response);
+    chrome.tabs.sendMessage(tabId, { action, params }, (response) => {
+      clearTimeout(timeout);
+      if (chrome.runtime.lastError) {
+        injectAndRetry(tabId, action, params).then(resolve).catch(reject);
+        return;
       }
-    );
+      resolve(response);
+    });
   });
 }
 
-/**
- * Inject content script into a tab then retry the command
- */
 async function injectAndRetry(tabId, action, params) {
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content.js"],
-  });
+  await Promise.race([
+    chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    }),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Content script injection timeout")), SCRIPTING_TIMEOUT_MS)
+    ),
+  ]);
 
-  // Brief delay for script initialization
   await new Promise((r) => setTimeout(r, 200));
 
   return new Promise((resolve, reject) => {
@@ -531,31 +523,23 @@ async function injectAndRetry(tabId, action, params) {
 
 // --- Utility -----------------------------------------------------------------
 
-/**
- * Resolve tab ID — if the given ID is in our MCP group, use it.
- * Otherwise fall back to the active tab.
- */
 function resolveTabId(tabId) {
   if (tabId && mcpTabGroup.has(tabId)) return tabId;
-  // Find active tab in group
   for (const [id, info] of mcpTabGroup) {
     if (info.active) return id;
   }
-  // Return first tab if any
   const first = mcpTabGroup.keys().next();
   if (!first.done) return first.value;
-  return tabId; // pass through and let chrome.* API handle the error
+  return tabId;
 }
 
-/**
- * Broadcast connection state to popup
- */
 function broadcastState() {
   chrome.runtime.sendMessage({
     type: "state_update",
     state: connectionState,
     tabCount: mcpTabGroup.size,
-  }).catch(() => {}); // popup may not be open
+    stats,
+  }).catch(() => {});
 }
 
 // --- Tab tracking ------------------------------------------------------------
@@ -580,6 +564,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       state: connectionState,
       tabCount: mcpTabGroup.size,
       wsUrl: WS_URL,
+      stats,
+    });
+    return true;
+  }
+
+  if (msg.type === "get_logs") {
+    const since = msg.since || 0;
+    sendResponse({
+      logs: messageLog.filter((e) => e.ts > since),
+      total: messageLog.length,
+    });
+    return true;
+  }
+
+  if (msg.type === "get_detailed_state") {
+    sendResponse({
+      state: connectionState,
+      tabCount: mcpTabGroup.size,
+      wsUrl: WS_URL,
+      stats: { ...stats },
+      tabs: Array.from(mcpTabGroup.values()),
+      reconnectAttempts,
+      logCount: messageLog.length,
     });
     return true;
   }
@@ -596,9 +603,175 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+
+  if (msg.type === "run_test") {
+    runSelfTest(msg.testName)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ pass: false, error: err.message }));
+    return true;
+  }
+
+  if (msg.type === "launch_bridge") {
+    launchBridge()
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
+
+// --- Self-test suite ---------------------------------------------------------
+
+async function runSelfTest(testName) {
+  const start = Date.now();
+  try {
+    switch (testName) {
+      case "ws_connection": {
+        return {
+          pass: connectionState === "connected",
+          detail: `State: ${connectionState}`,
+          ms: Date.now() - start,
+        };
+      }
+      case "bridge_health": {
+        const resp = await fetch(BRIDGE_HEALTH_URL);
+        const data = await resp.json();
+        return {
+          pass: data.status === "ok",
+          detail: `nativeHost: ${data.nativeHost}, clients: ${data.clients}, uptime: ${Math.round(data.uptime)}s`,
+          ms: Date.now() - start,
+          data,
+        };
+      }
+      case "tabs_query": {
+        const tabs = await chrome.tabs.query({});
+        return {
+          pass: tabs.length > 0,
+          detail: `${tabs.length} tabs found`,
+          ms: Date.now() - start,
+        };
+      }
+      case "tabs_context": {
+        const result = await handleTabsContext({});
+        const tabCount = result?.result?.tabs?.length || 0;
+        return {
+          pass: tabCount > 0,
+          detail: `${tabCount} tabs in MCP group`,
+          ms: Date.now() - start,
+        };
+      }
+      case "navigate": {
+        const tabs = await chrome.tabs.query({ active: true });
+        const tid = tabs[0]?.id;
+        if (!tid) return { pass: false, detail: "No active tab" };
+        const result = await handleNavigate({ url: "http://127.0.0.1:18963/health", tabId: tid });
+        return {
+          pass: !!result?.result,
+          detail: result?.result || result?.error,
+          ms: Date.now() - start,
+        };
+      }
+      case "js_exec": {
+        const tabs = await chrome.tabs.query({ active: true });
+        const tid = tabs[0]?.id;
+        if (!tid) return { pass: false, detail: "No active tab" };
+        const result = await handleJavascriptTool({ text: "1+1", tabId: tid });
+        return {
+          pass: result?.result === "2",
+          detail: `Result: ${result?.result || result?.error}`,
+          ms: Date.now() - start,
+        };
+      }
+      case "read_page": {
+        const tabs = await chrome.tabs.query({ active: true });
+        const tid = tabs[0]?.id;
+        if (!tid) return { pass: false, detail: "No active tab" };
+        const result = await handleReadPage({ tabId: tid, depth: 3, max_chars: 1000 });
+        const hasRefs = result?.result?.includes("[ref_");
+        return {
+          pass: hasRefs,
+          detail: hasRefs ? `Got tree (${result.result.length} chars)` : (result?.error || "No refs found"),
+          ms: Date.now() - start,
+        };
+      }
+      case "screenshot": {
+        try {
+          const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+          return {
+            pass: dataUrl?.startsWith("data:image"),
+            detail: `Screenshot ${Math.round(dataUrl.length / 1024)}KB`,
+            ms: Date.now() - start,
+          };
+        } catch (err) {
+          return { pass: false, detail: err.message, ms: Date.now() - start };
+        }
+      }
+      case "tool_roundtrip": {
+        if (connectionState !== "connected") {
+          return { pass: false, detail: "Not connected to bridge" };
+        }
+        // Send ping and verify pong comes back
+        const sent = sendMessage({ type: "ping" });
+        return {
+          pass: sent,
+          detail: sent ? "Ping sent to bridge" : "Failed to send ping",
+          ms: Date.now() - start,
+        };
+      }
+      default:
+        return { pass: false, detail: `Unknown test: ${testName}` };
+    }
+  } catch (err) {
+    return { pass: false, error: err.message, ms: Date.now() - start };
+  }
+}
+
+// --- Bridge launcher ---------------------------------------------------------
+
+async function launchBridge() {
+  // Try to launch bridge via Termux intent
+  // Termux:RUN_COMMAND intent can execute a command in Termux
+  addLog("info", "Attempting to launch bridge via Termux intent");
+
+  // Method 1: Open a Termux URL scheme that runs the bridge
+  // termux://run?command=... (requires Termux:Tasker or am start)
+  try {
+    // Create a tab that triggers the Termux intent
+    const tab = await chrome.tabs.create({
+      url: "intent:#Intent;action=com.termux.RUN_COMMAND;component=com.termux/.app.RunCommandService;S.com.termux.RUN_COMMAND_PATH=/data/data/com.termux/files/usr/bin/bash;S.com.termux.RUN_COMMAND_ARGUMENTS=-c;S.com.termux.RUN_COMMAND_ARGUMENTS='nohup bun $HOME/git/termux-tools/claude-chrome-bridge.ts > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &';B.com.termux.RUN_COMMAND_BACKGROUND=true;end",
+      active: false,
+    });
+
+    // Close the intent tab after a brief delay
+    setTimeout(() => {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }, 3000);
+
+    addLog("info", "Bridge launch intent sent");
+
+    // Wait and check if bridge comes up
+    await new Promise((r) => setTimeout(r, 5000));
+    try {
+      const resp = await fetch(BRIDGE_HEALTH_URL);
+      const data = await resp.json();
+      if (data.status === "ok") {
+        addLog("info", "Bridge launched successfully");
+        // Reconnect WebSocket
+        if (connectionState !== "connected") {
+          reconnectAttempts = 0;
+          connect();
+        }
+        return { ok: true, method: "intent", detail: "Bridge started via Termux intent" };
+      }
+    } catch {}
+
+    return { ok: false, method: "intent", detail: "Intent sent but bridge not responding yet — check Termux" };
+  } catch (err) {
+    addLog("error", "Bridge launch failed", { error: err.message });
+    return { ok: false, error: err.message };
+  }
+}
 
 // --- Startup -----------------------------------------------------------------
 
-console.log("[bridge] Service worker starting, connecting to", WS_URL);
+addLog("info", "Service worker starting");
 connect();
