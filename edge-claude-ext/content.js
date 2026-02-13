@@ -387,37 +387,53 @@ function formInput(params) {
  * MV3 content scripts cannot use new Function() / eval() due to CSP, but
  * they CAN create <script> elements that execute in the page context.
  *
- * Results are communicated back via a CustomEvent on document.
- * window.postMessage does NOT cross MAIN→isolated world on Android Edge,
- * but DOM CustomEvents DO propagate across world boundaries.
+ * Results are communicated back via a shared DOM element — the content script
+ * creates a hidden <div>, the injected script writes the result to its
+ * data-result attribute, and a MutationObserver in the content script picks
+ * it up. The DOM is shared across world boundaries so attribute mutations
+ * are visible in both MAIN and isolated worlds.
  */
 async function javascriptExec(params) {
   const { code } = params;
   const callbackId = `__cfc_js_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const eventName = `__cfc_result_${callbackId}`;
+
+  // Create hidden DOM node for cross-world result passing
+  const resultNode = document.createElement("div");
+  resultNode.id = callbackId;
+  resultNode.style.display = "none";
+  document.documentElement.appendChild(resultNode);
 
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      document.removeEventListener(eventName, handler);
+    const cleanup = () => {
+      observer.disconnect();
+      clearTimeout(timer);
+      try { resultNode.remove(); } catch {}
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
       resolve({ error: "javascript_exec timeout (10s)" });
     }, 10000);
 
-    function handler(event) {
-      document.removeEventListener(eventName, handler);
-      clearTimeout(timeout);
+    // MutationObserver watches for the data-result attribute being set
+    const observer = new MutationObserver(() => {
+      const raw = resultNode.getAttribute("data-result");
+      if (raw === null) return;
+      cleanup();
       try {
-        resolve(JSON.parse(event.detail));
+        resolve(JSON.parse(raw));
       } catch {
         resolve({ error: "Failed to parse result" });
       }
-    }
-    document.addEventListener(eventName, handler);
+    });
+    observer.observe(resultNode, { attributes: true, attributeFilter: ["data-result"] });
 
-    // Inject <script> that runs in MAIN world, captures result, dispatches CustomEvent
+    // Inject <script> that runs in MAIN world, writes result to shared DOM node
     const script = document.createElement("script");
     script.textContent = `
       (async () => {
-        const __evName = ${JSON.stringify(eventName)};
+        const __node = document.getElementById(${JSON.stringify(callbackId)});
+        if (!__node) return;
         try {
           let __result;
           try {
@@ -426,9 +442,9 @@ async function javascriptExec(params) {
             __result = await eval(${JSON.stringify(`(async () => { ${code} })()`)});
           }
           const __serialized = typeof __result === "undefined" ? "undefined" : JSON.stringify(__result);
-          document.dispatchEvent(new CustomEvent(__evName, { detail: JSON.stringify({ result: __serialized }) }));
+          __node.setAttribute("data-result", JSON.stringify({ result: __serialized }));
         } catch (__err) {
-          document.dispatchEvent(new CustomEvent(__evName, { detail: JSON.stringify({ error: __err.message || String(__err) }) }));
+          __node.setAttribute("data-result", JSON.stringify({ error: __err.message || String(__err) }));
         }
       })();
     `;
