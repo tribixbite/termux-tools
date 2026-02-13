@@ -127,7 +127,7 @@ const TEST_SUITE = [
   { id: "tabs_query", name: "Chrome Tabs Query", desc: "chrome.tabs.query works" },
   { id: "tabs_context", name: "MCP Tabs Context", desc: "Get MCP tab group context" },
   { id: "navigate", name: "Navigate", desc: "Navigate active tab to bridge health URL" },
-  { id: "js_exec", name: "JavaScript Exec", desc: "Execute 1+1 via chrome.scripting" },
+  { id: "js_exec", name: "JavaScript Exec", desc: "Evaluate 1+1 via safe arithmetic parser" },
   { id: "read_page", name: "Read Page", desc: "Get accessibility tree from active tab" },
   { id: "screenshot", name: "Screenshot", desc: "captureVisibleTab screenshot" },
   { id: "tool_roundtrip", name: "Tool Roundtrip", desc: "Send ping through bridge WS" },

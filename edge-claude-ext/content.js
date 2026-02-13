@@ -481,17 +481,100 @@ async function javascriptExec(params) {
       return { result: JSON.stringify(window[winMatch[1]]) };
     }
 
-    // Pattern: JSON.stringify({...}) with known DOM properties — used by Claude tools
-    // e.g. JSON.stringify({a: 1, b: "hello"})
-    // Can't safely parse arbitrary JSON.stringify calls
+    // Pattern: string literals — 'hello' or "hello"
+    const strLitMatch = trimmed.match(/^(['"])(.*)\1$/s);
+    if (strLitMatch) {
+      return { result: JSON.stringify(strLitMatch[2]) };
+    }
+
+    // Pattern: boolean, null, undefined literals
+    if (/^(true|false|null|undefined)$/.test(trimmed)) {
+      const val = { true: true, false: false, null: null, undefined: undefined }[trimmed];
+      return { result: JSON.stringify(val) };
+    }
+
+    // Pattern: pure arithmetic — digits, operators, parens, spaces, decimals
+    // Safe because no identifiers can appear; parsed without eval()
+    if (/^[\d\s+\-*/%().]+$/.test(trimmed) && /\d/.test(trimmed)) {
+      const arithResult = safeArithmetic(trimmed);
+      if (arithResult !== null) return { result: JSON.stringify(arithResult) };
+    }
 
     return {
-      error: "javascript_exec limited on Android Edge — only DOM property reads are supported " +
-        "(document.title, getElementById('x').textContent, querySelector('sel').value, " +
-        "window.innerWidth, etc.). Use read_page, find, or form_input tools instead.",
+      error: "javascript_exec limited on Android Edge — only DOM property reads and " +
+        "arithmetic are supported (document.title, getElementById('x').textContent, " +
+        "querySelector('sel').value, window.innerWidth, 1+1, etc.). " +
+        "Use read_page, find, or form_input tools instead.",
     };
   } catch (err) {
     return { error: err.message || String(err) };
+  }
+}
+
+/**
+ * Safe arithmetic evaluator — recursive descent parser for basic math.
+ * Handles +, -, *, /, %, parentheses, unary minus, decimals.
+ * No eval/Function needed — CSP-safe for MV3 extensions.
+ * Returns null if expression is malformed.
+ */
+function safeArithmetic(expr) {
+  let pos = 0;
+  const ch = () => expr[pos] || "";
+  const skip = () => { while (pos < expr.length && expr[pos] === " ") pos++; };
+
+  function parseExpr() {
+    let left = parseTerm();
+    skip();
+    while (ch() === "+" || ch() === "-") {
+      const op = ch(); pos++; skip();
+      const right = parseTerm();
+      left = op === "+" ? left + right : left - right;
+    }
+    return left;
+  }
+
+  function parseTerm() {
+    let left = parseFactor();
+    skip();
+    while (ch() === "*" || ch() === "/" || ch() === "%") {
+      const op = ch(); pos++; skip();
+      const right = parseFactor();
+      if (op === "*") left *= right;
+      else if (op === "/") left /= right;
+      else left %= right;
+    }
+    return left;
+  }
+
+  function parseFactor() {
+    skip();
+    if (ch() === "(") {
+      pos++;
+      const val = parseExpr();
+      skip();
+      if (ch() === ")") pos++;
+      return val;
+    }
+    if (ch() === "-") {
+      pos++;
+      return -parseFactor();
+    }
+    let numStr = "";
+    while (pos < expr.length && (/\d/.test(ch()) || ch() === ".")) {
+      numStr += ch(); pos++;
+    }
+    if (!numStr) return NaN;
+    return parseFloat(numStr);
+  }
+
+  try {
+    const result = parseExpr();
+    skip();
+    if (pos < expr.length) return null; // unparsed trailing input
+    if (!isFinite(result)) return null;
+    return result;
+  } catch {
+    return null;
   }
 }
 
