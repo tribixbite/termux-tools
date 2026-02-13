@@ -34,6 +34,21 @@ const GLOBAL_CLI = resolve(
 );
 const CLI_PATH = existsSync(REPO_CLI) ? REPO_CLI : GLOBAL_CLI;
 
+// Resolve bun binary — process.execPath returns the glibc loader on Termux,
+// so we resolve from PATH via which, or fall back to known locations.
+function findBun(): string {
+  const candidates = [
+    resolve(process.env.HOME ?? "~", ".bun/bin/bun"),
+    "/data/data/com.termux/files/home/.bun/bin/bun",
+    "/usr/local/bin/bun",
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return "bun"; // hope it's in PATH
+}
+const BUN_PATH = findBun();
+
 // --- Logging -----------------------------------------------------------------
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -106,10 +121,10 @@ function spawnNativeHost(): void {
     nativeHost = null;
   }
 
-  log("info", `Spawning native host: bun ${CLI_PATH} --chrome-native-host`);
+  log("info", `Spawning native host: ${BUN_PATH} ${CLI_PATH} --chrome-native-host`);
 
   nativeHost = spawn({
-    cmd: ["bun", CLI_PATH, "--chrome-native-host"],
+    cmd: [BUN_PATH, CLI_PATH, "--chrome-native-host"],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
