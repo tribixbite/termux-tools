@@ -132,6 +132,9 @@ function spawnNativeHost(): void {
       ...process.env,
       // Ensure CFC is enabled
       CLAUDE_CODE_ENABLE_CFC: "true",
+      // Termux has no USER set — os.userInfo().username may return "unknown",
+      // creating a socket dir mismatch vs the MCP server. Force it.
+      USER: process.env.USER || Bun.spawnSync({ cmd: ["id", "-un"] }).stdout.toString().trim() || "u0_a364",
     },
   });
 
@@ -191,9 +194,26 @@ function spawnNativeHost(): void {
 /** Forward a message from the native host to all connected WS clients */
 function handleNativeMessage(json: string): void {
   log("debug", `native→ws: ${json.slice(0, 200)}`);
+
+  // Unwrap execute_tool: native host sends {type: "tool_request", method: "execute_tool",
+  // params: {client_id, tool, args}} but the extension expects the actual tool name as
+  // `method` (e.g. "tabs_context_mcp") with the tool's own args as `params`.
+  let outJson = json;
+  try {
+    const parsed = JSON.parse(json);
+    if (parsed.type === "tool_request" && parsed.method === "execute_tool" && parsed.params?.tool) {
+      parsed.method = parsed.params.tool;
+      parsed.params = parsed.params.args ?? {};
+      outJson = JSON.stringify(parsed);
+      log("debug", `Unwrapped execute_tool → ${parsed.method}`);
+    }
+  } catch {
+    // If parse fails, forward as-is
+  }
+
   for (const ws of wsClients) {
     try {
-      ws.send(json);
+      ws.send(outJson);
     } catch (err) {
       log("error", "Failed to send to WS client:", err);
     }
@@ -288,11 +308,24 @@ const server = Bun.serve<WsData>({
       const json = typeof message === "string" ? message : Buffer.from(message).toString("utf-8");
 
       try {
-        // Validate it's proper JSON
         const parsed = JSON.parse(json);
         log("debug", `WS message type: ${parsed.type}`);
 
-        // Forward to native host
+        // Fix tool_response: strip `method` field so cli.js response classifier
+        // (j7z: "result" in A || "error" in A) matches before the notification
+        // classifier (M7z: "method" in A). Without this, responses are
+        // misclassified as notifications and the tool call times out.
+        if (parsed.type === "tool_response" && "method" in parsed) {
+          delete parsed.method;
+          const fixed = JSON.stringify(parsed);
+          log("debug", `Stripped method from tool_response: ${fixed.slice(0, 200)}`);
+          if (!sendToNativeHost(fixed)) {
+            ws.send(JSON.stringify({ type: "error", error: "Native host not available" }));
+          }
+          return;
+        }
+
+        // Forward to native host as-is
         if (!sendToNativeHost(json)) {
           ws.send(
             JSON.stringify({
