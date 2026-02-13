@@ -258,42 +258,10 @@ async function handleJavascriptTool(params) {
   const { text, tabId } = params;
   const tid = resolveTabId(tabId);
 
-  try {
-    // chrome.scripting.executeScript can hang on Android Edge —
-    // race with timeout, then fall through to content script
-    const results = await Promise.race([
-      chrome.scripting.executeScript({
-        target: { tabId: tid },
-        func: (code) => {
-          try {
-            const fn = new Function(`return (async () => { return (${code}); })();`);
-            return fn();
-          } catch (syncErr) {
-            try {
-              const fn2 = new Function(`return (async () => { ${code} })();`);
-              return fn2();
-            } catch (stmtErr) {
-              return { __error: stmtErr.message };
-            }
-          }
-        },
-        args: [text],
-        world: "MAIN",
-      }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("chrome.scripting timeout")), SCRIPTING_TIMEOUT_MS)
-      ),
-    ]);
-
-    const result = results?.[0]?.result;
-    if (result && typeof result === "object" && result.__error) {
-      return { error: result.__error };
-    }
-    return { result: typeof result === "undefined" ? "undefined" : JSON.stringify(result) };
-  } catch (err) {
-    addLog("warn", "chrome.scripting failed, trying content script", { error: err.message });
-    return await executeViaContentScript(tid, "javascript_exec", { code: text });
-  }
+  // Go straight to content script — chrome.scripting.executeScript hangs
+  // indefinitely on Android Edge, and the content script now uses <script>
+  // tag injection to run code in the MAIN world (bypasses MV3 CSP).
+  return await executeViaContentScript(tid, "javascript_exec", { code: text });
 }
 
 async function handleReadPage(params) {
