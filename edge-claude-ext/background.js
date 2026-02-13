@@ -450,7 +450,73 @@ async function handleReadConsole(params) {
 
 // --- Content Script Communication --------------------------------------------
 
+// Persistent port connections from content scripts (keyed by tab ID).
+// These are far more reliable than chrome.tabs.sendMessage on Android Edge,
+// which corrupts message channels after 2-3 calls.
+/** @type {Map<number, chrome.runtime.Port>} */
+const contentPorts = new Map();
+/** @type {Map<string, {resolve: Function, timer: number}>} */
+const pendingPortRequests = new Map();
+let portReqCounter = 0;
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== "cfc-content") return;
+  const tabId = port.sender?.tab?.id;
+  if (!tabId) return;
+
+  contentPorts.set(tabId, port);
+  addLog("info", `Content port connected for tab ${tabId}`);
+
+  port.onMessage.addListener((msg) => {
+    if (!msg._reqId) return;
+    const pending = pendingPortRequests.get(msg._reqId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      pendingPortRequests.delete(msg._reqId);
+      pending.resolve(msg.result);
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    contentPorts.delete(tabId);
+    addLog("info", `Content port disconnected for tab ${tabId}`);
+  });
+});
+
 function executeViaContentScript(tabId, action, params) {
+  const port = contentPorts.get(tabId);
+  if (port) {
+    return executeViaPort(port, tabId, action, params);
+  }
+  // Fall back to sendMessage if no persistent port
+  return executeViaSendMessage(tabId, action, params);
+}
+
+function executeViaPort(port, tabId, action, params) {
+  return new Promise((resolve, reject) => {
+    const reqId = `req_${++portReqCounter}`;
+    const timer = setTimeout(() => {
+      pendingPortRequests.delete(reqId);
+      addLog("warn", `Port timeout for ${action} on tab ${tabId}, falling back to sendMessage`);
+      // Fall back to sendMessage on timeout
+      executeViaSendMessage(tabId, action, params).then(resolve).catch(reject);
+    }, CONTENT_SCRIPT_TIMEOUT_MS);
+
+    pendingPortRequests.set(reqId, { resolve, timer });
+
+    try {
+      port.postMessage({ _reqId: reqId, action, params });
+    } catch (err) {
+      clearTimeout(timer);
+      pendingPortRequests.delete(reqId);
+      // Port broken — remove and fall back
+      contentPorts.delete(tabId);
+      executeViaSendMessage(tabId, action, params).then(resolve).catch(reject);
+    }
+  });
+}
+
+function executeViaSendMessage(tabId, action, params) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`Content script timeout for ${action}`));
@@ -478,7 +544,14 @@ async function injectAndRetry(tabId, action, params) {
     ),
   ]);
 
-  await new Promise((r) => setTimeout(r, 200));
+  // Wait for content script to connect its port
+  await new Promise((r) => setTimeout(r, 500));
+
+  // Try port first if it connected during injection
+  const port = contentPorts.get(tabId);
+  if (port) {
+    return executeViaPort(port, tabId, action, params);
+  }
 
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, { action, params }, (response) => {
