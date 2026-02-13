@@ -30,8 +30,14 @@ function updateUI(state) {
   const detail = document.getElementById("statusDetail");
 
   dot.className = "status-dot " + (state.state || "disconnected");
+  const extV = state.extVersion || chrome.runtime.getManifest().version;
+  const bridgeV = state.bridgeVersion || "?";
   text.textContent = state.state === "connected" ? "Connected" :
     state.state === "connecting" ? "Connecting..." : "Disconnected";
+
+  // Show versions in header area
+  const verEl = document.getElementById("versionInfo");
+  if (verEl) verEl.textContent = `ext v${extV} / bridge v${bridgeV}`;
 
   if (state.state === "connected" && state.stats?.connectedAt) {
     const secs = Math.round((Date.now() - state.stats.connectedAt) / 1000);

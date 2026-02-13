@@ -8,6 +8,7 @@
 
 // --- Configuration -----------------------------------------------------------
 
+const EXT_VERSION = chrome.runtime.getManifest().version;
 const WS_URL = "ws://127.0.0.1:18963/ws";
 const BRIDGE_HEALTH_URL = "http://127.0.0.1:18963/health";
 const RECONNECT_BASE_MS = 1000;
@@ -86,7 +87,7 @@ function connect() {
     connectionState = "connected";
     reconnectAttempts = 0;
     stats.connectedAt = Date.now();
-    addLog("ws", "Connected to bridge server");
+    addLog("ws", `Connected to bridge server (ext v${EXT_VERSION})`);
     broadcastState();
 
     sendMessage({ type: "ping" });
@@ -157,7 +158,8 @@ async function handleBridgeMessage(msg) {
       break;
 
     case "bridge_connected":
-      addLog("info", "Bridge handshake", msg);
+      stats.bridgeVersion = msg.version || "unknown";
+      addLog("info", `Bridge handshake (bridge v${stats.bridgeVersion}, ext v${EXT_VERSION})`, msg);
       break;
 
     case "status_response":
@@ -549,6 +551,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "get_detailed_state") {
     sendResponse({
       state: connectionState,
+      extVersion: EXT_VERSION,
+      bridgeVersion: stats.bridgeVersion || "unknown",
       tabCount: mcpTabGroup.size,
       wsUrl: WS_URL,
       stats: { ...stats },

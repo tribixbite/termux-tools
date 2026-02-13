@@ -19,6 +19,16 @@ import { existsSync } from "fs";
 
 // --- Configuration -----------------------------------------------------------
 
+// Read version from extension manifest — single source of truth
+const MANIFEST_PATH = resolve(import.meta.dir, "edge-claude-ext/manifest.json");
+const BRIDGE_VERSION: string = (() => {
+  try {
+    const manifest = JSON.parse(require("fs").readFileSync(MANIFEST_PATH, "utf-8"));
+    return manifest.version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 const WS_PORT = parseInt(process.env.BRIDGE_PORT ?? "18963", 10);
 const WS_HOST = "127.0.0.1"; // localhost only for security
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN ?? ""; // optional shared secret
@@ -253,6 +263,7 @@ const server = Bun.serve<WsData>({
       return new Response(
         JSON.stringify({
           status: "ok",
+          version: BRIDGE_VERSION,
           nativeHost: nativeHost !== null,
           clients: wsClients.size,
           uptime: process.uptime(),
@@ -305,7 +316,7 @@ const server = Bun.serve<WsData>({
       ws.send(
         JSON.stringify({
           type: "bridge_connected",
-          version: "1.0.0",
+          version: BRIDGE_VERSION,
           nativeHost: nativeHost !== null,
         })
       );
@@ -415,7 +426,7 @@ process.on("SIGTERM", shutdown);
 
 // --- Startup -----------------------------------------------------------------
 
-log("info", `Claude Chrome Bridge started on ws://${WS_HOST}:${WS_PORT}`);
+log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:${WS_PORT}`);
 log("info", `CLI path: ${CLI_PATH}`);
 log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
 log("info", "Waiting for WebSocket connections...");
