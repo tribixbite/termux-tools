@@ -2,6 +2,8 @@ name: Build CRX
 
 on:
   push:
+    tags:
+      - 'v*'
     paths:
       - 'edge-claude-ext/**'
       - 'scripts/build-crx.js'
@@ -11,6 +13,9 @@ on:
   pull_request:
     paths:
       - 'edge-claude-ext/**'
+
+permissions:
+  contents: write
 
 jobs:
   build:
