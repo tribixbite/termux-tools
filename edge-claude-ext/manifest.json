@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Claude Code Browser Bridge",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "description": "Bridges Claude Code CLI to Edge Android via WebSocket",
   "permissions": [
     "activeTab",
     "scripting",
-    "tabs"
+    "tabs",
+    "webRequest"
   ],
   "host_permissions": [
     "<all_urls>"

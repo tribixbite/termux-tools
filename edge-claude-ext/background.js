@@ -234,6 +234,30 @@ async function handleToolRequest(msg) {
       case "read_console_messages":
         result = await handleReadConsole(params);
         break;
+      case "get_page_text":
+        result = await handleGetPageText(params);
+        break;
+      case "update_plan":
+        result = handleUpdatePlan(params);
+        break;
+      case "shortcuts_list":
+        result = { result: [] }; // no side panel shortcuts on Android
+        break;
+      case "shortcuts_execute":
+        result = { error: "Keyboard shortcuts are not available on Android Edge" };
+        break;
+      case "read_network_requests":
+        result = handleReadNetworkRequests(params);
+        break;
+      case "resize_window":
+        result = await handleResizeWindow(params);
+        break;
+      case "upload_image":
+        result = await handleUploadImage(params);
+        break;
+      case "gif_creator":
+        result = handleGifCreator(params);
+        break;
       default:
         result = { error: `Unsupported tool: ${method}` };
     }
@@ -330,6 +354,9 @@ async function handleComputer(params) {
   const { action, tabId, coordinate, text } = params;
   const tid = resolveTabId(tabId);
 
+  // Parse modifier keys (e.g. "ctrl+shift") into event properties
+  const modifiers = parseModifiers(params.modifiers);
+
   switch (action) {
     case "screenshot":
       try {
@@ -340,15 +367,18 @@ async function handleComputer(params) {
       }
 
     case "type":
-      return await executeViaContentScript(tid, "type_text", { text });
+      return await executeViaContentScript(tid, "type_text", { text, modifiers });
 
     case "key":
-      return await executeViaContentScript(tid, "key_press", { keys: text });
+      return await executeViaContentScript(tid, "key_press", { keys: text, modifiers });
 
     case "scroll":
       return await executeViaContentScript(tid, "scroll", {
         x: coordinate?.[0] || 0,
         y: coordinate?.[1] || 0,
+        direction: params.scroll_direction,
+        amount: params.scroll_amount || 3,
+        modifiers,
       });
 
     case "scroll_to":
@@ -361,14 +391,33 @@ async function handleComputer(params) {
       return await executeViaContentScript(tid, "click", {
         x: coordinate?.[0] || 0,
         y: coordinate?.[1] || 0,
+        ref: params.ref,
         button: action.replace("_click", ""),
         clickCount: action === "double_click" ? 2 : action === "triple_click" ? 3 : 1,
+        modifiers,
+      });
+
+    case "left_click_drag":
+      return await executeViaContentScript(tid, "drag", {
+        startX: coordinate?.[0] || 0,
+        startY: coordinate?.[1] || 0,
+        endX: params.end_coordinate?.[0] || 0,
+        endY: params.end_coordinate?.[1] || 0,
+        modifiers,
       });
 
     case "hover":
       return await executeViaContentScript(tid, "hover", {
         x: coordinate?.[0] || 0,
         y: coordinate?.[1] || 0,
+        modifiers,
+      });
+
+    case "zoom":
+      return await executeViaContentScript(tid, "zoom", {
+        x: coordinate?.[0] || 0,
+        y: coordinate?.[1] || 0,
+        factor: params.zoom_factor || 2,
       });
 
     case "wait":
@@ -379,6 +428,18 @@ async function handleComputer(params) {
     default:
       return { error: `Unsupported computer action: ${action}` };
   }
+}
+
+/** Parse modifier string (e.g. "ctrl+shift") into event property flags */
+function parseModifiers(modStr) {
+  if (!modStr) return {};
+  const mods = modStr.toLowerCase().split("+").map((s) => s.trim());
+  return {
+    ctrlKey: mods.includes("ctrl") || mods.includes("control"),
+    shiftKey: mods.includes("shift"),
+    altKey: mods.includes("alt"),
+    metaKey: mods.includes("meta") || mods.includes("cmd") || mods.includes("command"),
+  };
 }
 
 async function handleTabsContext(params) {
@@ -446,6 +507,170 @@ async function handleReadConsole(params) {
   const { tabId } = params;
   const tid = resolveTabId(tabId);
   return await executeViaContentScript(tid, "read_console", {});
+}
+
+// --- New Tool Handlers -------------------------------------------------------
+
+async function handleGetPageText(params) {
+  const { tabId, max_chars } = params;
+  const tid = resolveTabId(tabId);
+  return await executeViaContentScript(tid, "get_page_text", {
+    max_chars: max_chars || 100000,
+  });
+}
+
+/** Auto-approve on Android (no side panel UI for plan display) */
+function handleUpdatePlan(params) {
+  const { domains } = params;
+  return {
+    result: {
+      approved: true,
+      domains: domains || [],
+      note: "Auto-approved on Android (no side panel UI)",
+    },
+  };
+}
+
+// --- Network request tracking ------------------------------------------------
+
+/** Per-tab network request ring buffer. @type {Map<number, Array>} */
+const networkRequests = new Map();
+const MAX_NETWORK_ENTRIES = 500;
+
+// Register webRequest listener if the API is available (requires webRequest permission)
+try {
+  if (chrome.webRequest?.onCompleted) {
+    chrome.webRequest.onCompleted.addListener(
+      (details) => {
+        if (!details.tabId || details.tabId < 0) return;
+        if (!networkRequests.has(details.tabId)) {
+          networkRequests.set(details.tabId, []);
+        }
+        const buf = networkRequests.get(details.tabId);
+        buf.push({
+          url: details.url,
+          method: details.method,
+          statusCode: details.statusCode,
+          type: details.type,
+          timestamp: details.timeStamp,
+          fromCache: details.fromCache || false,
+        });
+        // Ring buffer: trim oldest entries
+        while (buf.length > MAX_NETWORK_ENTRIES) buf.shift();
+      },
+      { urls: ["<all_urls>"] }
+    );
+    addLog("info", "webRequest.onCompleted listener registered");
+  }
+} catch (err) {
+  addLog("warn", "webRequest not available", { error: err.message });
+}
+
+// Clear network buffer on cross-domain navigation
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.url && networkRequests.has(tabId)) {
+    try {
+      const oldEntries = networkRequests.get(tabId);
+      const oldDomain = oldEntries.length > 0 ? new URL(oldEntries[0].url).hostname : "";
+      const newDomain = new URL(changeInfo.url).hostname;
+      if (oldDomain && newDomain !== oldDomain) {
+        networkRequests.set(tabId, []);
+      }
+    } catch {}
+  }
+});
+
+function handleReadNetworkRequests(params) {
+  const { tabId, since, type_filter } = params;
+  const tid = resolveTabId(tabId);
+  let entries = networkRequests.get(tid) || [];
+
+  if (since) {
+    entries = entries.filter((e) => e.timestamp > since);
+  }
+  if (type_filter) {
+    entries = entries.filter((e) => e.type === type_filter);
+  }
+
+  return {
+    result: entries.slice(-100), // return last 100 matching
+    count: entries.length,
+    note: entries.length === 0 ? "No requests captured. webRequest may not be available on Android Edge — try CDP Network domain via bridge." : undefined,
+  };
+}
+
+async function handleResizeWindow(params) {
+  const { width, height } = params;
+  try {
+    const [win] = await chrome.windows.getAll();
+    if (win?.id) {
+      await chrome.windows.update(win.id, { width, height });
+      return { result: `Resized window to ${width}x${height}` };
+    }
+    return { error: "No window found. On Android, window resizing is not supported — use CDP Emulation.setDeviceMetricsOverride via bridge." };
+  } catch (err) {
+    return { error: `Resize failed (expected on Android): ${err.message}. Use CDP Emulation.setDeviceMetricsOverride via bridge instead.` };
+  }
+}
+
+async function handleUploadImage(params) {
+  const { tabId, ref, coordinate, image_data } = params;
+  const tid = resolveTabId(tabId);
+  return await executeViaContentScript(tid, "upload_image", {
+    ref,
+    x: coordinate?.[0],
+    y: coordinate?.[1],
+    image_data,
+  });
+}
+
+/** GIF creator — stub implementation, captures frames but encoding deferred */
+const gifState = { recording: false, frames: [], tabId: null, timer: null };
+
+function handleGifCreator(params) {
+  const { action } = params;
+
+  switch (action) {
+    case "start_recording": {
+      if (gifState.recording) return { error: "Already recording" };
+      gifState.recording = true;
+      gifState.frames = [];
+      gifState.tabId = resolveTabId(params.tabId);
+
+      // Capture at ~2fps (500ms intervals), max 30s / 60 frames
+      gifState.timer = setInterval(async () => {
+        if (gifState.frames.length >= 60) {
+          clearInterval(gifState.timer);
+          gifState.recording = false;
+          return;
+        }
+        try {
+          const dataUrl = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+          gifState.frames.push({ data: dataUrl, ts: Date.now() });
+        } catch {}
+      }, 500);
+
+      return { result: "Recording started (max 30s / 60 frames)" };
+    }
+    case "stop_recording": {
+      if (!gifState.recording) return { error: "Not recording" };
+      clearInterval(gifState.timer);
+      gifState.recording = false;
+      return {
+        result: `Recording stopped. ${gifState.frames.length} frames captured.`,
+        frameCount: gifState.frames.length,
+      };
+    }
+    case "export": {
+      // TODO: implement pure-JS GIF encoding or delegate to bridge/Bun
+      return {
+        error: "GIF encoding not yet supported on Android — frames captured but export requires server-side encoding via bridge.",
+        frameCount: gifState.frames.length,
+      };
+    }
+    default:
+      return { error: `Unknown gif_creator action: ${action}. Use start_recording, stop_recording, or export.` };
+  }
 }
 
 // --- Content Script Communication --------------------------------------------
