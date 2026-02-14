@@ -130,6 +130,14 @@ async function handleAction(action, params) {
       return takeScreenshot(params);
     case "read_console":
       return readConsole(params);
+    case "get_page_text":
+      return getPageText(params);
+    case "drag":
+      return simulateDrag(params);
+    case "zoom":
+      return simulateZoom(params);
+    case "upload_image":
+      return uploadImage(params);
     default:
       return { error: `Unknown action: ${action}` };
   }
@@ -583,55 +591,91 @@ function safeArithmetic(expr) {
 // --- click, type, key, scroll, hover -----------------------------------------
 
 function simulateClick(params) {
-  const { x, y, button, clickCount } = params;
-  const el = document.elementFromPoint(x, y);
-  if (!el) return { error: `No element at (${x}, ${y})` };
+  const { x, y, button, clickCount, ref, modifiers } = params;
+
+  // Resolve target: ref-based click takes priority over coordinate-based
+  let el;
+  if (ref) {
+    el = resolveRef(ref);
+    if (!el) return { error: `Element ${ref} not found` };
+  } else {
+    el = document.elementFromPoint(x, y);
+    if (!el) return { error: `No element at (${x}, ${y})` };
+  }
 
   const eventType = button === "right" ? "contextmenu" : "click";
   const mouseButton = button === "right" ? 2 : 0;
+  const mods = modifiers || {};
 
-  for (let i = 0; i < (clickCount || 1); i++) {
-    el.dispatchEvent(new MouseEvent("mousedown", { clientX: x, clientY: y, button: mouseButton, bubbles: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", { clientX: x, clientY: y, button: mouseButton, bubbles: true }));
-    el.dispatchEvent(new MouseEvent(eventType, { clientX: x, clientY: y, button: mouseButton, bubbles: true }));
+  // Use element center if clicking by ref
+  let cx = x, cy = y;
+  if (ref && el) {
+    const rect = el.getBoundingClientRect();
+    cx = rect.x + rect.width / 2;
+    cy = rect.y + rect.height / 2;
   }
 
-  return { result: `Clicked at (${x}, ${y}) on <${el.tagName.toLowerCase()}>` };
+  for (let i = 0; i < (clickCount || 1); i++) {
+    el.dispatchEvent(new MouseEvent("mousedown", { clientX: cx, clientY: cy, button: mouseButton, bubbles: true, ...mods }));
+    el.dispatchEvent(new MouseEvent("mouseup", { clientX: cx, clientY: cy, button: mouseButton, bubbles: true, ...mods }));
+    el.dispatchEvent(new MouseEvent(eventType, { clientX: cx, clientY: cy, button: mouseButton, bubbles: true, ...mods }));
+  }
+
+  const tag = el.tagName.toLowerCase();
+  return { result: `Clicked at (${Math.round(cx)}, ${Math.round(cy)}) on <${tag}>${ref ? ` (${ref})` : ""}` };
 }
 
 function typeText(params) {
-  const { text } = params;
+  const { text, modifiers } = params;
   const el = document.activeElement || document.body;
+  const mods = modifiers || {};
 
   for (const char of text) {
-    el.dispatchEvent(new KeyboardEvent("keydown", { key: char, bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent("keypress", { key: char, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key: char, bubbles: true, ...mods }));
+    el.dispatchEvent(new KeyboardEvent("keypress", { key: char, bubbles: true, ...mods }));
 
     if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
       el.value += char;
       el.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
-    el.dispatchEvent(new KeyboardEvent("keyup", { key: char, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keyup", { key: char, bubbles: true, ...mods }));
   }
 
   return { result: `Typed ${text.length} characters` };
 }
 
 function keyPress(params) {
-  const { keys } = params;
+  const { keys, modifiers } = params;
   const el = document.activeElement || document.body;
+  const mods = modifiers || {};
 
   for (const key of keys.split(" ")) {
-    el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-    el.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+    el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, ...mods }));
+    el.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true, ...mods }));
   }
 
   return { result: `Pressed: ${keys}` };
 }
 
 function scroll(params) {
-  const { x, y } = params;
+  const { x, y, direction, amount } = params;
+
+  // If direction is specified, use it (up/down/left/right with amount 1-10, ×100px)
+  if (direction) {
+    const px = (amount || 3) * 100;
+    const scrollMap = {
+      up: [0, -px],
+      down: [0, px],
+      left: [-px, 0],
+      right: [px, 0],
+    };
+    const [sx, sy] = scrollMap[direction] || [0, 0];
+    window.scrollBy(sx, sy);
+    return { result: `Scrolled ${direction} by ${px}px` };
+  }
+
+  // Legacy coordinate-based scroll
   window.scrollBy(x, y);
   return { result: `Scrolled by (${x}, ${y})` };
 }
@@ -646,12 +690,13 @@ function scrollTo(params) {
 }
 
 function simulateHover(params) {
-  const { x, y } = params;
+  const { x, y, modifiers } = params;
   const el = document.elementFromPoint(x, y);
   if (!el) return { error: `No element at (${x}, ${y})` };
+  const mods = modifiers || {};
 
-  el.dispatchEvent(new MouseEvent("mouseover", { clientX: x, clientY: y, bubbles: true }));
-  el.dispatchEvent(new MouseEvent("mouseenter", { clientX: x, clientY: y, bubbles: true }));
+  el.dispatchEvent(new MouseEvent("mouseover", { clientX: x, clientY: y, bubbles: true, ...mods }));
+  el.dispatchEvent(new MouseEvent("mouseenter", { clientX: x, clientY: y, bubbles: true, ...mods }));
 
   return { result: `Hovering at (${x}, ${y})` };
 }
@@ -684,4 +729,135 @@ function readConsole(_params) {
     result: capturedConsole.slice(-50), // last 50 messages
     count: capturedConsole.length,
   };
+}
+
+// --- get_page_text -----------------------------------------------------------
+
+function getPageText(params) {
+  const { max_chars } = params;
+  const limit = max_chars || 100000;
+  let text = document.body.innerText || "";
+  if (text.length > limit) {
+    text = text.slice(0, limit) + "\n... [TRUNCATED at " + limit + " chars]";
+  }
+  return { result: text };
+}
+
+// --- drag (left_click_drag) --------------------------------------------------
+
+function simulateDrag(params) {
+  const { startX, startY, endX, endY, modifiers } = params;
+  const mods = modifiers || {};
+
+  const startEl = document.elementFromPoint(startX, startY);
+  if (!startEl) return { error: `No element at start (${startX}, ${startY})` };
+
+  // Mousedown at start position
+  startEl.dispatchEvent(new MouseEvent("mousedown", {
+    clientX: startX, clientY: startY, button: 0, bubbles: true, ...mods,
+  }));
+
+  // Interpolate mousemove steps for smoother drag
+  const steps = 10;
+  const dx = (endX - startX) / steps;
+  const dy = (endY - startY) / steps;
+  for (let i = 1; i <= steps; i++) {
+    const mx = startX + dx * i;
+    const my = startY + dy * i;
+    const moveEl = document.elementFromPoint(mx, my) || startEl;
+    moveEl.dispatchEvent(new MouseEvent("mousemove", {
+      clientX: mx, clientY: my, button: 0, bubbles: true, ...mods,
+    }));
+  }
+
+  // Mouseup at end position
+  const endEl = document.elementFromPoint(endX, endY) || startEl;
+  endEl.dispatchEvent(new MouseEvent("mouseup", {
+    clientX: endX, clientY: endY, button: 0, bubbles: true, ...mods,
+  }));
+
+  return { result: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY})` };
+}
+
+// --- zoom (crop screenshot to simulate zoom) ---------------------------------
+
+async function simulateZoom(params) {
+  const { x, y, factor } = params;
+  const zoomFactor = factor || 2;
+
+  // Calculate crop region centered on (x, y)
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const cropW = Math.round(vw / zoomFactor);
+  const cropH = Math.round(vh / zoomFactor);
+  const cropX = Math.max(0, Math.min(x - cropW / 2, vw - cropW));
+  const cropY = Math.max(0, Math.min(y - cropH / 2, vh - cropH));
+
+  // Use a canvas to crop the visible area (requires capturing first)
+  // Since content scripts can't use captureVisibleTab, we provide crop coordinates
+  // for the background script to apply, or return dimensions for CSS-based zoom
+  return {
+    result: {
+      crop: { x: Math.round(cropX), y: Math.round(cropY), width: cropW, height: cropH },
+      factor: zoomFactor,
+      note: "Zoom simulated via crop region. Use screenshot + crop in background, or apply CSS transform for live zoom.",
+    },
+  };
+}
+
+// --- upload_image (file input via DataTransfer) ------------------------------
+
+function uploadImage(params) {
+  const { ref, x, y, image_data } = params;
+
+  // Resolve target element
+  let el;
+  if (ref) {
+    el = resolveRef(ref);
+    if (!el) return { error: `Element ${ref} not found` };
+  } else if (x !== undefined && y !== undefined) {
+    el = document.elementFromPoint(x, y);
+    if (!el) return { error: `No element at (${x}, ${y})` };
+  } else {
+    return { error: "Must provide ref or coordinate for upload target" };
+  }
+
+  if (!image_data) return { error: "Missing image_data (base64)" };
+
+  try {
+    // Decode base64 to binary
+    const binaryStr = atob(image_data.replace(/^data:image\/\w+;base64,/, ""));
+    const bytes = new Uint8Array(binaryStr.length);
+    for (let i = 0; i < binaryStr.length; i++) {
+      bytes[i] = binaryStr.charCodeAt(i);
+    }
+
+    // Create File from binary data
+    const blob = new Blob([bytes], { type: "image/png" });
+    const file = new File([blob], "upload.png", { type: "image/png" });
+
+    // If target is a file input, set via DataTransfer
+    if (el.tagName === "INPUT" && el.type === "file") {
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      el.files = dt.files;
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return { result: `Set file input to upload.png (${bytes.length} bytes)` };
+    }
+
+    // Otherwise, simulate a drop event
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const rect = el.getBoundingClientRect();
+    const dropX = rect.x + rect.width / 2;
+    const dropY = rect.y + rect.height / 2;
+
+    el.dispatchEvent(new DragEvent("dragenter", { dataTransfer: dt, clientX: dropX, clientY: dropY, bubbles: true }));
+    el.dispatchEvent(new DragEvent("dragover", { dataTransfer: dt, clientX: dropX, clientY: dropY, bubbles: true }));
+    el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, clientX: dropX, clientY: dropY, bubbles: true }));
+
+    return { result: `Dropped image on <${el.tagName.toLowerCase()}> (${bytes.length} bytes)` };
+  } catch (err) {
+    return { error: `Upload failed: ${err.message}` };
+  }
 }

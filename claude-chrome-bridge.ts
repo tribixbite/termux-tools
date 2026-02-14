@@ -114,6 +114,360 @@ class NativeMessageDecoder {
   }
 }
 
+// --- CDP (Chrome DevTools Protocol) over ADB ---------------------------------
+
+/** Port used for ADB forward to Edge's DevTools socket */
+const CDP_PORT = parseInt(process.env.CDP_PORT ?? "9223", 10);
+/** How often to re-check Edge PID for reconnection (ms) */
+const CDP_PID_CHECK_INTERVAL_MS = 60_000;
+/** CDP target cache staleness threshold (ms) */
+const CDP_TARGET_CACHE_TTL_MS = 10_000;
+/** CDP WebSocket message timeout (ms) */
+const CDP_TIMEOUT_MS = 15_000;
+
+/**
+ * Manages CDP connection to Edge Android via ADB.
+ *
+ * Discovery flow:
+ * 1. Get Edge PID via `adb shell pidof com.microsoft.emmx.canary`
+ * 2. Forward tcp:9223 → localabstract:chrome_devtools_remote_<PID>
+ * 3. Connect browser-level WebSocket (not page-level — page endpoints timeout for backgrounded tabs)
+ * 4. Use Target.attachToTarget + Runtime.evaluate with sessionId for tab-specific JS execution
+ *
+ * Falls back gracefully when ADB is unavailable — extension DOM evaluator handles it.
+ */
+class CdpManager {
+  private ws: WebSocket | null = null;
+  private edgePid: number | null = null;
+  private state: "disconnected" | "connecting" | "connected" = "disconnected";
+  private msgId = 0;
+  /** Pending CDP JSON-RPC responses keyed by message id */
+  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+  /** Extension tabId → CDP targetId mapping */
+  private tabTargetMap = new Map<number, string>();
+  /** Extension tabId → URL cache (populated from tabs_context_mcp responses) */
+  private tabUrlCache = new Map<number, string>();
+  /** CDP targetId → sessionId for attached targets */
+  private sessionMap = new Map<string, string>();
+  /** Last time targets were fetched */
+  private targetsLastFetched = 0;
+  /** Cached CDP targets */
+  private cachedTargets: Array<{ targetId: string; url: string; title: string; type: string }> = [];
+  /** PID recheck interval handle */
+  private pidCheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** Attempt connection — safe to call multiple times, no-op if already connected */
+  async connect(): Promise<boolean> {
+    if (this.state === "connected" && this.ws?.readyState === WebSocket.OPEN) return true;
+    if (this.state === "connecting") return false;
+
+    this.state = "connecting";
+    try {
+      // Step 1: find Edge PID
+      const pidResult = Bun.spawnSync({ cmd: ["adb", "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0]; // take first PID if multiple
+      if (!pidStr || pidResult.exitCode !== 0) {
+        log("debug", "CDP: Edge not running or ADB unavailable");
+        this.state = "disconnected";
+        return false;
+      }
+      this.edgePid = parseInt(pidStr, 10);
+      if (isNaN(this.edgePid)) {
+        log("warn", `CDP: invalid PID "${pidStr}"`);
+        this.state = "disconnected";
+        return false;
+      }
+
+      // Step 2: set up ADB port forward
+      const socketName = `chrome_devtools_remote_${this.edgePid}`;
+      const fwdResult = Bun.spawnSync({
+        cmd: ["adb", "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
+      });
+      if (fwdResult.exitCode !== 0) {
+        log("warn", `CDP: adb forward failed — ${fwdResult.stderr.toString().trim()}`);
+        this.state = "disconnected";
+        return false;
+      }
+
+      // Step 3: verify via /json/version
+      const versionResp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+      const versionData = await versionResp.json() as Record<string, string>;
+      log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"}`);
+
+      // Step 4: connect browser-level WebSocket
+      // Use the webSocketDebuggerUrl from /json/version, or construct it
+      const wsUrl = versionData.webSocketDebuggerUrl?.replace(/^ws:\/\/[^/]+/, `ws://127.0.0.1:${CDP_PORT}`)
+        ?? `ws://127.0.0.1:${CDP_PORT}/devtools/browser`;
+
+      await this.connectWebSocket(wsUrl);
+
+      // Start periodic PID recheck
+      if (!this.pidCheckTimer) {
+        this.pidCheckTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
+      }
+
+      this.state = "connected";
+      log("info", `CDP: connected to Edge (PID ${this.edgePid}) on port ${CDP_PORT}`);
+      return true;
+    } catch (err) {
+      log("warn", `CDP: connect failed — ${(err as Error).message}`);
+      this.state = "disconnected";
+      return false;
+    }
+  }
+
+  /** Connect WebSocket to browser-level endpoint */
+  private connectWebSocket(url: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("CDP WebSocket connection timeout"));
+      }, CDP_TIMEOUT_MS);
+
+      this.ws = new WebSocket(url);
+
+      this.ws.addEventListener("open", () => {
+        clearTimeout(timeout);
+        log("debug", `CDP: WebSocket open to ${url}`);
+        resolve();
+      });
+
+      this.ws.addEventListener("error", (ev) => {
+        clearTimeout(timeout);
+        log("error", `CDP: WebSocket error`);
+        reject(new Error("CDP WebSocket error"));
+      });
+
+      this.ws.addEventListener("close", () => {
+        log("info", "CDP: WebSocket closed");
+        this.state = "disconnected";
+        this.ws = null;
+        this.sessionMap.clear();
+        this.tabTargetMap.clear();
+      });
+
+      this.ws.addEventListener("message", (ev) => {
+        try {
+          const data = JSON.parse(String(ev.data)) as { id?: number; result?: unknown; error?: { message: string }; method?: string; params?: Record<string, unknown> };
+          if (data.id !== undefined) {
+            // Response to a pending command
+            const p = this.pending.get(data.id);
+            if (p) {
+              clearTimeout(p.timer);
+              this.pending.delete(data.id);
+              if (data.error) p.reject(new Error(data.error.message));
+              else p.resolve(data.result);
+            }
+          }
+          // Events (Target.targetCreated, etc.) are silently ignored for now
+        } catch {
+          log("debug", "CDP: unparseable message");
+        }
+      });
+    });
+  }
+
+  /** Send a CDP command and await its response */
+  sendCommand(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error("CDP not connected"));
+        return;
+      }
+
+      const id = ++this.msgId;
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP timeout: ${method}`));
+      }, CDP_TIMEOUT_MS);
+
+      this.pending.set(id, { resolve, reject, timer });
+
+      const msg: Record<string, unknown> = { id, method, params };
+      if (sessionId) msg.sessionId = sessionId;
+      this.ws.send(JSON.stringify(msg));
+    });
+  }
+
+  /** Execute JavaScript on a specific tab via CDP */
+  async evaluateJS(code: string, tabId?: number): Promise<{ result?: string; error?: string }> {
+    if (!this.isAvailable()) {
+      const connected = await this.connect();
+      if (!connected) return { error: "CDP not available" };
+    }
+
+    try {
+      // Resolve tabId to CDP targetId
+      const targetId = await this.resolveTarget(tabId);
+      if (!targetId) {
+        return { error: `CDP: no target found for tab ${tabId ?? "active"}` };
+      }
+
+      // Attach to target if not already attached
+      let sessionId = this.sessionMap.get(targetId);
+      if (!sessionId) {
+        const attachResult = await this.sendCommand("Target.attachToTarget", {
+          targetId,
+          flatten: true,
+        }) as { sessionId: string };
+        sessionId = attachResult.sessionId;
+        this.sessionMap.set(targetId, sessionId);
+      }
+
+      // Execute via Runtime.evaluate
+      const evalResult = await this.sendCommand("Runtime.evaluate", {
+        expression: code,
+        returnByValue: true,
+        awaitPromise: true,
+        // Allow accessing async results
+        generatePreview: false,
+        userGesture: true,
+      }, sessionId) as {
+        result?: { type: string; value?: unknown; description?: string; subtype?: string };
+        exceptionDetails?: { exception?: { description?: string }; text?: string };
+      };
+
+      if (evalResult.exceptionDetails) {
+        const excMsg = evalResult.exceptionDetails.exception?.description
+          ?? evalResult.exceptionDetails.text
+          ?? "Unknown error";
+        return { error: excMsg };
+      }
+
+      const r = evalResult.result;
+      if (!r) return { result: "undefined" };
+
+      // Format result as string
+      if (r.type === "undefined") return { result: "undefined" };
+      if (r.value !== undefined) return { result: JSON.stringify(r.value) };
+      if (r.description) return { result: r.description };
+      return { result: String(r) };
+    } catch (err) {
+      return { error: `CDP eval failed: ${(err as Error).message}` };
+    }
+  }
+
+  /** Resolve an extension tabId to a CDP targetId by URL matching */
+  private async resolveTarget(tabId?: number): Promise<string | null> {
+    // Refresh target list if stale
+    if (Date.now() - this.targetsLastFetched > CDP_TARGET_CACHE_TTL_MS) {
+      await this.refreshTargets();
+    }
+
+    // If we have a cached mapping, use it
+    if (tabId !== undefined && this.tabTargetMap.has(tabId)) {
+      return this.tabTargetMap.get(tabId)!;
+    }
+
+    // Try URL matching
+    if (tabId !== undefined) {
+      const tabUrl = this.tabUrlCache.get(tabId);
+      if (tabUrl) {
+        const target = this.cachedTargets.find((t) => t.url === tabUrl && t.type === "page");
+        if (target) {
+          this.tabTargetMap.set(tabId, target.targetId);
+          return target.targetId;
+        }
+      }
+    }
+
+    // Fall back to first page target (best guess for active tab)
+    const firstPage = this.cachedTargets.find((t) => t.type === "page");
+    return firstPage?.targetId ?? null;
+  }
+
+  /** Fetch CDP targets from /json/list endpoint */
+  private async refreshTargets(): Promise<void> {
+    try {
+      const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
+      this.cachedTargets = (await resp.json()) as typeof this.cachedTargets;
+      this.targetsLastFetched = Date.now();
+
+      // Rebuild URL → targetId mappings
+      for (const [tabId, url] of this.tabUrlCache) {
+        const target = this.cachedTargets.find((t) => t.url === url && t.type === "page");
+        if (target) this.tabTargetMap.set(tabId, target.targetId);
+      }
+    } catch (err) {
+      log("debug", `CDP: refreshTargets failed — ${(err as Error).message}`);
+    }
+  }
+
+  /** Cache tab URL from tabs_context_mcp responses for CDP target mapping */
+  cacheTabUrl(tabId: number, url: string): void {
+    this.tabUrlCache.set(tabId, url);
+    // Invalidate stale target mapping
+    this.tabTargetMap.delete(tabId);
+  }
+
+  /** Check if CDP is connected and ready */
+  isAvailable(): boolean {
+    return this.state === "connected" && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** Get status info for /health endpoint */
+  getStatus(): { state: string; edgePid: number | null; port: number; targets: number } {
+    return {
+      state: this.state,
+      edgePid: this.edgePid,
+      port: CDP_PORT,
+      targets: this.cachedTargets.filter((t) => t.type === "page").length,
+    };
+  }
+
+  /** Re-check Edge PID — reconnect if changed (Edge restarted) */
+  private async recheckPid(): Promise<void> {
+    try {
+      const pidResult = Bun.spawnSync({ cmd: ["adb", "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
+      const newPid = parseInt(pidStr, 10);
+
+      if (isNaN(newPid)) {
+        // Edge not running
+        if (this.state === "connected") {
+          log("info", "CDP: Edge no longer running, disconnecting");
+          this.cleanup();
+        }
+        return;
+      }
+
+      if (newPid !== this.edgePid && this.state === "connected") {
+        log("info", `CDP: Edge PID changed ${this.edgePid} → ${newPid}, reconnecting`);
+        this.cleanup();
+        await this.connect();
+      }
+    } catch {
+      // ADB not available — ignore
+    }
+  }
+
+  /** Clean up CDP connection and ADB forward */
+  cleanup(): void {
+    if (this.pidCheckTimer) {
+      clearInterval(this.pidCheckTimer);
+      this.pidCheckTimer = null;
+    }
+    if (this.ws) {
+      try { this.ws.close(); } catch {}
+      this.ws = null;
+    }
+    this.state = "disconnected";
+    this.sessionMap.clear();
+    this.tabTargetMap.clear();
+    this.pending.forEach((p) => {
+      clearTimeout(p.timer);
+      p.reject(new Error("CDP cleanup"));
+    });
+    this.pending.clear();
+
+    // Remove ADB forward
+    Bun.spawnSync({ cmd: ["adb", "forward", "--remove", `tcp:${CDP_PORT}`] });
+    log("info", "CDP: cleaned up");
+  }
+}
+
+/** Singleton CDP manager — lazy-connects on first use */
+const cdpManager = new CdpManager();
+
 // --- Child Process Management ------------------------------------------------
 
 let nativeHost: Subprocess | null = null;
@@ -215,6 +569,27 @@ function handleNativeMessage(json: string): void {
       outJson = JSON.stringify(parsed);
       log("debug", `Unwrapped execute_tool → ${parsed.method}`);
     }
+
+    // CDP intercept: handle javascript_tool via CDP when available.
+    // CDP bypasses MV3 CSP limitations — full eval, async/await, fetch, etc.
+    if (parsed.type === "tool_request" && parsed.method === "javascript_tool" && cdpManager.isAvailable()) {
+      const code = parsed.params?.text ?? "";
+      const tabId = parsed.params?.tabId as number | undefined;
+      log("info", `CDP: intercepting javascript_tool (${code.slice(0, 80)})`);
+
+      cdpManager.evaluateJS(code, tabId).then((cdpResult) => {
+        const response = JSON.stringify({ type: "tool_response", result: cdpResult });
+        log("debug", `CDP→native: ${response.slice(0, 200)}`);
+        sendToNativeHost(response);
+      }).catch((err) => {
+        // CDP failed — fall through to extension DOM evaluator
+        log("warn", `CDP eval failed, forwarding to extension: ${(err as Error).message}`);
+        for (const client of wsClients) {
+          try { client.send(outJson); } catch {}
+        }
+      });
+      return; // CDP is handling this — don't forward to extension
+    }
   } catch {
     // If parse fails, forward as-is
   }
@@ -265,6 +640,7 @@ const server = Bun.serve<WsData>({
           nativeHost: nativeHost !== null,
           clients: wsClients.size,
           uptime: process.uptime(),
+          cdp: cdpManager.getStatus(),
         }),
         { headers: { "Content-Type": "application/json" } }
       );
@@ -326,6 +702,15 @@ const server = Bun.serve<WsData>({
       try {
         const parsed = JSON.parse(json);
         log("debug", `WS message type: ${parsed.type}`);
+
+        // Cache tab URLs from tabs_context_mcp responses for CDP target mapping
+        if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
+          for (const tab of parsed.result.result.tabs) {
+            if (tab.id && tab.url) {
+              cdpManager.cacheTabUrl(tab.id, tab.url);
+            }
+          }
+        }
 
         // Fix tool_response: strip `method` field so cli.js response classifier
         // (j7z: "result" in A || "error" in A) matches before the notification
@@ -414,6 +799,9 @@ function shutdown(): void {
     nativeHost = null;
   }
 
+  // Clean up CDP connection and ADB forward
+  cdpManager.cleanup();
+
   server.stop();
   log("info", "Bridge stopped");
   process.exit(0);
@@ -427,6 +815,13 @@ process.on("SIGTERM", shutdown);
 log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:${WS_PORT}`);
 log("info", `CLI path: ${CLI_PATH}`);
 log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
+
+// Attempt CDP connection on startup (non-blocking — CDP is optional)
+cdpManager.connect().then((ok) => {
+  if (ok) log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
+  else log("info", "CDP: not available (ADB/Edge not running — will use extension fallback)");
+});
+
 log("info", "Waiting for WebSocket connections...");
 
 // --- Test page HTML ----------------------------------------------------------
