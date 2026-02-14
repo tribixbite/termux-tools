@@ -1,6 +1,6 @@
 # Setup Optimization Status Report
 
-> Updated 2026-02-13 — opus-4-6
+> Updated 2026-02-14 — opus-4-6
 
 ## Items 1-20: Status
 
@@ -25,22 +25,22 @@
 | 17 | **Disable example-skills plugin** | Done | Set `false` in `~/.claude/settings.json` |
 | 18 | **Add Playwright MCP server** | Done | Added to `~/.claude/settings.json` mcpServers |
 | 19 | **Remove duplicate skills** | Done | Deleted `~/git/craftmatic/.claude/skills/x11-playwright-testing.md` |
-| 20 | **Copy skills to global** | Done | 9 skills in `~/.claude/skills/` (7 new + termux-pdf + x11-playwright) |
+| 20 | **Copy skills to global** | Done | 11 skills in `~/.claude/skills/` |
 
-## Items 21+: New Suggestions
+## Items 21-30: Status
 
-| # | Item | Priority | Description |
-|---|------|----------|-------------|
-| 21 | **Per-project .mcp.json files** | Medium | Add `.mcp.json` to active web projects (craftmatic, etc.) with project-specific MCP servers (filesystem, custom tools) |
-| 22 | **Consolidate .bashrc** | Medium | `.bashrc` is 290 lines with duplicate function definitions (`yt_dl10` appears 2x, `y3t-dl10`/`y33t-dl10` are variants). Move functions to `~/.bash_functions` or `~/bin/` scripts |
-| 23 | **Create git-workflow skill** | Low | Conventional commits, branch naming, PR templates, rebase patterns — standardize across projects |
-| 24 | **ADB cron health check** | Low | The auto-reconnect cron could log connection status to `/tmp/adb-health.log` for debugging stale connections |
-| 25 | **Remove stale env vars** | Low | `.bashrc` has `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`, `CIRCUP_WEBWORKFLOW_PASSWORD`, ORE mining wallet config — review if still needed |
-| 26 | **Audit tmux sessions** | Low | 9 sessions found during audit. Kill unused ones to free memory (see `tmux list-sessions`) |
-| 27 | **Create API-keys skill** | Low | Skill for managing API keys safely — where to store, how to rotate, `.env` patterns, `--env-file` usage |
-| 28 | **Node.js memory limit** | Info | `.bashrc` sets `NODE_OPTIONS="--max-old-space-size=4096"` — verify this is appropriate for available RAM |
-| 29 | **Git repo cleanup** | Low | 60 repos in `~/git/` — many likely inactive. Archive unused ones to shared storage per storage-maintenance skill |
-| 30 | **Hook-based screenshot resize** | Medium | Create a Claude Code hook that auto-resizes screenshots when the Read tool targets image files — prevents the "image too large" errors permanently |
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 21 | **Per-project .mcp.json files** | Done | Added to termux-tools, craftmatic, cleverkeys (swype/cleverkeys), popcorn-mobile (pop/popcorn-mobile), discord-irc |
+| 22 | **Consolidate .bashrc** | Done | Collapsed 4 yt_dl10 variants (96 lines) → 1 function (15 lines). Removed duplicate opencode PATH entry |
+| 23 | **Create git-workflow skill** | Done | `.claude/skills/git-workflow.md` — conventional commits, emdash signing, branch naming, PR workflow |
+| 24 | **ADB cron health check** | Skipped | Per user request |
+| 25 | **Remove stale env vars** | Skipped | Per user request. Secrets moved to `~/.secrets` (sourced from .bashrc) |
+| 26 | **Audit tmux sessions** | Skipped | Per user request |
+| 27 | **Create API-keys skill** | Done | `.claude/skills/api-keys-management.md` — ~/.secrets pattern, .env usage, leak scanning |
+| 28 | **Node.js memory limit** | Done | Reduced `--max-old-space-size` from 4096 → 2048 (device has ~1.7GB free of 10GB) |
+| 29 | **Git repo cleanup** | Not started | 60 repos in ~/git/ — archive inactive ones per storage-maintenance skill |
+| 30 | **Hook-based screenshot resize** | Done | PreToolUse hook at `~/.claude/hooks/resize-image.sh` — auto-resizes images ≥2000px or ≥4MB before Read |
 
 ## File Changes Summary
 
@@ -53,16 +53,28 @@
 - `.claude/skills/termux-project-scaffold.md`
 - `.claude/skills/termux-storage-maintenance.md`
 - `.claude/skills/claude-code-internals.md`
+- `.claude/skills/git-workflow.md`
+- `.claude/skills/api-keys-management.md`
+- `.mcp.json` (termux-tools)
+- `hooks/resize-image.sh`
+- `~/.claude/hooks/resize-image.sh` (global hook)
 
 ### Modified
 - `~/git/CLAUDE.md` — 257 → 27 lines
 - `~/.claude/CLAUDE.md` — 36 → 23 lines
 - `~/git/.claude/settings.json` — removed claudeFlow, automation; set includeCoAuthoredBy: false
-- `~/.claude/settings.json` — disabled example-skills, added Playwright MCP
-- `~/.bashrc` — removed duplicate env var, disabled PROFILE_STARTUP and IS_COWORK
+- `~/.claude/settings.json` — disabled example-skills, added Playwright MCP, added PreToolUse hook
+- `~/.bashrc` — consolidated yt_dl10, removed dups, NODE_OPTIONS 4G→2G, secrets → ~/.secrets
+
+### .mcp.json added to
+- `~/git/termux-tools/`
+- `~/git/craftmatic/`
+- `~/git/swype/cleverkeys/`
+- `~/git/pop/popcorn-mobile/`
+- `~/git/discord-irc/`
 
 ### Deleted
 - `~/git/craftmatic/.claude/skills/x11-playwright-testing.md` (duplicate)
 
 ### Copied to global
-- All 9 skills → `~/.claude/skills/`
+- All 11 skills → `~/.claude/skills/`
