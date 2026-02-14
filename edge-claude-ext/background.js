@@ -256,7 +256,7 @@ async function handleToolRequest(msg) {
         result = await handleUploadImage(params);
         break;
       case "gif_creator":
-        result = handleGifCreator(params);
+        result = await handleGifCreator(params);
         break;
       default:
         result = { error: `Unsupported tool: ${method}` };
@@ -413,12 +413,37 @@ async function handleComputer(params) {
         modifiers,
       });
 
-    case "zoom":
-      return await executeViaContentScript(tid, "zoom", {
-        x: coordinate?.[0] || 0,
-        y: coordinate?.[1] || 0,
-        factor: params.zoom_factor || 2,
-      });
+    case "zoom": {
+      // Capture full screenshot, then crop via bridge for zoomed view
+      const zoomFactor = params.zoom_factor || 2;
+      try {
+        const fullShot = await chrome.tabs.captureVisibleTab(null, { format: "png" });
+        // Determine image dimensions from the data URL via bridge crop
+        // Use viewport-based crop centered on coordinate
+        const dims = await executeViaContentScript(tid, "get_viewport_dims", {});
+        const vw = dims?.width || 1080;
+        const vh = dims?.height || 1920;
+        const zx = coordinate?.[0] || Math.round(vw / 2);
+        const zy = coordinate?.[1] || Math.round(vh / 2);
+        const cropW = Math.round(vw / zoomFactor);
+        const cropH = Math.round(vh / zoomFactor);
+        const cropX = Math.max(0, Math.min(Math.round(zx - cropW / 2), vw - cropW));
+        const cropY = Math.max(0, Math.min(Math.round(zy - cropH / 2), vh - cropH));
+
+        const resp = await fetch("http://127.0.0.1:18963/crop", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: fullShot, crop: { x: cropX, y: cropY, width: cropW, height: cropH } }),
+        });
+        const data = await resp.json();
+        if (data.image) {
+          return { result: data.image, type: "image/png", encoding: "base64" };
+        }
+        return { error: data.error || "Crop failed" };
+      } catch (err) {
+        return { error: `Zoom failed: ${err.message}` };
+      }
+    }
 
     case "wait":
       const waitMs = (params.duration || 2) * 1000;
@@ -595,22 +620,24 @@ function handleReadNetworkRequests(params) {
   return {
     result: entries.slice(-100), // return last 100 matching
     count: entries.length,
-    note: entries.length === 0 ? "No requests captured. webRequest may not be available on Android Edge — try CDP Network domain via bridge." : undefined,
+    // Note: if empty, the bridge may intercept this tool call and return CDP Network data instead
   };
 }
 
 async function handleResizeWindow(params) {
   const { width, height } = params;
+  // Try chrome.windows.update first (works on desktop)
   try {
     const [win] = await chrome.windows.getAll();
     if (win?.id) {
       await chrome.windows.update(win.id, { width, height });
       return { result: `Resized window to ${width}x${height}` };
     }
-    return { error: "No window found. On Android, window resizing is not supported — use CDP Emulation.setDeviceMetricsOverride via bridge." };
-  } catch (err) {
-    return { error: `Resize failed (expected on Android): ${err.message}. Use CDP Emulation.setDeviceMetricsOverride via bridge instead.` };
-  }
+  } catch {}
+
+  // Fallback: bridge handles this via CDP Emulation.setDeviceMetricsOverride
+  // (the bridge intercepts resize_window when CDP is available)
+  return { error: `Window resize not supported natively on Android. Bridge will use CDP if available.` };
 }
 
 async function handleUploadImage(params) {
@@ -624,10 +651,11 @@ async function handleUploadImage(params) {
   });
 }
 
-/** GIF creator — stub implementation, captures frames but encoding deferred */
+/** GIF creator — captures PNG frames, encodes via bridge's /gif endpoint */
 const gifState = { recording: false, frames: [], tabId: null, timer: null };
+const GIF_BRIDGE_URL = "http://127.0.0.1:18963/gif";
 
-function handleGifCreator(params) {
+async function handleGifCreator(params) {
   const { action } = params;
 
   switch (action) {
@@ -662,11 +690,39 @@ function handleGifCreator(params) {
       };
     }
     case "export": {
-      // TODO: implement pure-JS GIF encoding or delegate to bridge/Bun
-      return {
-        error: "GIF encoding not yet supported on Android — frames captured but export requires server-side encoding via bridge.",
-        frameCount: gifState.frames.length,
-      };
+      if (gifState.frames.length === 0) return { error: "No frames captured. Start and stop a recording first." };
+
+      // Calculate inter-frame delay from timestamps
+      const avgDelay = gifState.frames.length > 1
+        ? Math.round((gifState.frames[gifState.frames.length - 1].ts - gifState.frames[0].ts) / (gifState.frames.length - 1))
+        : 500;
+
+      try {
+        addLog("info", `GIF: encoding ${gifState.frames.length} frames via bridge`);
+        const resp = await fetch(GIF_BRIDGE_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            frames: gifState.frames,
+            delay: avgDelay,
+            maxWidth: params.maxWidth || 480,
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) return { error: `GIF encoding failed: ${data.error}` };
+
+        const filename = params.filename || `recording_${Date.now()}.gif`;
+        return {
+          result: data.gif,
+          filename,
+          size: data.size,
+          frameCount: gifState.frames.length,
+          type: "image/gif",
+          encoding: "base64",
+        };
+      } catch (err) {
+        return { error: `GIF export failed: ${err.message}` };
+      }
     }
     default:
       return { error: `Unknown gif_creator action: ${action}. Use start_recording, stop_recording, or export.` };

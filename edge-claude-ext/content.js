@@ -134,8 +134,8 @@ async function handleAction(action, params) {
       return getPageText(params);
     case "drag":
       return simulateDrag(params);
-    case "zoom":
-      return simulateZoom(params);
+    case "get_viewport_dims":
+      return { width: window.innerWidth, height: window.innerHeight };
     case "upload_image":
       return uploadImage(params);
     default:
@@ -777,32 +777,6 @@ function simulateDrag(params) {
   }));
 
   return { result: `Dragged from (${startX}, ${startY}) to (${endX}, ${endY})` };
-}
-
-// --- zoom (crop screenshot to simulate zoom) ---------------------------------
-
-async function simulateZoom(params) {
-  const { x, y, factor } = params;
-  const zoomFactor = factor || 2;
-
-  // Calculate crop region centered on (x, y)
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const cropW = Math.round(vw / zoomFactor);
-  const cropH = Math.round(vh / zoomFactor);
-  const cropX = Math.max(0, Math.min(x - cropW / 2, vw - cropW));
-  const cropY = Math.max(0, Math.min(y - cropH / 2, vh - cropH));
-
-  // Use a canvas to crop the visible area (requires capturing first)
-  // Since content scripts can't use captureVisibleTab, we provide crop coordinates
-  // for the background script to apply, or return dimensions for CSS-based zoom
-  return {
-    result: {
-      crop: { x: Math.round(cropX), y: Math.round(cropY), width: cropW, height: cropH },
-      factor: zoomFactor,
-      note: "Zoom simulated via crop region. Use screenshot + crop in background, or apply CSS transform for live zoom.",
-    },
-  };
 }
 
 // --- upload_image (file input via DataTransfer) ------------------------------
