@@ -15,6 +15,7 @@
 
 import { spawn, type Subprocess } from "bun";
 import { resolve, dirname } from "path";
+import { inflateSync, deflateSync } from "node:zlib";
 // --- Configuration -----------------------------------------------------------
 
 // Read version from extension manifest — single source of truth
@@ -155,6 +156,10 @@ class CdpManager {
   private cachedTargets: Array<{ targetId: string; url: string; title: string; type: string }> = [];
   /** PID recheck interval handle */
   private pidCheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** Sessions where Network domain has been enabled */
+  private networkEnabledSessions = new Set<string>();
+  /** Network request events per sessionId */
+  private networkEvents = new Map<string, Array<{ url: string; method: string; statusCode: number; type: string; timestamp: number }>>();
 
   /** Attempt connection — safe to call multiple times, no-op if already connected */
   async connect(): Promise<boolean> {
@@ -258,7 +263,24 @@ class CdpManager {
               else p.resolve(data.result);
             }
           }
-          // Events (Target.targetCreated, etc.) are silently ignored for now
+          // Handle CDP events (Network responses, etc.)
+          if (data.method === "Network.responseReceived") {
+            const sessionId = (data as Record<string, unknown>).sessionId as string | undefined;
+            if (sessionId) {
+              const p = data.params as Record<string, unknown>;
+              const resp = p.response as Record<string, unknown> | undefined;
+              if (!this.networkEvents.has(sessionId)) this.networkEvents.set(sessionId, []);
+              const buf = this.networkEvents.get(sessionId)!;
+              buf.push({
+                url: (resp?.url as string) ?? "",
+                method: (resp?.requestMethod as string) ?? "GET",
+                statusCode: (resp?.status as number) ?? 0,
+                type: (p.type as string) ?? "other",
+                timestamp: Date.now(),
+              });
+              if (buf.length > 500) buf.shift(); // ring buffer
+            }
+          }
         } catch {
           log("debug", "CDP: unparseable message");
         }
@@ -311,6 +333,14 @@ class CdpManager {
         }) as { sessionId: string };
         sessionId = attachResult.sessionId;
         this.sessionMap.set(targetId, sessionId);
+
+        // Enable Network domain on newly attached sessions for request tracking
+        if (!this.networkEnabledSessions.has(sessionId)) {
+          try {
+            await this.sendCommand("Network.enable", {}, sessionId);
+            this.networkEnabledSessions.add(sessionId);
+          } catch { /* non-critical — network tracking is best-effort */ }
+        }
       }
 
       // Execute via Runtime.evaluate
@@ -399,6 +429,44 @@ class CdpManager {
     this.tabTargetMap.delete(tabId);
   }
 
+  /** Get buffered network requests, optionally filtered by tab/time/type */
+  getNetworkRequests(tabId?: number, since?: number, typeFilter?: string): Array<{ url: string; method: string; statusCode: number; type: string; timestamp: number }> {
+    // Collect events from all sessions (or the session for the given tab)
+    let allEvents: Array<{ url: string; method: string; statusCode: number; type: string; timestamp: number }> = [];
+    if (tabId !== undefined) {
+      const targetId = this.tabTargetMap.get(tabId);
+      const sessionId = targetId ? this.sessionMap.get(targetId) : undefined;
+      if (sessionId) allEvents = this.networkEvents.get(sessionId) ?? [];
+    } else {
+      for (const events of this.networkEvents.values()) allEvents = allEvents.concat(events);
+    }
+
+    if (since) allEvents = allEvents.filter((e) => e.timestamp > since);
+    if (typeFilter) allEvents = allEvents.filter((e) => e.type === typeFilter);
+    return allEvents.slice(-100);
+  }
+
+  /** Resize viewport via CDP Emulation.setDeviceMetricsOverride */
+  async setDeviceMetrics(width: number, height: number, tabId?: number): Promise<{ result?: string; error?: string }> {
+    if (!this.isAvailable()) return { error: "CDP not available" };
+    try {
+      const targetId = await this.resolveTarget(tabId);
+      if (!targetId) return { error: "No CDP target" };
+      let sessionId = this.sessionMap.get(targetId);
+      if (!sessionId) {
+        const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+        sessionId = attach.sessionId;
+        this.sessionMap.set(targetId, sessionId);
+      }
+      await this.sendCommand("Emulation.setDeviceMetricsOverride", {
+        width, height, deviceScaleFactor: 0, mobile: true,
+      }, sessionId);
+      return { result: `Viewport set to ${width}×${height} via CDP Emulation` };
+    } catch (err) {
+      return { error: `CDP resize failed: ${(err as Error).message}` };
+    }
+  }
+
   /** Check if CDP is connected and ready */
   isAvailable(): boolean {
     return this.state === "connected" && this.ws?.readyState === WebSocket.OPEN;
@@ -453,6 +521,8 @@ class CdpManager {
     this.state = "disconnected";
     this.sessionMap.clear();
     this.tabTargetMap.clear();
+    this.networkEnabledSessions.clear();
+    this.networkEvents.clear();
     this.pending.forEach((p) => {
       clearTimeout(p.timer);
       p.reject(new Error("CDP cleanup"));
@@ -467,6 +537,324 @@ class CdpManager {
 
 /** Singleton CDP manager — lazy-connects on first use */
 const cdpManager = new CdpManager();
+
+// --- Image Processing: PNG decode/encode, GIF encode -------------------------
+
+/** CRC32 lookup table for PNG chunk checksums */
+const crc32Table = new Uint32Array(256);
+for (let i = 0; i < 256; i++) {
+  let c = i;
+  for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+  crc32Table[i] = c;
+}
+function crc32(data: Uint8Array): number {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) crc = crc32Table[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+/** Paeth predictor for PNG filter reconstruction */
+function paethPredictor(a: number, b: number, c: number): number {
+  const p = a + b - c;
+  const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+  if (pa <= pb && pa <= pc) return a;
+  if (pb <= pc) return b;
+  return c;
+}
+
+/** Decode a base64 PNG data URL to raw RGBA pixels */
+function decodePNG(dataUrl: string): { width: number; height: number; rgba: Uint8Array } {
+  const b64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+  const buf = Buffer.from(b64, "base64");
+
+  let offset = 8; // skip PNG signature
+  let width = 0, height = 0, colorType = 0;
+  const idatChunks: Buffer[] = [];
+
+  while (offset < buf.length) {
+    const length = buf.readUInt32BE(offset);
+    const type = buf.toString("ascii", offset + 4, offset + 8);
+    const data = buf.subarray(offset + 8, offset + 8 + length);
+    if (type === "IHDR") {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      colorType = data[9]; // 2=RGB, 6=RGBA
+    } else if (type === "IDAT") {
+      idatChunks.push(Buffer.from(data));
+    } else if (type === "IEND") break;
+    offset += 12 + length; // 4 length + 4 type + data + 4 CRC
+  }
+
+  const raw = inflateSync(Buffer.concat(idatChunks));
+  const bpp = colorType === 6 ? 4 : 3; // RGBA or RGB
+  const rowBytes = width * bpp;
+  const rgba = new Uint8Array(width * height * 4);
+  const prevRow = new Uint8Array(rowBytes);
+  const curRow = new Uint8Array(rowBytes);
+
+  let rawIdx = 0;
+  for (let y = 0; y < height; y++) {
+    const filterType = raw[rawIdx++];
+    for (let x = 0; x < rowBytes; x++) {
+      const rawByte = raw[rawIdx++];
+      const a = x >= bpp ? curRow[x - bpp] : 0;
+      const b = prevRow[x];
+      const c = x >= bpp ? prevRow[x - bpp] : 0;
+      switch (filterType) {
+        case 0: curRow[x] = rawByte; break;
+        case 1: curRow[x] = (rawByte + a) & 0xFF; break;
+        case 2: curRow[x] = (rawByte + b) & 0xFF; break;
+        case 3: curRow[x] = (rawByte + ((a + b) >> 1)) & 0xFF; break;
+        case 4: curRow[x] = (rawByte + paethPredictor(a, b, c)) & 0xFF; break;
+      }
+    }
+    // Convert scanline to RGBA
+    for (let x = 0; x < width; x++) {
+      const di = (y * width + x) * 4;
+      if (bpp === 4) {
+        rgba[di] = curRow[x * 4]; rgba[di + 1] = curRow[x * 4 + 1];
+        rgba[di + 2] = curRow[x * 4 + 2]; rgba[di + 3] = curRow[x * 4 + 3];
+      } else {
+        rgba[di] = curRow[x * 3]; rgba[di + 1] = curRow[x * 3 + 1];
+        rgba[di + 2] = curRow[x * 3 + 2]; rgba[di + 3] = 255;
+      }
+    }
+    prevRow.set(curRow);
+  }
+  return { width, height, rgba };
+}
+
+/** Encode RGBA pixels to a PNG buffer (filter type 0 = None, for simplicity) */
+function encodePNG(rgba: Uint8Array, width: number, height: number): Buffer {
+  // Build filtered scanlines: filter byte 0 + raw RGBA per row
+  const rowLen = width * 4;
+  const filtered = Buffer.alloc(height * (1 + rowLen));
+  for (let y = 0; y < height; y++) {
+    filtered[y * (1 + rowLen)] = 0; // filter type None
+    filtered.set(rgba.subarray(y * rowLen, (y + 1) * rowLen), y * (1 + rowLen) + 1);
+  }
+  const compressed = deflateSync(filtered);
+
+  // Helper: write a PNG chunk (type + data + CRC)
+  function writeChunk(type: string, data: Buffer): Buffer {
+    const chunk = Buffer.alloc(12 + data.length);
+    chunk.writeUInt32BE(data.length, 0);
+    chunk.write(type, 4, "ascii");
+    data.copy(chunk, 8);
+    const crcBuf = Buffer.alloc(4 + data.length);
+    crcBuf.write(type, 0, "ascii");
+    data.copy(crcBuf, 4);
+    chunk.writeUInt32BE(crc32(crcBuf), 8 + data.length);
+    return chunk;
+  }
+
+  // IHDR
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0); ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6; // 8-bit RGBA
+
+  // IDAT
+  const idat = writeChunk("IDAT", compressed);
+  const iend = writeChunk("IEND", Buffer.alloc(0));
+
+  // Assemble: signature + IHDR + IDAT + IEND
+  const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  return Buffer.concat([sig, writeChunk("IHDR", ihdr), idat, iend]);
+}
+
+/** Scale RGBA pixels down by nearest-neighbor */
+function scalePixels(rgba: Uint8Array, srcW: number, srcH: number, maxW: number): { rgba: Uint8Array; width: number; height: number } {
+  if (srcW <= maxW) return { rgba, width: srcW, height: srcH };
+  const scale = maxW / srcW;
+  const dstW = Math.round(srcW * scale);
+  const dstH = Math.round(srcH * scale);
+  const out = new Uint8Array(dstW * dstH * 4);
+  for (let y = 0; y < dstH; y++) {
+    const srcY = Math.min(srcH - 1, Math.floor(y / scale));
+    for (let x = 0; x < dstW; x++) {
+      const srcX = Math.min(srcW - 1, Math.floor(x / scale));
+      const si = (srcY * srcW + srcX) * 4, di = (y * dstW + x) * 4;
+      out[di] = rgba[si]; out[di + 1] = rgba[si + 1]; out[di + 2] = rgba[si + 2]; out[di + 3] = rgba[si + 3];
+    }
+  }
+  return { rgba: out, width: dstW, height: dstH };
+}
+
+/** Crop RGBA pixels to a sub-rectangle */
+function cropPixels(rgba: Uint8Array, srcW: number, _srcH: number, cx: number, cy: number, cw: number, ch: number): Uint8Array {
+  const out = new Uint8Array(cw * ch * 4);
+  for (let y = 0; y < ch; y++) {
+    const srcOff = ((cy + y) * srcW + cx) * 4;
+    const dstOff = y * cw * 4;
+    out.set(rgba.subarray(srcOff, srcOff + cw * 4), dstOff);
+  }
+  return out;
+}
+
+/** Quantize RGBA pixels to 256-color palette (uniform 6×6×6 cube = 216 entries) */
+function quantizeColors(rgba: Uint8Array, width: number, height: number): { indexed: Uint8Array; palette: Uint8Array } {
+  const palette = new Uint8Array(256 * 3);
+  let pi = 0;
+  for (let r = 0; r < 6; r++)
+    for (let g = 0; g < 6; g++)
+      for (let b = 0; b < 6; b++) {
+        palette[pi * 3] = Math.round(r * 255 / 5);
+        palette[pi * 3 + 1] = Math.round(g * 255 / 5);
+        palette[pi * 3 + 2] = Math.round(b * 255 / 5);
+        pi++;
+      }
+  // Fill remaining 40 entries with black
+  while (pi < 256) { palette[pi * 3] = palette[pi * 3 + 1] = palette[pi * 3 + 2] = 0; pi++; }
+
+  const total = width * height;
+  const indexed = new Uint8Array(total);
+  for (let i = 0; i < total; i++) {
+    const ri = Math.min(5, Math.round(rgba[i * 4] * 5 / 255));
+    const gi = Math.min(5, Math.round(rgba[i * 4 + 1] * 5 / 255));
+    const bi = Math.min(5, Math.round(rgba[i * 4 + 2] * 5 / 255));
+    indexed[i] = ri * 36 + gi * 6 + bi;
+  }
+  return { indexed, palette };
+}
+
+/** LZW encode for GIF — returns min code size byte + sub-blocks + terminator */
+function lzwEncode(indexed: Uint8Array, minCodeSize: number): Uint8Array {
+  const clearCode = 1 << minCodeSize;
+  const eoiCode = clearCode + 1;
+  const maxTableSize = 4096;
+
+  // Trie node for fast code table lookup
+  interface TrieNode { children: Map<number, TrieNode>; code: number; }
+  function newRoots(): TrieNode[] {
+    const roots: TrieNode[] = [];
+    for (let i = 0; i < clearCode; i++) roots[i] = { children: new Map(), code: i };
+    return roots;
+  }
+
+  const output: number[] = [minCodeSize]; // first byte = min code size
+  let curByte = 0, curBit = 0;
+  const subBlock: number[] = [];
+
+  function writeBits(code: number, codeSize: number): void {
+    curByte |= (code << curBit);
+    curBit += codeSize;
+    while (curBit >= 8) {
+      subBlock.push(curByte & 0xFF);
+      curByte >>>= 8;
+      curBit -= 8;
+      if (subBlock.length === 255) {
+        output.push(255, ...subBlock);
+        subBlock.length = 0;
+      }
+    }
+  }
+  function flush(): void {
+    if (curBit > 0) { subBlock.push(curByte & 0xFF); curByte = 0; curBit = 0; }
+    if (subBlock.length > 0) { output.push(subBlock.length, ...subBlock); subBlock.length = 0; }
+  }
+
+  let roots = newRoots();
+  let codeSize = minCodeSize + 1;
+  let nextCode = eoiCode + 1;
+
+  writeBits(clearCode, codeSize);
+  if (indexed.length === 0) { writeBits(eoiCode, codeSize); flush(); output.push(0); return new Uint8Array(output); }
+
+  let node = roots[indexed[0]];
+  for (let i = 1; i < indexed.length; i++) {
+    const pixel = indexed[i];
+    const child = node.children.get(pixel);
+    if (child) { node = child; continue; }
+
+    // Output code for current sequence
+    writeBits(node.code, codeSize);
+
+    // Add new entry
+    if (nextCode < maxTableSize) {
+      node.children.set(pixel, { children: new Map(), code: nextCode++ });
+      if (nextCode > (1 << codeSize) && codeSize < 12) codeSize++;
+    } else {
+      // Table full — reset
+      writeBits(clearCode, codeSize);
+      roots = newRoots();
+      codeSize = minCodeSize + 1;
+      nextCode = eoiCode + 1;
+    }
+    node = roots[pixel];
+  }
+
+  writeBits(node.code, codeSize);
+  writeBits(eoiCode, codeSize);
+  flush();
+  output.push(0); // block terminator
+  return new Uint8Array(output);
+}
+
+/** Encode multiple RGBA frames as animated GIF89a */
+function encodeGIF(
+  frames: Array<{ rgba: Uint8Array; width: number; height: number }>,
+  delayMs: number,
+): Uint8Array {
+  if (frames.length === 0) return new Uint8Array(0);
+  const { width, height } = frames[0];
+  const delay = Math.max(2, Math.round(delayMs / 10)); // centiseconds, min 20ms
+
+  // Use palette from first frame (global color table)
+  const { palette } = quantizeColors(frames[0].rgba, width, height);
+
+  const chunks: Uint8Array[] = [];
+
+  // GIF89a header
+  chunks.push(new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61]));
+
+  // Logical Screen Descriptor
+  const lsd = new Uint8Array(7);
+  lsd[0] = width & 0xFF; lsd[1] = (width >> 8) & 0xFF;
+  lsd[2] = height & 0xFF; lsd[3] = (height >> 8) & 0xFF;
+  lsd[4] = 0xF7; // GCT: 256 entries, 8-bit color
+  chunks.push(lsd);
+
+  // Global Color Table (256 × 3 = 768 bytes)
+  chunks.push(palette);
+
+  // NETSCAPE2.0 looping extension
+  chunks.push(new Uint8Array([
+    0x21, 0xFF, 0x0B,
+    0x4E, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2E, 0x30, // "NETSCAPE2.0"
+    0x03, 0x01, 0x00, 0x00, // loop forever
+    0x00, // block terminator
+  ]));
+
+  for (const frame of frames) {
+    const { indexed } = quantizeColors(frame.rgba, width, height);
+
+    // Graphic Control Extension (delay between frames)
+    chunks.push(new Uint8Array([
+      0x21, 0xF9, 0x04, 0x00,
+      delay & 0xFF, (delay >> 8) & 0xFF,
+      0x00, 0x00,
+    ]));
+
+    // Image Descriptor
+    const desc = new Uint8Array(10);
+    desc[0] = 0x2C; // separator
+    desc[5] = width & 0xFF; desc[6] = (width >> 8) & 0xFF;
+    desc[7] = height & 0xFF; desc[8] = (height >> 8) & 0xFF;
+    chunks.push(desc);
+
+    // LZW compressed pixel data
+    chunks.push(lzwEncode(indexed, 8));
+  }
+
+  chunks.push(new Uint8Array([0x3B])); // trailer
+
+  let total = 0;
+  for (const c of chunks) total += c.length;
+  const result = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { result.set(c, off); off += c.length; }
+  return result;
+}
 
 // --- Child Process Management ------------------------------------------------
 
@@ -590,6 +978,37 @@ function handleNativeMessage(json: string): void {
       });
       return; // CDP is handling this — don't forward to extension
     }
+
+    // CDP intercept: resize_window via Emulation.setDeviceMetricsOverride
+    if (parsed.type === "tool_request" && parsed.method === "resize_window" && cdpManager.isAvailable()) {
+      const { width, height } = (parsed.params ?? {}) as { width?: number; height?: number };
+      if (width && height) {
+        log("info", `CDP: intercepting resize_window (${width}×${height})`);
+        cdpManager.setDeviceMetrics(width, height, parsed.params?.tabId as number | undefined).then((r) => {
+          sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+        }).catch(() => {
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+        });
+        return;
+      }
+    }
+
+    // CDP intercept: read_network_requests from CDP Network domain buffer
+    if (parsed.type === "tool_request" && parsed.method === "read_network_requests" && cdpManager.isAvailable()) {
+      const tabId = parsed.params?.tabId as number | undefined;
+      const since = parsed.params?.since as number | undefined;
+      const typeFilter = parsed.params?.type_filter as string | undefined;
+      const cdpRequests = cdpManager.getNetworkRequests(tabId, since, typeFilter);
+      if (cdpRequests.length > 0) {
+        log("info", `CDP: returning ${cdpRequests.length} network requests`);
+        sendToNativeHost(JSON.stringify({
+          type: "tool_response",
+          result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" },
+        }));
+        return;
+      }
+      // No CDP data yet — fall through to extension's webRequest tracking
+    }
   } catch {
     // If parse fails, forward as-is
   }
@@ -628,7 +1047,7 @@ const server = Bun.serve<WsData>({
   hostname: WS_HOST,
   port: WS_PORT,
 
-  fetch(req, server) {
+  async fetch(req, server) {
     const url = new URL(req.url);
 
     // Health check endpoint
@@ -644,6 +1063,67 @@ const server = Bun.serve<WsData>({
         }),
         { headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    // GIF encoding endpoint — accepts JSON {frames: [{data, ts}], delay?, maxWidth?}
+    if (url.pathname === "/gif" && req.method === "POST") {
+      try {
+        const body = await req.json() as { frames: Array<{ data: string }>; delay?: number; maxWidth?: number };
+        const maxW = body.maxWidth ?? 480;
+        const delayMs = body.delay ?? 500;
+        log("info", `GIF: encoding ${body.frames.length} frames (maxW=${maxW}, delay=${delayMs}ms)`);
+
+        const decodedFrames: Array<{ rgba: Uint8Array; width: number; height: number }> = [];
+        for (const frame of body.frames) {
+          const { width, height, rgba } = decodePNG(frame.data);
+          const scaled = scalePixels(rgba, width, height, maxW);
+          decodedFrames.push(scaled);
+        }
+
+        const gifBytes = encodeGIF(decodedFrames, delayMs);
+        const gifB64 = Buffer.from(gifBytes).toString("base64");
+        log("info", `GIF: encoded ${Math.round(gifBytes.length / 1024)}KB`);
+
+        return new Response(
+          JSON.stringify({ gif: `data:image/gif;base64,${gifB64}`, size: gifBytes.length }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      } catch (err) {
+        log("error", `GIF encode failed: ${(err as Error).message}`);
+        return new Response(
+          JSON.stringify({ error: (err as Error).message }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
+    // Image crop endpoint — accepts JSON {image: dataUrl, crop: {x,y,width,height}}
+    if (url.pathname === "/crop" && req.method === "POST") {
+      try {
+        const body = await req.json() as { image: string; crop: { x: number; y: number; width: number; height: number } };
+        const { width, height, rgba } = decodePNG(body.image);
+        const { x: cx, y: cy, width: cw, height: ch } = body.crop;
+
+        // Clamp crop to image bounds
+        const clampX = Math.max(0, Math.min(cx, width - 1));
+        const clampY = Math.max(0, Math.min(cy, height - 1));
+        const clampW = Math.min(cw, width - clampX);
+        const clampH = Math.min(ch, height - clampY);
+
+        const croppedRGBA = cropPixels(rgba, width, height, clampX, clampY, clampW, clampH);
+        const pngBuf = encodePNG(croppedRGBA, clampW, clampH);
+        const pngB64 = pngBuf.toString("base64");
+
+        return new Response(
+          JSON.stringify({ image: `data:image/png;base64,${pngB64}` }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({ error: (err as Error).message }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
     }
 
     // Test page — a proper HTML page for CFC tool testing
