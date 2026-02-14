@@ -529,6 +529,7 @@ function safeArithmetic(expr) {
       const op = ch(); pos++; skip();
       const right = parseTerm();
       left = op === "+" ? left + right : left - right;
+      skip(); // skip spaces before next operator
     }
     return left;
   }
@@ -542,6 +543,7 @@ function safeArithmetic(expr) {
       if (op === "*") left *= right;
       else if (op === "/") left /= right;
       else left %= right;
+      skip(); // skip spaces before next operator
     }
     return left;
   }
