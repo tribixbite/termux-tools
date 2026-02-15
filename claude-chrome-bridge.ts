@@ -36,10 +36,39 @@ const RECONNECT_DELAY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
 // Resolve Termux binary paths — MCP-spawned processes may lack PATH entries
-const TERMUX_BIN = "/data/data/com.termux/files/usr/bin";
+const TERMUX_PREFIX = "/data/data/com.termux/files/usr";
+const TERMUX_BIN = `${TERMUX_PREFIX}/bin`;
 const ADB_PATH = `${TERMUX_BIN}/adb`;
-const TERMUX_NOTIFICATION = `${TERMUX_BIN}/termux-notification`;
-const TERMUX_TOAST = `${TERMUX_BIN}/termux-toast`;
+// NOTE: termux-notification/termux-toast can't be used from Bun — the termux-api-broadcast
+// binary's abstract Unix socket IPC fails (Termux:API app never connects back to the socket).
+// Use adbNotify() instead which calls `adb shell cmd notification`.
+
+/**
+ * Post an Android notification via ADB `cmd notification`.
+ * Bun's process spawning breaks termux-api's socket IPC (the Termux:API app
+ * never connects back to the abstract Unix socket created by termux-api-broadcast).
+ * Using ADB's `cmd notification` bypasses this entirely — it runs as the shell
+ * user and uses Android's NotificationManager directly.
+ * @param tag - notification tag (for updating/removing)
+ * @param title - notification title
+ * @param text - notification body text
+ */
+function adbNotify(tag: string, title: string, text: string): void {
+  try {
+    Bun.spawn({
+      cmd: [ADB_PATH, "shell", "cmd", "notification", "post", "-t", title, tag, text],
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+  } catch {
+    // ADB may not be connected — non-fatal
+  }
+}
+
+// TODO: `cmd notification` has no cancel/remove subcommand. Notifications auto-dismiss on tap.
+// When DND is off these work. When DND is on they may be suppressed (shell_cmd channel).
+// Ideally we'd use termux-notification (ongoing, buttons, actions) but Bun's process spawning
+// breaks termux-api-broadcast's abstract Unix socket IPC. See commit history for investigation.
 
 // Resolve cli.js path — check repo copy first, then bun global install
 const REPO_CLI = resolve(import.meta.dir, "cli.js");
@@ -1359,17 +1388,15 @@ function shutdown(): void {
   // Clean up CDP connection and ADB forward
   cdpManager.cleanup();
 
-  // Remove persistent notification (replace with "stopped" that auto-dismisses)
-  Bun.spawn({
-    cmd: [
-      TERMUX_NOTIFICATION, "--id", "cfc-bridge",
-      "--title", "CFC Bridge stopped",
-      "--content", "Tap to restart",
-      "--action", `bash -l -c 'nohup ${BUN_PATH} run ${resolve(import.meta.dir, "claude-chrome-bridge.ts")} > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &'`,
-    ],
-    stdout: "ignore",
-    stderr: "ignore",
-  });
+  // Post a "stopped" notification (replaces the running one via same tag)
+  try {
+    Bun.spawnSync({
+      cmd: [ADB_PATH, "shell", "cmd", "notification", "post", "-t", "CFC Bridge stopped", "cfc-bridge", "Bridge is no longer running"],
+      stdout: "ignore", stderr: "ignore",
+    });
+  } catch {
+    // ADB may not be connected — non-fatal
+  }
 
   server.stop();
   log("info", "Bridge stopped");
@@ -1393,28 +1420,10 @@ cdpManager.connect().then((ok) => {
 
 log("info", "Waiting for WebSocket connections...");
 
-// Create persistent Termux notification with restart action via Termux:API
-// This allows restarting the bridge from the notification shade even if the bridge dies
-const bridgeScript = resolve(import.meta.dir, "claude-chrome-bridge.ts");
-const restartCmd = `bash -l -c 'nohup ${BUN_PATH} run ${bridgeScript} > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &'`;
-Bun.spawn({
-  cmd: [
-    TERMUX_NOTIFICATION,
-    "--id", "cfc-bridge",
-    "--title", `CFC Bridge v${BRIDGE_VERSION}`,
-    "--content", "Running — tap to restart if needed",
-    "--ongoing",
-    "--alert-once",
-    "--icon", "sync",
-    "--action", restartCmd,
-    "--button1", "Restart",
-    "--button1-action", restartCmd,
-    "--button2", "Stop",
-    "--button2-action", `kill ${process.pid}`,
-  ],
-  stdout: "ignore",
-  stderr: "ignore",
-});
+// Post status notification via ADB (bypasses Bun's broken termux-api IPC)
+// NOTE: Bun.spawn breaks termux-api-broadcast's abstract socket IPC — the Termux:API
+// Android app never connects back to the socket. ADB cmd notification works reliably.
+adbNotify("cfc-bridge", `CFC Bridge v${BRIDGE_VERSION}`, `Running on :${WS_PORT} (PID ${process.pid})`);
 
 // --- Test page HTML ----------------------------------------------------------
 
