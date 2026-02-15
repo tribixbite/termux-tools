@@ -106,12 +106,20 @@ document.getElementById("btn-launch-bridge").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
     btn.disabled = false;
     if (response?.ok) {
-      btn.textContent = "Launched!";
+      btn.textContent = response.detail || "Launched!";
       btn.classList.add("btn-primary");
       setTimeout(() => {
         btn.textContent = "Launch Bridge";
         btn.classList.remove("btn-primary");
       }, 3000);
+    } else if (response?.method === "manual") {
+      // Manual fallback — command copied to clipboard, Termux opened
+      btn.textContent = "Cmd copied — paste in Termux";
+      btn.style.fontSize = "10px";
+      setTimeout(() => {
+        btn.textContent = "Launch Bridge";
+        btn.style.fontSize = "";
+      }, 8000);
     } else {
       btn.textContent = response?.detail || response?.error || "Failed";
       setTimeout(() => { btn.textContent = "Launch Bridge"; }, 3000);
