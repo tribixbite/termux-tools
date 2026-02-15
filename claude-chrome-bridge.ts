@@ -35,6 +35,12 @@ const MAX_MESSAGE_SIZE = 1_048_576; // 1 MiB, matches cli.js zmA constant
 const RECONNECT_DELAY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 
+// Resolve Termux binary paths — MCP-spawned processes may lack PATH entries
+const TERMUX_BIN = "/data/data/com.termux/files/usr/bin";
+const ADB_PATH = `${TERMUX_BIN}/adb`;
+const TERMUX_NOTIFICATION = `${TERMUX_BIN}/termux-notification`;
+const TERMUX_TOAST = `${TERMUX_BIN}/termux-toast`;
+
 // Resolve cli.js path — check repo copy first, then bun global install
 const REPO_CLI = resolve(import.meta.dir, "cli.js");
 const GLOBAL_CLI = resolve(
@@ -169,7 +175,7 @@ class CdpManager {
     this.state = "connecting";
     try {
       // Step 1: find Edge PID
-      const pidResult = Bun.spawnSync({ cmd: ["adb", "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidResult = Bun.spawnSync({ cmd: [ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"] });
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0]; // take first PID if multiple
       if (!pidStr || pidResult.exitCode !== 0) {
         log("debug", "CDP: Edge not running or ADB unavailable");
@@ -186,7 +192,7 @@ class CdpManager {
       // Step 2: set up ADB port forward
       const socketName = `chrome_devtools_remote_${this.edgePid}`;
       const fwdResult = Bun.spawnSync({
-        cmd: ["adb", "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
+        cmd: [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
       });
       if (fwdResult.exitCode !== 0) {
         log("warn", `CDP: adb forward failed — ${fwdResult.stderr.toString().trim()}`);
@@ -485,7 +491,7 @@ class CdpManager {
   /** Re-check Edge PID — reconnect if changed (Edge restarted) */
   private async recheckPid(): Promise<void> {
     try {
-      const pidResult = Bun.spawnSync({ cmd: ["adb", "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidResult = Bun.spawnSync({ cmd: [ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"] });
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
       const newPid = parseInt(pidStr, 10);
 
@@ -530,7 +536,7 @@ class CdpManager {
     this.pending.clear();
 
     // Remove ADB forward
-    Bun.spawnSync({ cmd: ["adb", "forward", "--remove", `tcp:${CDP_PORT}`] });
+    Bun.spawnSync({ cmd: [ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`] });
     log("info", "CDP: cleaned up");
   }
 }
@@ -1134,6 +1140,16 @@ const server = Bun.serve<WsData>({
       );
     }
 
+    // Trigger Termux:API notification to launch/restart bridge
+    // Called by the extension when bridge appears to be down — responds with launch instructions
+    if (url.pathname === "/ext/launch" && req.method === "POST") {
+      // If we're serving this endpoint, bridge IS running — just return OK
+      return new Response(
+        JSON.stringify({ ok: true, version: BRIDGE_VERSION, pid: process.pid }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
     // Build and serve fresh CRX from extension source directory
     if (url.pathname === "/ext/crx") {
       try {
@@ -1141,17 +1157,36 @@ const server = Bun.serve<WsData>({
         const pemPath = resolve(import.meta.dir, "edge-claude-ext.pem");
         const outPath = resolve(import.meta.dir, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
 
-        // Build CRX via crx3 CLI tool
-        const result = Bun.spawnSync(["crx3", extDir, "-o", outPath, "-p", pemPath]);
-        if (!result.success) {
-          const stderr = new TextDecoder().decode(result.stderr);
-          throw new Error(`crx3 failed: ${stderr}`);
+        // Rebuild CRX if source files are newer than existing CRX
+        const crxExists = await Bun.file(outPath).exists();
+        let needsBuild = !crxExists;
+        if (crxExists) {
+          const { statSync } = await import("node:fs");
+          const crxMtime = statSync(outPath).mtimeMs;
+          // Check if any extension source file is newer
+          for (const name of ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"]) {
+            try {
+              const srcMtime = statSync(resolve(extDir, name)).mtimeMs;
+              if (srcMtime > crxMtime) { needsBuild = true; break; }
+            } catch { /* skip missing files */ }
+          }
+        }
+
+        if (needsBuild) {
+          // Try crx3 with full Termux path, then bare name
+          const crx3Paths = ["/data/data/com.termux/files/usr/bin/crx3", "crx3"];
+          let built = false;
+          for (const crx3Bin of crx3Paths) {
+            const result = Bun.spawnSync([crx3Bin, extDir, "-o", outPath, "-p", pemPath]);
+            if (result.success) { built = true; break; }
+          }
+          if (!built) throw new Error("crx3 not found — install via: npm i -g crx3-utils");
         }
 
         const crxFile = Bun.file(outPath);
-        if (!(await crxFile.exists())) throw new Error("CRX file not created");
+        if (!(await crxFile.exists())) throw new Error("CRX file not found after build");
 
-        log("info", `Serving CRX v${BRIDGE_VERSION} (${Math.round(crxFile.size / 1024)}KB)`);
+        log("info", `Serving CRX v${BRIDGE_VERSION} (${Math.round(crxFile.size / 1024)}KB, rebuilt=${needsBuild})`);
         return new Response(crxFile.stream(), {
           headers: {
             "Content-Type": "application/x-chrome-extension",
@@ -1324,6 +1359,18 @@ function shutdown(): void {
   // Clean up CDP connection and ADB forward
   cdpManager.cleanup();
 
+  // Remove persistent notification (replace with "stopped" that auto-dismisses)
+  Bun.spawn({
+    cmd: [
+      TERMUX_NOTIFICATION, "--id", "cfc-bridge",
+      "--title", "CFC Bridge stopped",
+      "--content", "Tap to restart",
+      "--action", `bash -l -c 'nohup ${BUN_PATH} run ${resolve(import.meta.dir, "claude-chrome-bridge.ts")} > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &'`,
+    ],
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
   server.stop();
   log("info", "Bridge stopped");
   process.exit(0);
@@ -1345,6 +1392,29 @@ cdpManager.connect().then((ok) => {
 });
 
 log("info", "Waiting for WebSocket connections...");
+
+// Create persistent Termux notification with restart action via Termux:API
+// This allows restarting the bridge from the notification shade even if the bridge dies
+const bridgeScript = resolve(import.meta.dir, "claude-chrome-bridge.ts");
+const restartCmd = `bash -l -c 'nohup ${BUN_PATH} run ${bridgeScript} > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &'`;
+Bun.spawn({
+  cmd: [
+    TERMUX_NOTIFICATION,
+    "--id", "cfc-bridge",
+    "--title", `CFC Bridge v${BRIDGE_VERSION}`,
+    "--content", "Running — tap to restart if needed",
+    "--ongoing",
+    "--alert-once",
+    "--icon", "sync",
+    "--action", restartCmd,
+    "--button1", "Restart",
+    "--button1-action", restartCmd,
+    "--button2", "Stop",
+    "--button2-action", `kill ${process.pid}`,
+  ],
+  stdout: "ignore",
+  stderr: "ignore",
+});
 
 // --- Test page HTML ----------------------------------------------------------
 
