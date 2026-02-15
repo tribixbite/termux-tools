@@ -543,6 +543,180 @@ class CdpManager {
     }
   }
 
+  /** Dispatch a computer tool action via CDP Input domain */
+  async dispatchComputerAction(action: string, params: Record<string, unknown>, tabId?: number): Promise<{ result?: string; error?: string }> {
+    if (!this.isAvailable()) return { error: "CDP not available" };
+    try {
+      const targetId = await this.resolveTarget(tabId);
+      if (!targetId) return { error: "No CDP target" };
+      let sessionId = this.sessionMap.get(targetId);
+      if (!sessionId) {
+        const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+        sessionId = attach.sessionId;
+        this.sessionMap.set(targetId, sessionId);
+      }
+
+      switch (action) {
+        case "left_click":
+        case "right_click":
+        case "double_click":
+        case "triple_click": {
+          const [x, y] = (params.coordinate as number[]) ?? [0, 0];
+          const button = action === "right_click" ? "right" : "left";
+          const clickCount = action === "triple_click" ? 3 : action === "double_click" ? 2 : 1;
+          // Parse modifiers
+          const mods = this.parseModifiers(params.modifiers as string | undefined);
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mousePressed", x, y, button, clickCount, ...mods,
+          }, sessionId);
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mouseReleased", x, y, button, clickCount, ...mods,
+          }, sessionId);
+          return { result: `${action} at (${x}, ${y})` };
+        }
+        case "hover": {
+          const [x, y] = (params.coordinate as number[]) ?? [0, 0];
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mouseMoved", x, y,
+          }, sessionId);
+          return { result: `hover at (${x}, ${y})` };
+        }
+        case "type": {
+          const text = (params.text as string) ?? "";
+          await this.sendCommand("Input.insertText", { text }, sessionId);
+          return { result: `Typed ${text.length} characters` };
+        }
+        case "key": {
+          const keys = ((params.text as string) ?? "").split(" ");
+          const repeat = Math.min((params.repeat as number) ?? 1, 100);
+          for (let r = 0; r < repeat; r++) {
+            for (const key of keys) {
+              await this.dispatchKey(key, sessionId);
+            }
+          }
+          return { result: `Pressed ${keys.join(", ")}${repeat > 1 ? ` ×${repeat}` : ""}` };
+        }
+        case "scroll": {
+          const [x, y] = (params.coordinate as number[]) ?? [0, 0];
+          const dir = (params.scroll_direction as string) ?? "down";
+          const amount = Math.min((params.scroll_amount as number) ?? 3, 10) * 100;
+          const deltaX = dir === "left" ? -amount : dir === "right" ? amount : 0;
+          const deltaY = dir === "up" ? -amount : dir === "down" ? amount : 0;
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mouseWheel", x, y, deltaX, deltaY,
+          }, sessionId);
+          return { result: `Scrolled ${dir} by ${amount}px at (${x}, ${y})` };
+        }
+        case "left_click_drag": {
+          const [sx, sy] = (params.start_coordinate as number[]) ?? [0, 0];
+          const [ex, ey] = (params.coordinate as number[]) ?? [0, 0];
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mousePressed", x: sx, y: sy, button: "left", clickCount: 1,
+          }, sessionId);
+          // Move in steps for smooth drag
+          const steps = 10;
+          for (let i = 1; i <= steps; i++) {
+            const mx = sx + (ex - sx) * (i / steps);
+            const my = sy + (ey - sy) * (i / steps);
+            await this.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseMoved", x: mx, y: my, button: "left",
+            }, sessionId);
+          }
+          await this.sendCommand("Input.dispatchMouseEvent", {
+            type: "mouseReleased", x: ex, y: ey, button: "left", clickCount: 1,
+          }, sessionId);
+          return { result: `Dragged from (${sx},${sy}) to (${ex},${ey})` };
+        }
+        default:
+          return { error: `Unsupported CDP action: ${action}` };
+      }
+    } catch (err) {
+      return { error: `CDP input failed: ${(err as Error).message}` };
+    }
+  }
+
+  /** Parse modifier string like "ctrl+shift" into CDP modifier flags */
+  private parseModifiers(mods?: string): { modifiers?: number } {
+    if (!mods) return {};
+    let flags = 0;
+    for (const m of mods.toLowerCase().split("+")) {
+      if (m === "alt") flags |= 1;
+      else if (m === "ctrl" || m === "control") flags |= 2;
+      else if (m === "meta" || m === "cmd" || m === "win" || m === "windows") flags |= 4;
+      else if (m === "shift") flags |= 8;
+    }
+    return flags ? { modifiers: flags } : {};
+  }
+
+  /** Dispatch a single key press via CDP Input.dispatchKeyEvent */
+  private async dispatchKey(key: string, sessionId: string): Promise<void> {
+    // Map common key names to CDP key identifiers
+    const keyMap: Record<string, { key: string; code: string; keyCode?: number; text?: string }> = {
+      enter: { key: "Enter", code: "Enter", keyCode: 13, text: "\r" },
+      tab: { key: "Tab", code: "Tab", keyCode: 9 },
+      escape: { key: "Escape", code: "Escape", keyCode: 27 },
+      backspace: { key: "Backspace", code: "Backspace", keyCode: 8 },
+      delete: { key: "Delete", code: "Delete", keyCode: 46 },
+      arrowup: { key: "ArrowUp", code: "ArrowUp", keyCode: 38 },
+      arrowdown: { key: "ArrowDown", code: "ArrowDown", keyCode: 40 },
+      arrowleft: { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37 },
+      arrowright: { key: "ArrowRight", code: "ArrowRight", keyCode: 39 },
+      home: { key: "Home", code: "Home", keyCode: 36 },
+      end: { key: "End", code: "End", keyCode: 35 },
+      pageup: { key: "PageUp", code: "PageUp", keyCode: 33 },
+      pagedown: { key: "PageDown", code: "PageDown", keyCode: 34 },
+      space: { key: " ", code: "Space", keyCode: 32, text: " " },
+    };
+
+    // Handle modifier combos like "ctrl+a"
+    if (key.includes("+")) {
+      const parts = key.split("+");
+      const mainKey = parts.pop()!;
+      let modifiers = 0;
+      for (const p of parts) {
+        const m = p.toLowerCase();
+        if (m === "ctrl" || m === "control") modifiers |= 2;
+        else if (m === "shift") modifiers |= 8;
+        else if (m === "alt") modifiers |= 1;
+        else if (m === "meta" || m === "cmd") modifiers |= 4;
+      }
+      const mapped = keyMap[mainKey.toLowerCase()] ?? { key: mainKey, code: `Key${mainKey.toUpperCase()}`, keyCode: mainKey.charCodeAt(0) };
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyDown", ...mapped, modifiers,
+      }, sessionId);
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyUp", ...mapped, modifiers,
+      }, sessionId);
+      return;
+    }
+
+    const mapped = keyMap[key.toLowerCase()];
+    if (mapped) {
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyDown", ...mapped,
+      }, sessionId);
+      if (mapped.text) {
+        await this.sendCommand("Input.dispatchKeyEvent", {
+          type: "char", text: mapped.text, key: mapped.key, code: mapped.code,
+        }, sessionId);
+      }
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyUp", ...mapped,
+      }, sessionId);
+    } else if (key.length === 1) {
+      // Single character
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyDown", key, code: `Key${key.toUpperCase()}`, keyCode: key.toUpperCase().charCodeAt(0),
+      }, sessionId);
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "char", text: key, key,
+      }, sessionId);
+      await this.sendCommand("Input.dispatchKeyEvent", {
+        type: "keyUp", key, code: `Key${key.toUpperCase()}`, keyCode: key.toUpperCase().charCodeAt(0),
+      }, sessionId);
+    }
+  }
+
   /** Check if CDP is connected and ready */
   isAvailable(): boolean {
     return this.state === "connected" && this.ws?.readyState === WebSocket.OPEN;
@@ -1078,6 +1252,35 @@ function handleNativeMessage(json: string): void {
         }
       }).catch((err) => {
         log("warn", `CDP screenshot error: ${(err as Error).message}`);
+        for (const client of wsClients) { try { client.send(outJson); } catch {} }
+      });
+      return;
+    }
+
+    // CDP intercept: computer actions (click, type, key, scroll, drag, hover) via CDP Input domain
+    // These fail through the MCP→socket→extension path on Android due to pool client tabRoutes.
+    const CDP_ACTIONS = new Set([
+      "left_click", "right_click", "double_click", "triple_click",
+      "hover", "type", "key", "scroll", "left_click_drag",
+    ]);
+    if (parsed.type === "tool_request" && parsed.method === "computer" &&
+        CDP_ACTIONS.has(parsed.params?.action as string) && cdpManager.isAvailable()) {
+      const action = parsed.params!.action as string;
+      const tabId = parsed.params?.tabId as number | undefined;
+      log("info", `CDP: intercepting computer ${action} (tab ${tabId ?? "active"})`);
+      cdpManager.dispatchComputerAction(action, (parsed.params ?? {}) as Record<string, unknown>, tabId).then((cdpResult) => {
+        if (cdpResult.result) {
+          sendToNativeHost(JSON.stringify({
+            type: "tool_response",
+            result: { result: cdpResult.result },
+          }));
+        } else {
+          // CDP failed — forward to extension as fallback
+          log("warn", `CDP ${action} failed: ${cdpResult.error}`);
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+        }
+      }).catch((err) => {
+        log("warn", `CDP ${action} error: ${(err as Error).message}`);
         for (const client of wsClients) { try { client.send(outJson); } catch {} }
       });
       return;
