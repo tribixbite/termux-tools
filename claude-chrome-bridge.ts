@@ -81,6 +81,8 @@ const CLI_PATH = (await Bun.file(REPO_CLI).exists()) ? REPO_CLI : GLOBAL_CLI;
 // Resolve bun binary — process.execPath returns the glibc loader on Termux,
 // so we resolve from PATH via which, or fall back to known locations.
 async function findBun(): Promise<string> {
+  // Use `bun` (wrapper script) which handles glibc runner setup via `grun`.
+  // `buno` (raw binary) can't be spawned directly — it needs grun's LD_LIBRARY_PATH.
   const candidates = [
     resolve(process.env.HOME ?? "~", ".bun/bin/bun"),
     "/data/data/com.termux/files/home/.bun/bin/bun",
@@ -218,21 +220,34 @@ class CdpManager {
         return false;
       }
 
-      // Step 2: set up ADB port forward
-      const socketName = `chrome_devtools_remote_${this.edgePid}`;
-      const fwdResult = Bun.spawnSync({
-        cmd: [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
-      });
-      if (fwdResult.exitCode !== 0) {
-        log("warn", `CDP: adb forward failed — ${fwdResult.stderr.toString().trim()}`);
+      // Step 2: set up ADB port forward and verify via /json/version
+      // Edge Android uses `chrome_devtools_remote` (no PID suffix) unlike Chrome which uses `_$PID`.
+      // `adb forward` returns exit code 0 even for non-existent sockets, so we must verify each attempt.
+      const socketCandidates = [
+        `chrome_devtools_remote_${this.edgePid}`, // Chrome convention (PID-suffixed)
+        "chrome_devtools_remote",                  // Edge Android convention (plain)
+      ];
+      let versionData: Record<string, string> | null = null;
+      for (const socketName of socketCandidates) {
+        const fwdResult = Bun.spawnSync({
+          cmd: [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
+        });
+        if (fwdResult.exitCode !== 0) continue;
+        try {
+          const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+          versionData = await resp.json() as Record<string, string>;
+          log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
+          break;
+        } catch {
+          // This socket didn't work — remove forward and try next
+          Bun.spawnSync({ cmd: [ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`] });
+        }
+      }
+      if (!versionData) {
+        log("warn", "CDP: no working DevTools socket found");
         this.state = "disconnected";
         return false;
       }
-
-      // Step 3: verify via /json/version
-      const versionResp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
-      const versionData = await versionResp.json() as Record<string, string>;
-      log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"}`);
 
       // Step 4: connect browser-level WebSocket
       // Use the webSocketDebuggerUrl from /json/version, or construct it
@@ -440,11 +455,13 @@ class CdpManager {
     return firstPage?.targetId ?? null;
   }
 
-  /** Fetch CDP targets from /json/list endpoint */
+  /** Fetch CDP targets via Target.getTargets (not /json/list — those IDs differ) */
   private async refreshTargets(): Promise<void> {
     try {
-      const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`);
-      this.cachedTargets = (await resp.json()) as typeof this.cachedTargets;
+      const result = await this.sendCommand("Target.getTargets") as {
+        targetInfos: Array<{ targetId: string; url: string; title: string; type: string }>;
+      };
+      this.cachedTargets = result.targetInfos;
       this.targetsLastFetched = Date.now();
 
       // Rebuild URL → targetId mappings
@@ -499,6 +516,30 @@ class CdpManager {
       return { result: `Viewport set to ${width}×${height} via CDP Emulation` };
     } catch (err) {
       return { error: `CDP resize failed: ${(err as Error).message}` };
+    }
+  }
+
+  /** Capture a PNG screenshot of a tab via CDP Page.captureScreenshot */
+  async captureScreenshot(tabId?: number): Promise<{ data?: string; error?: string }> {
+    if (!this.isAvailable()) return { error: "CDP not available" };
+    try {
+      const targetId = await this.resolveTarget(tabId);
+      if (!targetId) return { error: "No CDP target for screenshot" };
+      let sessionId = this.sessionMap.get(targetId);
+      if (!sessionId) {
+        const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+        sessionId = attach.sessionId;
+        this.sessionMap.set(targetId, sessionId);
+      }
+      // Bring tab to front (required for screenshot on Android)
+      try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
+      try { await this.sendCommand("Page.enable", {}, sessionId); } catch { /* non-fatal */ }
+      const result = await this.sendCommand("Page.captureScreenshot", {
+        format: "png",
+      }, sessionId) as { data: string };
+      return { data: result.data };
+    } catch (err) {
+      return { error: `CDP screenshot failed: ${(err as Error).message}` };
     }
   }
 
@@ -1012,6 +1053,34 @@ function handleNativeMessage(json: string): void {
         }
       });
       return; // CDP is handling this — don't forward to extension
+    }
+
+    // CDP intercept: computer screenshot via Page.captureScreenshot
+    // The `computer` tool's screenshot action often fails through the MCP→socket→extension path
+    // on Android because the pool client can't route tabId. CDP provides a reliable fallback.
+    if (parsed.type === "tool_request" && parsed.method === "computer" &&
+        parsed.params?.action === "screenshot" && cdpManager.isAvailable()) {
+      const tabId = parsed.params?.tabId as number | undefined;
+      log("info", `CDP: intercepting computer screenshot (tab ${tabId ?? "active"})`);
+      cdpManager.captureScreenshot(tabId).then((cdpResult) => {
+        if (cdpResult.data) {
+          // Return as MCP image content matching CFC's expected format
+          sendToNativeHost(JSON.stringify({
+            type: "tool_response",
+            result: {
+              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }],
+            },
+          }));
+        } else {
+          // CDP failed — forward to extension as fallback
+          log("warn", `CDP screenshot failed: ${cdpResult.error}`);
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+        }
+      }).catch((err) => {
+        log("warn", `CDP screenshot error: ${(err as Error).message}`);
+        for (const client of wsClients) { try { client.send(outJson); } catch {} }
+      });
+      return;
     }
 
     // CDP intercept: resize_window via Emulation.setDeviceMetricsOverride
