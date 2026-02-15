@@ -435,7 +435,7 @@ class CdpManager {
 
     // If we have a cached mapping, use it
     if (tabId !== undefined && this.tabTargetMap.has(tabId)) {
-      log("info", `CDP: resolveTarget(${tabId}) → cached ${this.tabTargetMap.get(tabId)!.slice(0, 16)}...`);
+      log("debug", `CDP: resolveTarget(${tabId}) → cached ${this.tabTargetMap.get(tabId)!.slice(0, 16)}...`);
       return this.tabTargetMap.get(tabId)!;
     }
 
@@ -446,18 +446,18 @@ class CdpManager {
         const target = this.cachedTargets.find((t) => t.url === tabUrl && t.type === "page");
         if (target) {
           this.tabTargetMap.set(tabId, target.targetId);
-          log("info", `CDP: resolveTarget(${tabId}) → URL match ${target.targetId.slice(0, 16)}... (${tabUrl})`);
+          log("debug", `CDP: resolveTarget(${tabId}) → URL match ${target.targetId.slice(0, 16)}... (${tabUrl})`);
           return target.targetId;
         }
-        log("info", `CDP: resolveTarget(${tabId}) — URL ${tabUrl} not found in ${this.cachedTargets.length} targets`);
+        log("debug", `CDP: resolveTarget(${tabId}) — URL ${tabUrl} not found in ${this.cachedTargets.length} targets`);
       } else {
-        log("info", `CDP: resolveTarget(${tabId}) — no cached URL (cache size: ${this.tabUrlCache.size})`);
+        log("debug", `CDP: resolveTarget(${tabId}) — no cached URL (cache size: ${this.tabUrlCache.size})`);
       }
     }
 
     // Fall back to first page target (best guess for active tab)
     const firstPage = this.cachedTargets.find((t) => t.type === "page");
-    log("info", `CDP: resolveTarget(${tabId ?? "none"}) → fallback to first page: ${firstPage?.url ?? "none"}`);
+    log("debug", `CDP: resolveTarget(${tabId ?? "none"}) → fallback to first page: ${firstPage?.url ?? "none"}`);
     return firstPage?.targetId ?? null;
   }
 
@@ -1635,11 +1635,10 @@ const server = Bun.serve<WsData>({
         // Cache tab URLs from tabs_context_mcp responses for CDP target mapping
         if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
           const tabs = parsed.result.result.tabs;
-          log("info", `CDP: caching ${tabs.length} tab URLs from tabs_context_mcp`);
+          log("debug", `CDP: caching ${tabs.length} tab URLs from tabs_context_mcp`);
           for (const tab of tabs) {
             if (tab.id && tab.url) {
               cdpManager.cacheTabUrl(tab.id, tab.url);
-              log("info", `CDP: tab ${tab.id} → ${tab.url}`);
             }
           }
         }
