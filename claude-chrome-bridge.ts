@@ -435,6 +435,7 @@ class CdpManager {
 
     // If we have a cached mapping, use it
     if (tabId !== undefined && this.tabTargetMap.has(tabId)) {
+      log("info", `CDP: resolveTarget(${tabId}) → cached ${this.tabTargetMap.get(tabId)!.slice(0, 16)}...`);
       return this.tabTargetMap.get(tabId)!;
     }
 
@@ -445,13 +446,18 @@ class CdpManager {
         const target = this.cachedTargets.find((t) => t.url === tabUrl && t.type === "page");
         if (target) {
           this.tabTargetMap.set(tabId, target.targetId);
+          log("info", `CDP: resolveTarget(${tabId}) → URL match ${target.targetId.slice(0, 16)}... (${tabUrl})`);
           return target.targetId;
         }
+        log("info", `CDP: resolveTarget(${tabId}) — URL ${tabUrl} not found in ${this.cachedTargets.length} targets`);
+      } else {
+        log("info", `CDP: resolveTarget(${tabId}) — no cached URL (cache size: ${this.tabUrlCache.size})`);
       }
     }
 
     // Fall back to first page target (best guess for active tab)
     const firstPage = this.cachedTargets.find((t) => t.type === "page");
+    log("info", `CDP: resolveTarget(${tabId ?? "none"}) → fallback to first page: ${firstPage?.url ?? "none"}`);
     return firstPage?.targetId ?? null;
   }
 
@@ -519,28 +525,51 @@ class CdpManager {
     }
   }
 
-  /** Capture a PNG screenshot of a tab via CDP Page.captureScreenshot */
+  /**
+   * Capture a PNG screenshot. Tries CDP Page.captureScreenshot first, then
+   * falls back to ADB screencap (Edge Android doesn't support CDP screenshots).
+   */
   async captureScreenshot(tabId?: number): Promise<{ data?: string; error?: string }> {
     if (!this.isAvailable()) return { error: "CDP not available" };
+
+    // Activate the target tab first so ADB screencap captures the right content
     try {
       const targetId = await this.resolveTarget(tabId);
-      if (!targetId) return { error: "No CDP target for screenshot" };
-      let sessionId = this.sessionMap.get(targetId);
-      if (!sessionId) {
-        const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
-        sessionId = attach.sessionId;
-        this.sessionMap.set(targetId, sessionId);
+      if (targetId) {
+        let sessionId = this.sessionMap.get(targetId);
+        if (!sessionId) {
+          const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+          sessionId = attach.sessionId;
+          this.sessionMap.set(targetId, sessionId);
+        }
+        try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
       }
-      // Bring tab to front (required for screenshot on Android)
-      try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
-      try { await this.sendCommand("Page.enable", {}, sessionId); } catch { /* non-fatal */ }
-      const result = await this.sendCommand("Page.captureScreenshot", {
-        format: "png",
-      }, sessionId) as { data: string };
-      return { data: result.data };
-    } catch (err) {
-      return { error: `CDP screenshot failed: ${(err as Error).message}` };
-    }
+    } catch { /* non-fatal — we'll try ADB screencap anyway */ }
+
+    // ADB screencap — reliable on Android where CDP Page.captureScreenshot times out
+    try {
+      const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
+      const cap = Bun.spawnSync({
+        cmd: [ADB_PATH, "shell", "screencap", "-p", "/sdcard/cdp-screencap.png"],
+        timeout: 5000,
+      });
+      if (cap.exitCode === 0) {
+        const pull = Bun.spawnSync({
+          cmd: [ADB_PATH, "pull", "/sdcard/cdp-screencap.png", tmpPath],
+          timeout: 5000,
+        });
+        if (pull.exitCode === 0) {
+          const file = Bun.file(tmpPath);
+          if (await file.exists()) {
+            const buf = Buffer.from(await file.arrayBuffer());
+            log("info", `CDP: ADB screencap captured ${buf.length} bytes`);
+            return { data: buf.toString("base64") };
+          }
+        }
+      }
+    } catch { /* ADB not available — continue */ }
+
+    return { error: "Screenshot not available (CDP Page.captureScreenshot unsupported on Android, ADB screencap failed)" };
   }
 
   /** Dispatch a computer tool action via CDP Input domain */
@@ -597,15 +626,16 @@ class CdpManager {
           return { result: `Pressed ${keys.join(", ")}${repeat > 1 ? ` ×${repeat}` : ""}` };
         }
         case "scroll": {
-          const [x, y] = (params.coordinate as number[]) ?? [0, 0];
+          // mouseWheel event times out on Edge Android CDP, use Runtime.evaluate + scrollBy
           const dir = (params.scroll_direction as string) ?? "down";
           const amount = Math.min((params.scroll_amount as number) ?? 3, 10) * 100;
           const deltaX = dir === "left" ? -amount : dir === "right" ? amount : 0;
           const deltaY = dir === "up" ? -amount : dir === "down" ? amount : 0;
-          await this.sendCommand("Input.dispatchMouseEvent", {
-            type: "mouseWheel", x, y, deltaX, deltaY,
+          await this.sendCommand("Runtime.evaluate", {
+            expression: `window.scrollBy(${deltaX}, ${deltaY})`,
+            returnByValue: true,
           }, sessionId);
-          return { result: `Scrolled ${dir} by ${amount}px at (${x}, ${y})` };
+          return { result: `Scrolled ${dir} by ${amount}px` };
         }
         case "left_click_drag": {
           const [sx, sy] = (params.start_coordinate as number[]) ?? [0, 0];
@@ -1257,6 +1287,47 @@ function handleNativeMessage(json: string): void {
       return;
     }
 
+    // CDP intercept: computer zoom — screenshot + crop centered on coordinate
+    if (parsed.type === "tool_request" && parsed.method === "computer" &&
+        parsed.params?.action === "zoom" && cdpManager.isAvailable()) {
+      const tabId = parsed.params?.tabId as number | undefined;
+      const zoomFactor = (parsed.params?.zoom_factor as number) ?? 2;
+      const coord = (parsed.params?.coordinate as number[]) ?? null;
+      log("info", `CDP: intercepting computer zoom ×${zoomFactor} (tab ${tabId ?? "active"})`);
+      cdpManager.captureScreenshot(tabId).then((cdpResult) => {
+        if (!cdpResult.data) {
+          log("warn", `CDP zoom screenshot failed: ${cdpResult.error}`);
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+          return;
+        }
+        try {
+          const { width, height, rgba } = decodePNG(cdpResult.data);
+          const cx = coord?.[0] ?? Math.round(width / 2);
+          const cy = coord?.[1] ?? Math.round(height / 2);
+          const cropW = Math.round(width / zoomFactor);
+          const cropH = Math.round(height / zoomFactor);
+          const cropX = Math.max(0, Math.min(Math.round(cx - cropW / 2), width - cropW));
+          const cropY = Math.max(0, Math.min(Math.round(cy - cropH / 2), height - cropH));
+          const croppedRGBA = cropPixels(rgba, width, height, cropX, cropY, cropW, cropH);
+          const pngBuf = encodePNG(croppedRGBA, cropW, cropH);
+          const b64 = pngBuf.toString("base64");
+          sendToNativeHost(JSON.stringify({
+            type: "tool_response",
+            result: {
+              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }],
+            },
+          }));
+        } catch (cropErr) {
+          log("warn", `CDP zoom crop failed: ${(cropErr as Error).message}`);
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+        }
+      }).catch((err) => {
+        log("warn", `CDP zoom error: ${(err as Error).message}`);
+        for (const client of wsClients) { try { client.send(outJson); } catch {} }
+      });
+      return;
+    }
+
     // CDP intercept: computer actions (click, type, key, scroll, drag, hover) via CDP Input domain
     // These fail through the MCP→socket→extension path on Android due to pool client tabRoutes.
     const CDP_ACTIONS = new Set([
@@ -1563,9 +1634,12 @@ const server = Bun.serve<WsData>({
 
         // Cache tab URLs from tabs_context_mcp responses for CDP target mapping
         if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
-          for (const tab of parsed.result.result.tabs) {
+          const tabs = parsed.result.result.tabs;
+          log("info", `CDP: caching ${tabs.length} tab URLs from tabs_context_mcp`);
+          for (const tab of tabs) {
             if (tab.id && tab.url) {
               cdpManager.cacheTabUrl(tab.id, tab.url);
+              log("info", `CDP: tab ${tab.id} → ${tab.url}`);
             }
           }
         }
