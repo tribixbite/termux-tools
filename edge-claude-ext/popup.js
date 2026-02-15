@@ -119,6 +119,76 @@ document.getElementById("btn-launch-bridge").addEventListener("click", () => {
   });
 });
 
+// --- Update button -----------------------------------------------------------
+
+const BRIDGE_BASE = "http://127.0.0.1:18963";
+const updateBtn = document.getElementById("btn-update");
+const updateText = document.getElementById("btn-update-text");
+
+/** Compare semver strings: returns >0 if a > b, 0 if equal, <0 if a < b */
+function compareSemver(a, b) {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+updateBtn.addEventListener("click", async () => {
+  const installedVersion = chrome.runtime.getManifest().version;
+  updateText.textContent = "Checking...";
+  updateBtn.disabled = true;
+
+  try {
+    // Fetch latest source version from bridge
+    const resp = await fetch(`${BRIDGE_BASE}/ext/version`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const sourceVersion = data.version;
+
+    if (compareSemver(sourceVersion, installedVersion) > 0) {
+      // Newer version available — download CRX
+      updateText.textContent = `Downloading v${sourceVersion}...`;
+      // Open CRX URL in new tab — Edge will prompt to install
+      await chrome.tabs.create({ url: `${BRIDGE_BASE}/ext/crx`, active: true });
+      updateText.textContent = `v${sourceVersion} ready — install from downloads`;
+      updateBtn.classList.add("btn-primary");
+      setTimeout(() => {
+        updateText.textContent = "Check for Update";
+        updateBtn.classList.remove("btn-primary");
+      }, 8000);
+    } else {
+      // Already up to date
+      updateText.textContent = `Up to date (v${installedVersion})`;
+      setTimeout(() => { updateText.textContent = "Check for Update"; }, 3000);
+    }
+  } catch (err) {
+    // Bridge unreachable — can't check version
+    updateText.textContent = err.message || "Bridge unreachable";
+    setTimeout(() => { updateText.textContent = "Check for Update"; }, 3000);
+  } finally {
+    updateBtn.disabled = false;
+  }
+});
+
+// Auto-check for update on popup open (non-blocking)
+(async () => {
+  try {
+    const installedVersion = chrome.runtime.getManifest().version;
+    const resp = await fetch(`${BRIDGE_BASE}/ext/version`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (compareSemver(data.version, installedVersion) > 0) {
+      updateText.textContent = `Update → v${data.version}`;
+      updateBtn.classList.add("btn-primary");
+    }
+  } catch {
+    // Silently ignore — bridge may not be running
+  }
+})();
+
 // --- Test suite --------------------------------------------------------------
 
 const TEST_SUITE = [

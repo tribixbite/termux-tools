@@ -1126,6 +1126,48 @@ const server = Bun.serve<WsData>({
       }
     }
 
+    // Extension source version — reports latest version from manifest on disk
+    if (url.pathname === "/ext/version") {
+      return new Response(
+        JSON.stringify({ version: BRIDGE_VERSION, manifest: MANIFEST_PATH }),
+        { headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Build and serve fresh CRX from extension source directory
+    if (url.pathname === "/ext/crx") {
+      try {
+        const extDir = resolve(import.meta.dir, "edge-claude-ext");
+        const pemPath = resolve(import.meta.dir, "edge-claude-ext.pem");
+        const outPath = resolve(import.meta.dir, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
+
+        // Build CRX via crx3 CLI tool
+        const result = Bun.spawnSync(["crx3", extDir, "-o", outPath, "-p", pemPath]);
+        if (!result.success) {
+          const stderr = new TextDecoder().decode(result.stderr);
+          throw new Error(`crx3 failed: ${stderr}`);
+        }
+
+        const crxFile = Bun.file(outPath);
+        if (!(await crxFile.exists())) throw new Error("CRX file not created");
+
+        log("info", `Serving CRX v${BRIDGE_VERSION} (${Math.round(crxFile.size / 1024)}KB)`);
+        return new Response(crxFile.stream(), {
+          headers: {
+            "Content-Type": "application/x-chrome-extension",
+            "Content-Disposition": `attachment; filename="claude-code-bridge-v${BRIDGE_VERSION}.crx"`,
+            "Content-Length": String(crxFile.size),
+          },
+        });
+      } catch (err) {
+        log("error", `CRX build failed: ${(err as Error).message}`);
+        return new Response(
+          JSON.stringify({ error: (err as Error).message }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
     // Test page — a proper HTML page for CFC tool testing
     if (url.pathname === "/test") {
       return new Response(TEST_PAGE_HTML, {
