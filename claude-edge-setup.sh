@@ -1,199 +1,228 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Claude Edge Bridge — One-time Setup
-# Verifies deps, builds CRX3, copies to Downloads, tests bridge,
-# prints Edge Canary install steps.
+# CFC Bridge Installer — Interactive setup for Claude Code ↔ Edge Android
+#
+# Usage:
+#   ./claude-edge-setup.sh          # interactive menu from repo
+#   ./claude-edge-setup.sh --all    # run all steps non-interactively
+#   curl -fsSL <raw-url> | bash     # bootstrap: clones repo, then runs from it
+#
+# Modular design: each menu option sources a module from install/modules/.
+# Shared utilities live in install/lib/common.sh.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-EXT_DIR="$SCRIPT_DIR/edge-claude-ext"
-BRIDGE_TS="$SCRIPT_DIR/claude-chrome-bridge.ts"
-CLI_JS="$HOME/.bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
-CRX_KEY="$SCRIPT_DIR/edge-claude-ext.pem"
-CRX_FILE="$SCRIPT_DIR/claude-code-bridge.crx"
-DOWNLOAD_DIR="$HOME/storage/shared/Download"
+# --- Bootstrap: ensure we're running from the repo ----------------------------
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
 
-ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
-warn() { echo -e "  ${YELLOW}!${NC} $1"; }
-fail() { echo -e "  ${RED}✗${NC} $1"; exit 1; }
-info() { echo -e "  ${BLUE}→${NC} $1"; }
+# If running from a pipe (curl | bash) or not in the repo, bootstrap first
+if [[ ! -f "${SCRIPT_DIR}/claude-chrome-bridge.ts" ]]; then
+  echo -e "\033[1mCFC Bootstrap\033[0m"
+  echo
 
-echo
-echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}  Claude Code → Edge Canary Bridge Setup${NC}"
-echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
-echo
-
-# --- Check dependencies -------------------------------------------------------
-
-echo -e "${BOLD}[1/5] Checking dependencies${NC}"
-
-# Bun
-if command -v bun &>/dev/null; then
-  ok "bun $(bun --version)"
-else
-  fail "bun not found. Install: curl -fsSL https://bun.sh/install | bash"
-fi
-
-# Claude Code
-if [ -f "$CLI_JS" ]; then
-  VERSION=$(grep -oP 'VERSION:"[^"]+' "$CLI_JS" | head -1 | cut -d'"' -f2)
-  ok "claude-code v${VERSION:-unknown}"
-else
-  fail "claude-code not found at $CLI_JS"
-fi
-
-# Bridge server
-if [ -f "$BRIDGE_TS" ]; then
-  ok "bridge server"
-else
-  fail "bridge server not found: $BRIDGE_TS"
-fi
-
-# Extension source
-if [ -d "$EXT_DIR" ] && [ -f "$EXT_DIR/manifest.json" ]; then
-  ok "extension source"
-else
-  fail "extension not found: $EXT_DIR"
-fi
-
-# crx3 tool
-if command -v crx3 &>/dev/null; then
-  ok "crx3 packager"
-else
-  info "Installing crx3..."
-  npm install -g crx3 >/dev/null 2>&1
-  if command -v crx3 &>/dev/null; then
-    ok "crx3 installed"
-  else
-    fail "Failed to install crx3 (npm install -g crx3)"
+  # Ensure git is available
+  if ! command -v git &>/dev/null; then
+    echo -e "  \033[0;34m→\033[0m Installing git..."
+    if command -v pkg &>/dev/null; then
+      pkg install -y git 2>/dev/null
+    elif command -v pacman &>/dev/null; then
+      pacman -S git --noconfirm 2>/dev/null
+    fi
+    if ! command -v git &>/dev/null; then
+      echo -e "  \033[0;31m✗\033[0m Could not install git. Please run: pkg install git"
+      exit 1
+    fi
   fi
-fi
 
-# openssl (for key generation)
-if command -v openssl &>/dev/null; then
-  ok "openssl"
-else
-  fail "openssl not found. Install: pkg install openssl-tool"
-fi
+  REPO_TARGET="${HOME}/git/termux-tools"
+  mkdir -p "${HOME}/git"
 
-echo
-
-# --- Build CRX3 ---------------------------------------------------------------
-
-echo -e "${BOLD}[2/5] Building CRX3 extension${NC}"
-
-# Generate signing key if missing
-if [ ! -f "$CRX_KEY" ]; then
-  info "Generating RSA signing key..."
-  openssl genrsa -out "$CRX_KEY" 2048 2>/dev/null
-  ok "Key generated: $(basename "$CRX_KEY")"
-else
-  ok "Signing key exists"
-fi
-
-# Build CRX3
-info "Packaging CRX3..."
-crx3 "$EXT_DIR" -p "$CRX_KEY" -o "$CRX_FILE" >/dev/null 2>&1
-CRX_SIZE=$(du -h "$CRX_FILE" | cut -f1)
-ok "Built: $(basename "$CRX_FILE") (${CRX_SIZE})"
-
-# Verify it's a valid CRX3
-CRX_TYPE=$(file "$CRX_FILE" 2>/dev/null)
-if echo "$CRX_TYPE" | grep -q "Chrome extension, version 3"; then
-  ok "Valid CRX3 format"
-else
-  warn "File type: $CRX_TYPE"
-fi
-
-# Copy to Downloads for Edge to access
-if [ -d "$DOWNLOAD_DIR" ]; then
-  cp "$CRX_FILE" "$DOWNLOAD_DIR/claude-code-bridge.crx"
-  ok "Copied to Downloads: ${DOWNLOAD_DIR}/claude-code-bridge.crx"
-else
-  warn "Shared storage not linked — run 'termux-setup-storage' first"
-  warn "Then copy manually: cp $CRX_FILE ~/storage/shared/Download/"
-fi
-
-echo
-
-# --- Test bridge server -------------------------------------------------------
-
-echo -e "${BOLD}[3/5] Testing bridge server${NC}"
-
-timeout 5 bun "$BRIDGE_TS" >/dev/null 2>&1 &
-BRIDGE_PID=$!
-sleep 2
-
-if kill -0 "$BRIDGE_PID" 2>/dev/null; then
-  HEALTH=$(curl -sf http://127.0.0.1:18963/health 2>/dev/null || echo '{}')
-  if echo "$HEALTH" | grep -q '"status":"ok"'; then
-    ok "Bridge responds on ws://127.0.0.1:18963"
+  if [[ -d "${REPO_TARGET}/.git" ]]; then
+    echo -e "  \033[0;34m→\033[0m Updating existing repo..."
+    git -C "$REPO_TARGET" pull --ff-only 2>/dev/null || true
   else
-    warn "Bridge started but /health check failed"
+    echo -e "  \033[0;34m→\033[0m Cloning tribixbite/termux-tools..."
+    git clone "https://github.com/tribixbite/termux-tools.git" "$REPO_TARGET" || {
+      echo -e "  \033[0;31m✗\033[0m Clone failed"
+      exit 1
+    }
   fi
-  kill "$BRIDGE_PID" 2>/dev/null
-  wait "$BRIDGE_PID" 2>/dev/null || true
-else
-  warn "Bridge failed to start (check logs)"
+
+  echo -e "  \033[0;32m✓\033[0m Repository ready"
+  echo
+
+  # Re-exec from the cloned repo
+  exec "${REPO_TARGET}/claude-edge-setup.sh" "$@"
 fi
 
-echo
+# --- We're in the repo — source shared library --------------------------------
 
-# --- CFC feature gate ---------------------------------------------------------
+source "${SCRIPT_DIR}/install/lib/common.sh"
 
-echo -e "${BOLD}[4/5] Checking CFC feature gate${NC}"
+# --- Module loader ------------------------------------------------------------
 
-SETTINGS="$HOME/.claude/settings.json"
-if [ -f "$SETTINGS" ]; then
-  if grep -q "claudeInChromeDefaultEnabled" "$SETTINGS"; then
-    ok "CFC enabled in settings.json"
+_load_module() {
+  local mod="${SCRIPT_DIR}/install/modules/${1}.sh"
+  if [[ -f "$mod" ]]; then
+    source "$mod"
   else
-    warn "CFC not in settings.json — launch script uses CLAUDE_CODE_ENABLE_CFC=true"
+    fail "Module not found: ${mod}"
+    return 1
   fi
-else
-  warn "No settings.json found"
+}
+
+# --- Run all ------------------------------------------------------------------
+
+run_all() {
+  header "Running full setup..."
+  echo
+
+  _load_module bun
+  module_bun
+  echo
+
+  _load_module claude-code
+  module_claude_code
+  echo
+
+  _load_module termux-config
+  module_termux_config
+  echo
+
+  _load_module adb
+  module_adb
+  echo
+
+  _load_module crx
+  module_crx
+  echo
+
+  _load_module extension
+  module_extension
+  echo
+
+  # Start bridge
+  _load_module health
+  if ! detect_bridge; then
+    if ask_yn "Start the bridge now?" Y; then
+      "${SCRIPT_DIR}/claude-edge-bridge.sh" start
+    fi
+  fi
+  echo
+
+  module_health
+}
+
+# --- Interactive menu ---------------------------------------------------------
+
+show_menu() {
+  echo
+  echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
+  echo -e "${BOLD}  CFC Bridge Installer${NC}"
+  echo -e "${BOLD}══════════════════════════════════════════════════${NC}"
+  echo
+
+  # Compute status for each item
+  local s_bun s_cc s_termux s_adb s_crx s_bridge
+  s_bun=$(status_indicator detect_bun 2>/dev/null)
+  s_cc=$(status_indicator detect_claude_code 2>/dev/null)
+  s_termux=$(status_indicator detect_termux_config 2>/dev/null)
+  s_adb=$(status_indicator detect_adb 2>/dev/null)
+  s_crx=$(status_indicator detect_crx 2>/dev/null)
+  s_bridge=$(status_indicator detect_bridge 2>/dev/null)
+
+  echo -e "  ${BOLD}1)${NC} Install Bun (via bun-on-termux)     ${s_bun}"
+  echo -e "  ${BOLD}2)${NC} Install Claude Code CLI              ${s_cc}"
+  echo -e "  ${BOLD}3)${NC} Configure Termux permissions         ${s_termux}"
+  echo -e "  ${BOLD}4)${NC} Setup ADB wireless                   ${s_adb}"
+  echo -e "  ${BOLD}5)${NC} Build extension (CRX)                ${s_crx}"
+  echo -e "  ${BOLD}6)${NC} Install extension in browser"
+  echo -e "  ${BOLD}7)${NC} Start/manage bridge                  ${s_bridge}"
+  echo -e "  ${BOLD}8)${NC} Health check & diagnostics"
+  echo -e "  ${BOLD}9)${NC} Run all (full setup)"
+  echo -e "  ${BOLD}0)${NC} Exit"
+  echo
+  echo -ne "  ${CYAN}Choose [0-9]:${NC} "
+}
+
+handle_choice() {
+  local choice="$1"
+  case "$choice" in
+    1)
+      _load_module bun
+      module_bun
+      ;;
+    2)
+      _load_module claude-code
+      module_claude_code
+      ;;
+    3)
+      _load_module termux-config
+      module_termux_config
+      ;;
+    4)
+      _load_module adb
+      module_adb
+      ;;
+    5)
+      _load_module crx
+      module_crx
+      ;;
+    6)
+      _load_module extension
+      module_extension
+      ;;
+    7)
+      echo
+      echo -e "  ${BOLD}Bridge management:${NC}"
+      echo -e "    ${BOLD}a)${NC} Start bridge"
+      echo -e "    ${BOLD}b)${NC} Stop bridge"
+      echo -e "    ${BOLD}c)${NC} Status"
+      echo -e "    ${BOLD}d)${NC} Restart"
+      echo -e "    ${BOLD}e)${NC} View logs"
+      echo
+      echo -ne "  ${CYAN}Choose [a-e]:${NC} "
+      read -r sub
+      case "$sub" in
+        a) "${SCRIPT_DIR}/claude-edge-bridge.sh" start ;;
+        b) "${SCRIPT_DIR}/claude-edge-bridge.sh" stop ;;
+        c) "${SCRIPT_DIR}/claude-edge-bridge.sh" status ;;
+        d) "${SCRIPT_DIR}/claude-edge-bridge.sh" restart ;;
+        e) "${SCRIPT_DIR}/claude-edge-bridge.sh" logs ;;
+        *) warn "Unknown option" ;;
+      esac
+      ;;
+    8)
+      _load_module health
+      module_health
+      ;;
+    9)
+      run_all
+      ;;
+    0)
+      echo -e "\n  ${DIM}Goodbye${NC}"
+      exit 0
+      ;;
+    *)
+      warn "Invalid choice"
+      ;;
+  esac
+}
+
+# --- Main ---------------------------------------------------------------------
+
+# Handle --all flag
+if [[ "${1:-}" == "--all" ]]; then
+  run_all
+  exit 0
 fi
 
-echo
-
-# --- Install instructions -----------------------------------------------------
-
-echo -e "${BOLD}[5/5] Edge Canary Install Instructions${NC}"
-echo
-echo -e "  ${BOLD}Step 1: Enable developer options in Edge Canary${NC}"
-echo "    Open Edge Canary → Settings → About"
-echo "    Tap the Edge build number 5 times"
-echo "    (e.g. 'Edge Canary 136.0.xxxx.x')"
-echo
-echo -e "  ${BOLD}Step 2: Install CRX${NC}"
-echo "    Settings → Developer Options → Extension install by CRX"
-echo "    Browse to: Download/claude-code-bridge.crx"
-echo "    Confirm install → grant permissions"
-echo
-echo -e "  ${BOLD}Step 3: Start the bridge${NC}"
-echo "    ./claude-edge-bridge.sh"
-echo
-echo -e "  ${BOLD}Step 4: Verify connection${NC}"
-echo "    Tap the extension icon in Edge Canary"
-echo "    Status should show 'connected'"
-echo
-echo -e "  ${BOLD}Alternative: Chrome Canary${NC}"
-echo "    chrome://flags → #extension-mime-request-handling → Always prompt"
-echo "    Open the CRX file from Downloads → install"
-echo
-echo -e "  ${BOLD}Alternative: Termux X11 + Chromium${NC}"
-echo "    pkg install chromium"
-echo "    DISPLAY=:0 chromium --no-sandbox --load-extension=$EXT_DIR"
-echo
-echo -e "${GREEN}${BOLD}Setup complete.${NC} CRX ready at:"
-echo -e "  ${DOWNLOAD_DIR}/claude-code-bridge.crx"
-echo
+# Interactive loop
+while true; do
+  show_menu
+  read -r choice
+  handle_choice "$choice"
+  echo
+  echo -ne "  ${DIM}Press Enter to continue...${NC}"
+  read -r
+done
