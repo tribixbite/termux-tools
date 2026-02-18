@@ -5,6 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKER_PACKAGE="net.dinglisch.android.taskerm"
 TERMUX_PACKAGE="com.termux"
 
@@ -17,7 +18,7 @@ echo "📱 Checking ADB connection..."
 if ! adb devices | grep -q "device$"; then
     echo "⚠️  No device connected via ADB"
     echo "   Running wireless connection script..."
-    "$SCRIPT_DIR/adb-wireless-connect.sh"
+    "$REPO_DIR/tools/adb-wireless-connect.sh"
 fi
 
 # Verify connection

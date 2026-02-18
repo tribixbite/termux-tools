@@ -357,7 +357,7 @@ tsends() {
 }
 
 # ADB wireless connection alias
-alias adbc='~/git/termux-tools/adb-wireless-connect.sh'
+alias adbc='~/git/termux-tools/tools/adb-wireless-connect.sh'
 
 # Export functions for subshells
 export -f tm tmgo tmba tmbp tmbr tmbi tmbb tsend tsends

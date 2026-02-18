@@ -15,7 +15,7 @@ Automatically maintain ADB wireless debugging connection for seamless Android de
 
 ## Installation
 
-The script is located at `~/git/termux-tools/adb-wireless-connect.sh` and is automatically set up in crontab to run every 5 minutes.
+The script is located at `~/git/termux-tools/tools/adb-wireless-connect.sh` and is automatically set up in crontab to run every 5 minutes.
 
 ### Prerequisites
 
@@ -126,7 +126,7 @@ On next run:
 ### Cron Job (Every 5 Minutes)
 
 ```bash
-*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
+*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools/tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
 ```
 
 **What it does:**
@@ -190,7 +190,7 @@ echo './adb-wireless-connect.sh --monitor > ~/adb-monitor.log 2>&1 &' >> ~/.term
 logcat | grep crond
 
 # Manually test cron command
-bash -c "source ~/.bash_aliases && cd ~/git/termux-tools && ./adb-wireless-connect.sh"
+bash -c "source ~/.bash_aliases && cd ~/git/termux-tools/tools && ./adb-wireless-connect.sh"
 
 # Check if crond is running
 pgrep -a crond
@@ -234,7 +234,7 @@ cd ~/git/my-android-project
 
 ```
 ~/git/termux-tools/
-├── adb-wireless-connect.sh      # Main script
+├── tools/adb-wireless-connect.sh      # Main script
 ├── ADB_WIRELESS_GUIDE.md        # This guide
 └── examples/
     └── adb-monitor.service      # Optional: systemd-like service

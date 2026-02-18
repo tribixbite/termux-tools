@@ -151,10 +151,10 @@ Every 10 minutes:
 cd ~/git/termux-tools
 
 # Option 1: Fully automated (when ADB connected)
-bash auto-setup-tasker.sh
+bash tasker/auto-setup-tasker.sh
 
 # Option 2: Interactive with guidance (recommended)
-bash setup-tasker-simple.sh
+bash tasker/setup-tasker-simple.sh
 
 # Option 3: Manual setup (most reliable)
 # See TASKER_ADB_SETUP.md
@@ -250,11 +250,11 @@ ebbb327 feat: improve boot automation with XDG structure and logging
 └── restore-sessions.sh     # Widget script
 
 ~/git/termux-tools/
-├── auto-setup-tasker.sh                     # ADB Tasker setup (NEW)
-├── setup-tasker-simple.sh                   # Interactive setup (NEW)
-├── setup-tasker-notification-monitor.sh     # Notification monitor (NEW)
-├── setup-tasker-via-adb.sh                  # App Closed approach (NEW)
-├── adb-wireless-connect.sh                  # ADB connection
+├── tasker/auto-setup-tasker.sh                     # ADB Tasker setup (NEW)
+├── tasker/setup-tasker-simple.sh                   # Interactive setup (NEW)
+├── tasker/setup-tasker-notification-monitor.sh     # Notification monitor (NEW)
+├── tasker/setup-tasker-via-adb.sh                  # App Closed approach (NEW)
+├── tools/adb-wireless-connect.sh                  # ADB connection
 ├── BOOT_ARCHITECTURE.md                     # Boot system docs
 ├── TASKER_ADB_SETUP.md                      # Tasker automation docs (NEW)
 └── README.md                                # Main documentation

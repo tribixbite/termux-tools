@@ -6,6 +6,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "🎯 Simple Tasker Termux Monitor Setup"
 echo "====================================="
@@ -18,7 +19,7 @@ echo
 
 # Connect ADB
 if ! adb devices | grep -q "device$"; then
-    "$SCRIPT_DIR/adb-wireless-connect.sh"
+    "$REPO_DIR/tools/adb-wireless-connect.sh"
 fi
 
 # Create simple check script in Termux

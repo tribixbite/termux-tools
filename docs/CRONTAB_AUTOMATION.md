@@ -31,7 +31,7 @@ Automatically sends 'go' to keep Claude active in project sessions:
 Maintains wireless debugging connection:
 
 ```cron
-*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
+*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools/tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
 ```
 
 **What it does:**
@@ -243,7 +243,7 @@ crontab -e
 └── crontab.bak              # Automatic backup on each edit
 
 ~/git/termux-tools/
-├── adb-wireless-connect.sh  # ADB automation script
+├── tools/adb-wireless-connect.sh  # ADB automation script
 ├── CRONTAB_AUTOMATION.md    # This guide
 └── examples/
     └── crontab.example      # Example crontab configuration
