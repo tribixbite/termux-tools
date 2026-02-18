@@ -43,12 +43,12 @@ Automatically restarts Termux and restores all sessions when it crashes or runs 
 cd ~/git/termux-tools
 
 # Fully automated setup via ADB (recommended)
-bash auto-setup-tasker.sh
+bash tasker/auto-setup-tasker.sh
 
 # OR interactive setup with health checks
-bash setup-tasker-simple.sh
+bash tasker/setup-tasker-simple.sh
 
-# See TASKER_ADB_SETUP.md for manual setup and troubleshooting
+# See docs/TASKER_ADB_SETUP.md for manual setup and troubleshooting
 ```
 
 **How it works:**
@@ -103,15 +103,15 @@ tm clev  # Attach to cleverkeys
 
 ## 📚 Documentation
 
-- **[BOOT_ARCHITECTURE.md](BOOT_ARCHITECTURE.md)** - ⭐ Boot system architecture, wake locks, error handling, logging
-- **[TASKER_ADB_SETUP.md](TASKER_ADB_SETUP.md)** - ⭐ Automated Tasker setup via ADB for crash recovery
-- **[SUMMARY.md](SUMMARY.md)** - Quick overview of features
-- **[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** - Command cheat sheet
-- **[TM_COMMAND.md](TM_COMMAND.md)** - Deep dive on tm command
-- **[TMGO_COMMAND.md](TMGO_COMMAND.md)** - Deep dive on tmgo command
-- **[WORKFLOWS.md](WORKFLOWS.md)** - Real-world usage patterns
-- **[TERMUX_BOOT_SETUP.md](TERMUX_BOOT_SETUP.md)** - Complete boot configuration guide
-- **[TMUX_ALIASES_GUIDE.md](TMUX_ALIASES_GUIDE.md)** - Comprehensive alias reference
+- **[BOOT_ARCHITECTURE.md](docs/BOOT_ARCHITECTURE.md)** - ⭐ Boot system architecture, wake locks, error handling, logging
+- **[TASKER_ADB_SETUP.md](docs/TASKER_ADB_SETUP.md)** - ⭐ Automated Tasker setup via ADB for crash recovery
+- **[SUMMARY.md](docs/SUMMARY.md)** - Quick overview of features
+- **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command cheat sheet
+- **[TM_COMMAND.md](docs/TM_COMMAND.md)** - Deep dive on tm command
+- **[TMGO_COMMAND.md](docs/TMGO_COMMAND.md)** - Deep dive on tmgo command
+- **[WORKFLOWS.md](docs/WORKFLOWS.md)** - Real-world usage patterns
+- **[TERMUX_BOOT_SETUP.md](docs/TERMUX_BOOT_SETUP.md)** - Complete boot configuration guide
+- **[TMUX_ALIASES_GUIDE.md](docs/TMUX_ALIASES_GUIDE.md)** - Comprehensive alias reference
 
 ## 🛠️ Configuration Files
 

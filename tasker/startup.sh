@@ -23,7 +23,7 @@ echo "[$(date)] Waiting 15s for ADB wireless debugging to initialize..." >> "$BO
 sleep 15  # Wait for wireless debugging to initialize after boot
 
 ADB_FIXED=false
-if timeout 45 ~/git/termux-tools/adb-wireless-connect.sh >> "$BOOT_LOG" 2>&1; then
+if timeout 45 ~/git/termux-tools/tools/adb-wireless-connect.sh >> "$BOOT_LOG" 2>&1; then
   echo "[$(date)] ADB connected, applying fixes..." >> "$BOOT_LOG"
   # Phantom process killer fix
   adb shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647" >> "$BOOT_LOG" 2>&1

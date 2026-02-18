@@ -5,6 +5,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKER_PKG="net.dinglisch.android.taskerm"
 
 echo "🤖 Automated Tasker Setup via ADB"
@@ -14,7 +15,7 @@ echo
 # Connect ADB
 echo "📱 Connecting ADB..."
 if ! adb devices | grep -q "device$"; then
-    "$SCRIPT_DIR/adb-wireless-connect.sh"
+    "$REPO_DIR/tools/adb-wireless-connect.sh"
 fi
 
 if ! adb devices | grep -q "device$"; then

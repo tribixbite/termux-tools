@@ -8,7 +8,7 @@ echo
 # Check ADB connection
 if ! adb devices 2>/dev/null | grep -q "device$"; then
     echo "❌ ADB not connected. Attempting to connect..."
-    ~/git/termux-tools/adb-wireless-connect.sh || exit 1
+    ~/git/termux-tools/tools/adb-wireless-connect.sh || exit 1
 fi
 
 echo "📱 Connected to device"

@@ -6,6 +6,6 @@
 */10 * * * * bash -c "source ~/.bash_aliases && tmgo illus"
 
 # Keep ADB wireless debugging connected (check every 5 minutes)
-*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
+*/5 * * * * bash -c "source ~/.bash_aliases && cd ~/git/termux-tools/tools && ./adb-wireless-connect.sh >/dev/null 2>&1"
 */10 * * * * bash -c "source ~/.bash_aliases && tmgo cam"
 */10 * * * * bash -c "source ~/.bash_aliases && tmgo mobile"

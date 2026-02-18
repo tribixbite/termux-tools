@@ -51,7 +51,7 @@ If this notification is missing → Termux crashed or didn't start → Restart i
 Run the setup helper:
 ```bash
 cd ~/git/termux-tools
-bash setup-tasker-simple.sh
+bash tasker/setup-tasker-simple.sh
 ```
 
 Then follow the on-screen instructions to manually create the Tasker profile.
@@ -76,7 +76,7 @@ Use ADB to push pre-made Tasker XML and import:
 cd ~/git/termux-tools
 
 # Creates profile XML and saves to Downloads
-bash auto-setup-tasker.sh
+bash tasker/auto-setup-tasker.sh
 ```
 
 **What it does:**
@@ -215,7 +215,7 @@ termux-notification-list | grep "Termux Boot"
 # Settings → Developer Options → Wireless Debugging → ON
 
 # Get new pairing info and reconnect
-bash ~/git/termux-tools/adb-wireless-connect.sh
+bash ~/git/termux-tools/tools/adb-wireless-connect.sh
 
 # Verify connection
 adb devices
@@ -245,10 +245,10 @@ Or manually:
 
 ```
 ~/git/termux-tools/
-├── setup-tasker-simple.sh              # Interactive setup helper
-├── auto-setup-tasker.sh                # Automated ADB setup
-├── setup-tasker-via-adb.sh             # Original ADB approach
-└── setup-tasker-notification-monitor.sh # Notification-based monitor
+├── tasker/setup-tasker-simple.sh              # Interactive setup helper
+├── tasker/auto-setup-tasker.sh                # Automated ADB setup
+├── tasker/setup-tasker-via-adb.sh             # Original ADB approach
+└── tasker/setup-tasker-notification-monitor.sh # Notification-based monitor
 
 ~/.shortcuts/
 └── check-termux-health.sh              # Health check script

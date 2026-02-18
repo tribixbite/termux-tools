@@ -6,6 +6,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKER_PACKAGE="net.dinglisch.android.taskerm"
 
 echo "🔔 Tasker Notification Monitor Setup"
@@ -19,7 +20,7 @@ echo
 echo "📱 Checking ADB connection..."
 if ! adb devices | grep -q "device$"; then
     echo "   Running wireless connection..."
-    "$SCRIPT_DIR/adb-wireless-connect.sh"
+    "$REPO_DIR/tools/adb-wireless-connect.sh"
 fi
 
 if ! adb devices | grep -q "device$"; then

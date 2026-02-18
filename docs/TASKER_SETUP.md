@@ -311,7 +311,7 @@ Add to end of task:
 ```
 Action: Send Intent
 Action: com.termux.RUN_COMMAND
-Extra: com.termux.RUN_COMMAND_PATH:/data/data/com.termux/files/home/git/termux-tools/adb-wireless-connect.sh
+Extra: com.termux.RUN_COMMAND_PATH:/data/data/com.termux/files/home/git/termux-tools/tools/adb-wireless-connect.sh
 ```
 
 ## Files
