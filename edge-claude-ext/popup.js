@@ -128,43 +128,17 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
       return;
     }
 
-    // Step 2: Fire intent deep-link via DOM context.
-    // Android browsers block intent: URIs from chrome.tabs.create() (omnibox context).
-    // Must navigate from within a web page DOM for intent resolution to trigger.
+    // Step 2: Open launcher.html to fire intent via DOM context.
+    // Android blocks intent: URIs from chrome.tabs.create() and synthetic a.click().
+    // launcher.html tries window.location.href (auto), with a manual tap button fallback.
     const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
       + "type=text%2Fplain;"
       + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
       + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
 
-    // Try injecting into active tab first (avoids opening a new tab)
-    let injected = false;
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id && !/^(chrome|edge|about):/.test(tab.url || "")) {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (url) => {
-            // Create and click an anchor — fires intent without navigating page away
-            const a = document.createElement("a");
-            a.href = url;
-            a.style.display = "none";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-          },
-          args: [intentUrl],
-        });
-        injected = true;
-      }
-    } catch { /* restricted page — fall through to launcher */ }
-
-    // Fallback: open extension's launcher.html which fires intent from its own DOM
-    if (!injected) {
-      const launcherUrl = chrome.runtime.getURL("launcher.html")
-        + "?url=" + encodeURIComponent(intentUrl);
-      // Don't auto-close — user may need to tap the manual launch button
-      chrome.tabs.create({ url: launcherUrl, active: true });
-    }
+    const launcherUrl = chrome.runtime.getURL("launcher.html")
+      + "?url=" + encodeURIComponent(intentUrl);
+    chrome.tabs.create({ url: launcherUrl, active: true });
 
     btn.disabled = false;
     btn.textContent = "Launching...";
