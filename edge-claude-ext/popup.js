@@ -111,19 +111,34 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
 });
 
 document.getElementById("btn-launch-bridge").addEventListener("click", () => {
-  // Open launcher.html immediately — no round-trip to background.js.
-  // The 2s health check timeout in background.js would block the callback,
-  // and Android closes the popup before it returns.
-  const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
-    + "type=text%2Fplain;"
-    + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
-    + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
+  // Navigate the popup WebView directly to the intent: URI.
+  // The popup is a WebView — it should hand off intent: schemes to the OS.
+  // Fallback: update the active tab with the intent URI.
+  const targetUrl = "https://cfcbridge.example.com/start";
+  const intentUrl = "intent:#Intent;"
+    + "action=android.intent.action.SEND;"
+    + "type=text/plain;"
+    + "S.android.intent.extra.TEXT=" + encodeURIComponent(targetUrl) + ";"
+    + "component=com.termux/.filepicker.TermuxFileReceiverActivity;"
+    + "end";
 
-  const launcherUrl = chrome.runtime.getURL("launcher.html")
-    + "?url=" + encodeURIComponent(intentUrl);
-  chrome.tabs.create({ url: launcherUrl, active: true });
+  try {
+    // Method 1: Direct popup navigation — simplest path to OS intent resolver
+    window.location.href = intentUrl;
 
-  // Tell background.js to start polling for bridge startup (fire-and-forget)
+    // If still here after 500ms, popup didn't hand off — try active tab
+    setTimeout(() => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.update(tabs[0].id, { url: intentUrl });
+        }
+      });
+    }, 500);
+  } catch (e) {
+    console.error("Intent launch failed:", e);
+  }
+
+  // Tell background.js to start polling for bridge startup
   chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
