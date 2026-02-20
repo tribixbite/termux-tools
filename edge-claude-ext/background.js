@@ -1062,9 +1062,12 @@ async function runSelfTest(testName) {
 async function launchBridge() {
   addLog("info", "Attempting to launch bridge");
 
-  // Step 1: Check if bridge is already running
+  // Step 1: Check if bridge is already running (fast 2s timeout)
   try {
-    const resp = await fetch(BRIDGE_HEALTH_URL);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const resp = await fetch(BRIDGE_HEALTH_URL, { signal: ctrl.signal });
+    clearTimeout(timer);
     const data = await resp.json();
     if (data.status === "ok") {
       addLog("info", "Bridge already running — reconnecting");
@@ -1075,125 +1078,63 @@ async function launchBridge() {
       return { ok: true, method: "health", detail: `Already running v${data.version}` };
     }
   } catch {
-    addLog("info", "Bridge not responding, attempting launch methods");
+    addLog("info", "Bridge not responding — needs manual start");
   }
 
-  // Step 2: Try Termux:API notification intent — sends a broadcast to com.termux.api
-  // This bypasses the com.termux.permission.RUN_COMMAND restriction
-  const termuxApiResult = await tryTermuxApiNotification();
-  if (termuxApiResult) return termuxApiResult;
+  // Android browsers' intent: URI scheme only calls startActivity(), but
+  // Termux's RunCommandService (Service) and TermuxApiReceiver (BroadcastReceiver)
+  // can't be targeted via startActivity(). So clipboard + instructions is the
+  // only reliable cross-app mechanism from an extension.
 
-  // Step 3: Try Termux RUN_COMMAND intent (works if allow-external-apps=true AND Edge has permission)
-  const intentResult = await tryTermuxRunCommand();
-  if (intentResult) return intentResult;
-
-  // Step 4: Fallback — open Termux app + copy command to clipboard
-  const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts &";
-  try {
-    // Open Termux to foreground
-    await chrome.tabs.create({
-      url: "intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;component=com.termux/.app.TermuxActivity;end",
-      active: false,
-    });
-    addLog("info", "Opened Termux app");
-  } catch {
-    addLog("warn", "Could not open Termux app");
-  }
-
-  // Copy start command to clipboard
+  // Step 2: Copy start command to clipboard via content script (belt-and-suspenders
+  // with popup.js which also writes to clipboard from its own DOM context)
+  const cmd =
+    "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
+  let copied = false;
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
+    if (tab?.id && !/^(chrome|edge|about):/.test(tab.url || "")) {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
-        func: (text) => navigator.clipboard.writeText(text).catch(() => {}),
+        func: (text) => navigator.clipboard.writeText(text),
         args: [cmd],
       });
+      copied = true;
+      addLog("info", "Bridge start command copied to clipboard");
     }
-  } catch { /* best-effort */ }
-
-  return { ok: false, method: "manual", detail: `Paste in Termux: ${cmd}` };
-}
-
-/**
- * Try launching bridge via Termux:API — sends a broadcast to com.termux.api
- * to create a notification whose action starts the bridge. This does NOT require
- * com.termux.permission.RUN_COMMAND since it targets com.termux.api, not com.termux.
- */
-async function tryTermuxApiNotification() {
-  try {
-    // Use intent:// to send a broadcast to Termux:API's notification receiver
-    // The notification action will start the bridge when tapped
-    const bridgeCmd = encodeURIComponent(
-      "bash -l -c 'nohup bun $HOME/git/termux-tools/claude-chrome-bridge.ts > /data/data/com.termux/files/usr/tmp/bridge.log 2>&1 &'"
-    );
-    const tab = await chrome.tabs.create({
-      url: `intent:#Intent;action=com.termux.api.NOTIFICATION;`
-        + `component=com.termux.api/.TermuxApiReceiver;`
-        + `S.command=Notification;`
-        + `S.id=cfc-bridge-launch;`
-        + `S.title=CFC%20Bridge;`
-        + `S.content=Tap%20to%20start%20bridge;`
-        + `S.action=${bridgeCmd};end`,
-      active: false,
-    });
-    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 2000);
-    addLog("info", "Termux:API notification intent sent");
-
-    // Wait for bridge to potentially start (user needs to tap notification)
-    // Poll a few times over 8 seconds
-    for (let i = 0; i < 4; i++) {
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        const resp = await fetch(BRIDGE_HEALTH_URL);
-        const data = await resp.json();
-        if (data.status === "ok") {
-          addLog("info", "Bridge started via Termux:API notification");
-          if (connectionState !== "connected") {
-            reconnectAttempts = 0;
-            connect();
-          }
-          return { ok: true, method: "termux-api", detail: `Started v${data.version}` };
-        }
-      } catch { /* not yet */ }
-    }
-
-    // Notification was sent but user hasn't tapped yet
-    return { ok: false, method: "termux-api", detail: "Notification sent — tap it in shade to start" };
   } catch (err) {
-    addLog("warn", `Termux:API approach failed: ${err.message}`);
-    return null;
+    addLog("warn", `Clipboard via content script failed: ${err.message}`);
   }
+
+  // Step 3: Open Termux to foreground (deferred so popup receives response first)
+  setTimeout(() => {
+    chrome.tabs.create({
+      url: "intent:#Intent;action=android.intent.action.MAIN;"
+        + "category=android.intent.category.LAUNCHER;"
+        + "component=com.termux/.app.TermuxActivity;end",
+      active: true,
+    }).then((t) => {
+      setTimeout(() => chrome.tabs.remove(t.id).catch(() => {}), 1500);
+      addLog("info", "Opened Termux app");
+    }).catch(() => addLog("warn", "Could not open Termux"));
+  }, 500);
+
+  // Return immediately — popup shows instructions, reconnect loop auto-connects
+  // once user starts bridge in Termux
+  return {
+    ok: false,
+    method: "manual",
+    detail: copied
+      ? "Cmd copied — switch to Termux & paste"
+      : `Open Termux and run: ${cmd}`,
+  };
 }
 
-/** Try Termux:RUN_COMMAND intent (requires com.termux.permission.RUN_COMMAND) */
-async function tryTermuxRunCommand() {
-  try {
-    const tab = await chrome.tabs.create({
-      url: "intent:#Intent;action=com.termux.RUN_COMMAND;component=com.termux/.app.RunCommandService;S.com.termux.RUN_COMMAND_PATH=/data/data/com.termux/files/usr/bin/bash;S.com.termux.RUN_COMMAND_ARGUMENTS=-c;S.com.termux.RUN_COMMAND_ARGUMENTS=nohup%20bun%20%24HOME%2Fgit%2Ftermux-tools%2Fclaude-chrome-bridge.ts%20%3E%20%2Fdata%2Fdata%2Fcom.termux%2Ffiles%2Fusr%2Ftmp%2Fbridge.log%202%3E%261%20%26;B.com.termux.RUN_COMMAND_BACKGROUND=true;end",
-      active: false,
-    });
-    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 3000);
-    addLog("info", "Termux RUN_COMMAND intent sent");
-
-    await new Promise((r) => setTimeout(r, 5000));
-    try {
-      const resp = await fetch(BRIDGE_HEALTH_URL);
-      const data = await resp.json();
-      if (data.status === "ok") {
-        addLog("info", "Bridge launched via RUN_COMMAND");
-        if (connectionState !== "connected") {
-          reconnectAttempts = 0;
-          connect();
-        }
-        return { ok: true, method: "intent", detail: `Started v${data.version}` };
-      }
-    } catch {}
-  } catch (err) {
-    addLog("warn", `Termux intent failed: ${err.message}`);
-  }
-  return null;
-}
+// NOTE: Termux:API notification (TermuxApiReceiver) and RUN_COMMAND (RunCommandService)
+// intents cannot be launched from a browser extension. Android's intent: URI scheme
+// only supports startActivity(), but these are a BroadcastReceiver and Service
+// respectively. The clipboard + open-Termux approach in launchBridge() is the only
+// reliable cross-app mechanism from an extension context.
 
 // --- Startup -----------------------------------------------------------------
 

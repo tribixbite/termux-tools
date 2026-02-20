@@ -99,10 +99,20 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", () => {
+document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
   const btn = document.getElementById("btn-launch-bridge");
   btn.textContent = "Launching...";
   btn.disabled = true;
+
+  // Copy launch command from popup context (reliable — has user gesture + DOM)
+  const cmd =
+    "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
+  try {
+    await navigator.clipboard.writeText(cmd);
+  } catch {
+    /* service worker will attempt clipboard via content script as fallback */
+  }
+
   chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
     btn.disabled = false;
     if (response?.ok) {
@@ -113,8 +123,7 @@ document.getElementById("btn-launch-bridge").addEventListener("click", () => {
         btn.classList.remove("btn-primary");
       }, 3000);
     } else if (response?.method === "manual") {
-      // Manual fallback — command copied to clipboard, Termux opened
-      btn.textContent = "Cmd copied — paste in Termux";
+      btn.textContent = response.detail || "Cmd copied — paste in Termux";
       btn.style.fontSize = "10px";
       setTimeout(() => {
         btn.textContent = "Launch Bridge";
