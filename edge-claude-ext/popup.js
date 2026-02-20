@@ -128,34 +128,45 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
       return;
     }
 
-    // Step 2: Fire intent deep-link from popup context (has user gesture).
-    // chrome.tabs.create() in the service worker lacks user gesture context,
-    // so Android doesn't resolve the intent: URI. Must fire from here.
+    // Step 2: Fire intent deep-link via DOM context.
+    // Android browsers block intent: URIs from chrome.tabs.create() (omnibox context).
+    // Must navigate from within a web page DOM for intent resolution to trigger.
     const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
       + "type=text%2Fplain;"
       + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
       + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
 
+    // Try injecting into active tab first (avoids opening a new tab)
+    let injected = false;
     try {
-      // Create active tab with intent URI — popup user gesture propagates
-      chrome.tabs.create({ url: intentUrl, active: true }, (tab) => {
-        // Clean up blank tab after intent fires
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id && !/^(chrome|edge|about):/.test(tab.url || "")) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (url) => {
+            // Create and click an anchor — fires intent without navigating page away
+            const a = document.createElement("a");
+            a.href = url;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+          },
+          args: [intentUrl],
+        });
+        injected = true;
+      }
+    } catch { /* restricted page — fall through to launcher */ }
+
+    // Fallback: open extension's launcher.html which fires intent from its own DOM
+    if (!injected) {
+      const launcherUrl = chrome.runtime.getURL("launcher.html")
+        + "?url=" + encodeURIComponent(intentUrl);
+      chrome.tabs.create({ url: launcherUrl, active: true }, (tab) => {
         if (tab?.id) {
-          setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 3000);
+          setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 4000);
         }
       });
-    } catch {
-      // Fallback: copy command to clipboard
-      const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
-      navigator.clipboard.writeText(cmd).catch(() => {});
-      btn.disabled = false;
-      btn.textContent = "Cmd copied — paste in Termux";
-      btn.style.fontSize = "10px";
-      setTimeout(() => {
-        btn.textContent = "Launch Bridge";
-        btn.style.fontSize = "";
-      }, 8000);
-      return;
     }
 
     btn.disabled = false;

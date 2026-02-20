@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head><title>Launching Bridge...</title></head>
+<body>
+<script>
+  // Fallback launcher page for intent: URI resolution.
+  // Android browsers block intent: URIs from chrome.tabs.create() (treated as omnibox).
+  // This page fires the intent via window.location.href from a DOM context.
+  const params = new URLSearchParams(window.location.search);
+  const intentUrl = params.get("url");
+  if (intentUrl && intentUrl.startsWith("intent:")) {
+    window.location.href = intentUrl;
+  }
+  // Auto-close after intent fires (or if no URL provided)
+  setTimeout(() => window.close(), 2000);
+</script>
+</body>
+</html>
