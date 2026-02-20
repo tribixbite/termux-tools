@@ -1123,14 +1123,17 @@ async function launchBridge() {
   // which closes the popup and kills the sendResponse callback. We respond immediately
   // and poll for startup in the background.
   try {
+    // active: true is required — Android browsers only resolve intent: URIs
+    // during active navigation. A background tab just stays blank.
     const tab = await chrome.tabs.create({
       url: "intent:#Intent;action=android.intent.action.SEND;"
         + "type=text%2Fplain;"
         + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
         + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end",
-      active: false,
+      active: true,
     });
-    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 2000);
+    // Clean up the blank tab left behind after intent fires
+    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 3000);
     addLog("info", "Sent ACTION_SEND deep-link to Termux url-opener");
 
     // Poll in background — auto-connect when bridge comes up
