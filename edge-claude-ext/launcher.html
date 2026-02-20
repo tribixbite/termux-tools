@@ -27,59 +27,27 @@
     }
     h2 { margin-top: 0; font-size: 18px; }
     p { color: #8b949e; font-size: 14px; margin-bottom: 20px; }
-    button {
+    a.btn {
+      display: block;
       background: #238636;
       color: #fff;
-      border: none;
-      padding: 12px 24px;
+      text-decoration: none;
+      padding: 14px 24px;
       border-radius: 8px;
       font-size: 16px;
       font-weight: 600;
-      cursor: pointer;
-      width: 100%;
+      text-align: center;
     }
-    button:active { background: #2ea043; }
-    .hidden { display: none; }
+    a.btn:active { background: #2ea043; }
   </style>
 </head>
 <body>
 <div class="card">
-  <h2 id="status">Launching Termux...</h2>
-  <p id="msg">Sending intent to start bridge.</p>
-  <button id="btn-manual" class="hidden">Tap to Open Termux</button>
+  <h2>Launch Bridge</h2>
+  <p>Tap below to start the CFC bridge in Termux.</p>
+  <a class="btn" id="launch-link" href="#">Tap to Open Termux</a>
 </div>
-<script>
-  const params = new URLSearchParams(window.location.search);
-  const intentUrl = params.get("url");
-  const btn = document.getElementById("btn-manual");
-  const status = document.getElementById("status");
-  const msg = document.getElementById("msg");
-
-  function launch() {
-    if (intentUrl && intentUrl.startsWith("intent:")) {
-      window.location.href = intentUrl;
-    }
-  }
-
-  if (intentUrl) {
-    // Try auto-launch immediately
-    launch();
-
-    // If still here after 800ms, auto-redirect was blocked.
-    // Show manual button — user tap provides the required gesture.
-    setTimeout(() => {
-      status.textContent = "Tap Required";
-      msg.textContent = "Android blocked automatic launch. Tap below to open Termux.";
-      btn.classList.remove("hidden");
-      btn.addEventListener("click", () => {
-        launch();
-        setTimeout(() => window.close(), 2000);
-      });
-    }, 800);
-  } else {
-    status.textContent = "Error";
-    msg.textContent = "No intent URL provided.";
-  }
-</script>
+<!-- MV3 CSP blocks inline scripts — must use external JS -->
+<script src="launcher.js"></script>
 </body>
 </html>
