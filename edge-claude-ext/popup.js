@@ -110,40 +110,21 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
-  const btn = document.getElementById("btn-launch-bridge");
-  btn.textContent = "Launching...";
-  btn.disabled = true;
+document.getElementById("btn-launch-bridge").addEventListener("click", () => {
+  // Open launcher.html immediately — no round-trip to background.js.
+  // The 2s health check timeout in background.js would block the callback,
+  // and Android closes the popup before it returns.
+  const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
+    + "type=text%2Fplain;"
+    + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
+    + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
 
-  // Step 1: Check if bridge is already running via service worker
-  chrome.runtime.sendMessage({ type: "launch_bridge" }, async (response) => {
-    if (response?.method === "already_running") {
-      btn.disabled = false;
-      btn.textContent = response.detail || "Already running";
-      btn.classList.add("btn-primary");
-      setTimeout(() => {
-        btn.textContent = "Launch Bridge";
-        btn.classList.remove("btn-primary");
-      }, 3000);
-      return;
-    }
+  const launcherUrl = chrome.runtime.getURL("launcher.html")
+    + "?url=" + encodeURIComponent(intentUrl);
+  chrome.tabs.create({ url: launcherUrl, active: true });
 
-    // Step 2: Open launcher.html to fire intent via DOM context.
-    // Android blocks intent: URIs from chrome.tabs.create() and synthetic a.click().
-    // launcher.html tries window.location.href (auto), with a manual tap button fallback.
-    const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
-      + "type=text%2Fplain;"
-      + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
-      + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
-
-    const launcherUrl = chrome.runtime.getURL("launcher.html")
-      + "?url=" + encodeURIComponent(intentUrl);
-    chrome.tabs.create({ url: launcherUrl, active: true });
-
-    btn.disabled = false;
-    btn.textContent = "Launching...";
-    setTimeout(() => { btn.textContent = "Launch Bridge"; }, 5000);
-  });
+  // Tell background.js to start polling for bridge startup (fire-and-forget)
+  chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
 // --- Stop Bridge button ------------------------------------------------------
