@@ -1443,6 +1443,17 @@ const server = Bun.serve<WsData>({
       );
     }
 
+    // Shutdown endpoint — POST to gracefully stop the bridge
+    if (url.pathname === "/shutdown" && req.method === "POST") {
+      log("info", "Shutdown requested via HTTP");
+      // Respond first, then shut down after a brief delay
+      setTimeout(() => shutdown(), 200);
+      return new Response(
+        JSON.stringify({ status: "shutting_down" }),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     // GIF encoding endpoint — accepts JSON {frames: [{data, ts}], delay?, maxWidth?}
     if (url.pathname === "/gif" && req.method === "POST") {
       try {

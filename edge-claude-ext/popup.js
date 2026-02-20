@@ -59,6 +59,17 @@ function updateUI(state) {
     document.getElementById("stat-uptime").textContent = "--";
   }
 
+  // Show stop button when connected, launch when disconnected
+  const stopBtn = document.getElementById("btn-stop-bridge");
+  const launchBtn = document.getElementById("btn-launch-bridge");
+  if (state.state === "connected") {
+    stopBtn.style.display = "";
+    launchBtn.style.display = "none";
+  } else {
+    stopBtn.style.display = "none";
+    launchBtn.style.display = "";
+  }
+
   if (s.lastToolName) {
     const ago = s.lastToolTime ? Math.round((Date.now() - s.lastToolTime) / 1000) : 0;
     document.getElementById("stat-lasttool").textContent =
@@ -132,6 +143,26 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
     } else {
       btn.textContent = response?.detail || response?.error || "Failed";
       setTimeout(() => { btn.textContent = "Launch Bridge"; }, 3000);
+    }
+  });
+});
+
+// --- Stop Bridge button ------------------------------------------------------
+
+document.getElementById("btn-stop-bridge").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-stop-bridge");
+  btn.textContent = "Stopping...";
+  btn.disabled = true;
+
+  chrome.runtime.sendMessage({ type: "stop_bridge" }, (response) => {
+    btn.disabled = false;
+    if (response?.ok) {
+      btn.textContent = "Stopped";
+      btn.style.display = "none";
+      setTimeout(() => { btn.textContent = "Stop"; }, 3000);
+    } else {
+      btn.textContent = response?.error || "Failed";
+      setTimeout(() => { btn.textContent = "Stop"; }, 3000);
     }
   });
 });

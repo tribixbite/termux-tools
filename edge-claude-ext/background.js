@@ -949,6 +949,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  if (msg.type === "stop_bridge") {
+    stopBridge()
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
 });
 
 // --- Self-test suite ---------------------------------------------------------
@@ -1059,6 +1066,32 @@ async function runSelfTest(testName) {
 
 // --- Bridge launcher ---------------------------------------------------------
 
+async function stopBridge() {
+  addLog("info", "Requesting bridge shutdown");
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const resp = await fetch("http://127.0.0.1:18963/shutdown", {
+      method: "POST",
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    const data = await resp.json();
+    addLog("info", `Bridge shutdown: ${data.status}`);
+    // Disconnect our WS
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    connectionState = "disconnected";
+    broadcastState();
+    return { ok: true, detail: "Bridge stopped" };
+  } catch (err) {
+    addLog("warn", `Bridge shutdown failed: ${err.message}`);
+    return { ok: false, error: `Shutdown failed: ${err.message}` };
+  }
+}
+
 async function launchBridge() {
   addLog("info", "Attempting to launch bridge");
 
@@ -1085,8 +1118,28 @@ async function launchBridge() {
   // This is the only Termux Activity that accepts external intents for execution.
   // It calls ~/bin/termux-url-opener with the URL as $1, which starts the bridge.
   // Trade-off: creates a brief temporary terminal session (doesn't affect existing ones).
-  const deepLinkResult = await tryTermuxDeepLink();
-  if (deepLinkResult) return deepLinkResult;
+  //
+  // NOTE: On Android, chrome.tabs.create() with an intent: URI switches focus to Termux,
+  // which closes the popup and kills the sendResponse callback. We respond immediately
+  // and poll for startup in the background.
+  try {
+    const tab = await chrome.tabs.create({
+      url: "intent:#Intent;action=android.intent.action.SEND;"
+        + "type=text%2Fplain;"
+        + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
+        + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end",
+      active: false,
+    });
+    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 2000);
+    addLog("info", "Sent ACTION_SEND deep-link to Termux url-opener");
+
+    // Poll in background — auto-connect when bridge comes up
+    pollForBridgeStartup();
+
+    return { ok: true, method: "deep-link", detail: "Launching via Termux..." };
+  } catch (err) {
+    addLog("warn", `Termux deep-link failed: ${err.message}`);
+  }
 
   // Step 3: Fallback — copy command to clipboard (popup.js also writes from DOM context)
   const cmd =
@@ -1117,58 +1170,30 @@ async function launchBridge() {
 }
 
 /**
- * Deep-link to Termux via ACTION_SEND → TermuxFileReceiverActivity.
- * This is the only Termux Activity that accepts external execution intents.
- * It runs ~/bin/termux-url-opener with the URL as $1.
- *
- * NOTE: Termux:API (TermuxApiReceiver) and RUN_COMMAND (RunCommandService) are
- * a BroadcastReceiver and Service — neither can be targeted via startActivity()
- * which is all the browser's intent: URI scheme supports.
- *
- * Creates a brief temporary terminal session that closes when the script exits.
- * Does NOT affect existing sessions.
+ * Poll for bridge startup in the background after a deep-link launch.
+ * Runs in the service worker — doesn't depend on popup being open.
+ * Auto-connects when bridge comes up.
  */
-async function tryTermuxDeepLink() {
-  try {
-    // ACTION_SEND with text/plain to TermuxFileReceiverActivity
-    // The URL triggers ~/bin/termux-url-opener which starts the bridge
-    const tab = await chrome.tabs.create({
-      url: "intent:#Intent;action=android.intent.action.SEND;"
-        + "type=text%2Fplain;"
-        + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
-        + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end",
-      active: false,
-    });
-    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 2000);
-    addLog("info", "Sent ACTION_SEND deep-link to Termux url-opener");
-
-    // Poll for bridge startup (url-opener script is fast: nohup + exit)
-    for (let i = 0; i < 5; i++) {
-      await new Promise((r) => setTimeout(r, 1500));
-      try {
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), 1500);
-        const resp = await fetch(BRIDGE_HEALTH_URL, { signal: ctrl.signal });
-        clearTimeout(timer);
-        const data = await resp.json();
-        if (data.status === "ok") {
-          addLog("info", "Bridge started via Termux deep-link");
-          if (connectionState !== "connected") {
-            reconnectAttempts = 0;
-            connect();
-          }
-          return { ok: true, method: "deep-link", detail: `Started v${data.version}` };
+async function pollForBridgeStartup() {
+  for (let i = 0; i < 8; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 1500);
+      const resp = await fetch(BRIDGE_HEALTH_URL, { signal: ctrl.signal });
+      clearTimeout(timer);
+      const data = await resp.json();
+      if (data.status === "ok") {
+        addLog("info", `Bridge started via deep-link: v${data.version}`);
+        if (connectionState !== "connected") {
+          reconnectAttempts = 0;
+          connect();
         }
-      } catch { /* bridge not ready yet */ }
-    }
-
-    // Deep-link was sent but bridge didn't respond within timeout
-    addLog("warn", "Deep-link sent but bridge didn't respond in 7.5s");
-    return null;
-  } catch (err) {
-    addLog("warn", `Termux deep-link failed: ${err.message}`);
-    return null;
+        return;
+      }
+    } catch { /* bridge not ready yet */ }
   }
+  addLog("warn", "Deep-link sent but bridge didn't respond in 12s");
 }
 
 // --- Startup -----------------------------------------------------------------
