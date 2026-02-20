@@ -1081,13 +1081,14 @@ async function launchBridge() {
     addLog("info", "Bridge not responding — needs manual start");
   }
 
-  // Android browsers' intent: URI scheme only calls startActivity(), but
-  // Termux's RunCommandService (Service) and TermuxApiReceiver (BroadcastReceiver)
-  // can't be targeted via startActivity(). So clipboard + instructions is the
-  // only reliable cross-app mechanism from an extension.
+  // Step 2: Deep-link via ACTION_SEND to TermuxFileReceiverActivity
+  // This is the only Termux Activity that accepts external intents for execution.
+  // It calls ~/bin/termux-url-opener with the URL as $1, which starts the bridge.
+  // Trade-off: creates a brief temporary terminal session (doesn't affect existing ones).
+  const deepLinkResult = await tryTermuxDeepLink();
+  if (deepLinkResult) return deepLinkResult;
 
-  // Step 2: Copy start command to clipboard via content script (belt-and-suspenders
-  // with popup.js which also writes to clipboard from its own DOM context)
+  // Step 3: Fallback — copy command to clipboard (popup.js also writes from DOM context)
   const cmd =
     "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
   let copied = false;
@@ -1106,21 +1107,6 @@ async function launchBridge() {
     addLog("warn", `Clipboard via content script failed: ${err.message}`);
   }
 
-  // Step 3: Open Termux to foreground (deferred so popup receives response first)
-  setTimeout(() => {
-    chrome.tabs.create({
-      url: "intent:#Intent;action=android.intent.action.MAIN;"
-        + "category=android.intent.category.LAUNCHER;"
-        + "component=com.termux/.app.TermuxActivity;end",
-      active: true,
-    }).then((t) => {
-      setTimeout(() => chrome.tabs.remove(t.id).catch(() => {}), 1500);
-      addLog("info", "Opened Termux app");
-    }).catch(() => addLog("warn", "Could not open Termux"));
-  }, 500);
-
-  // Return immediately — popup shows instructions, reconnect loop auto-connects
-  // once user starts bridge in Termux
   return {
     ok: false,
     method: "manual",
@@ -1130,11 +1116,60 @@ async function launchBridge() {
   };
 }
 
-// NOTE: Termux:API notification (TermuxApiReceiver) and RUN_COMMAND (RunCommandService)
-// intents cannot be launched from a browser extension. Android's intent: URI scheme
-// only supports startActivity(), but these are a BroadcastReceiver and Service
-// respectively. The clipboard + open-Termux approach in launchBridge() is the only
-// reliable cross-app mechanism from an extension context.
+/**
+ * Deep-link to Termux via ACTION_SEND → TermuxFileReceiverActivity.
+ * This is the only Termux Activity that accepts external execution intents.
+ * It runs ~/bin/termux-url-opener with the URL as $1.
+ *
+ * NOTE: Termux:API (TermuxApiReceiver) and RUN_COMMAND (RunCommandService) are
+ * a BroadcastReceiver and Service — neither can be targeted via startActivity()
+ * which is all the browser's intent: URI scheme supports.
+ *
+ * Creates a brief temporary terminal session that closes when the script exits.
+ * Does NOT affect existing sessions.
+ */
+async function tryTermuxDeepLink() {
+  try {
+    // ACTION_SEND with text/plain to TermuxFileReceiverActivity
+    // The URL triggers ~/bin/termux-url-opener which starts the bridge
+    const tab = await chrome.tabs.create({
+      url: "intent:#Intent;action=android.intent.action.SEND;"
+        + "type=text%2Fplain;"
+        + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
+        + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end",
+      active: false,
+    });
+    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 2000);
+    addLog("info", "Sent ACTION_SEND deep-link to Termux url-opener");
+
+    // Poll for bridge startup (url-opener script is fast: nohup + exit)
+    for (let i = 0; i < 5; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 1500);
+        const resp = await fetch(BRIDGE_HEALTH_URL, { signal: ctrl.signal });
+        clearTimeout(timer);
+        const data = await resp.json();
+        if (data.status === "ok") {
+          addLog("info", "Bridge started via Termux deep-link");
+          if (connectionState !== "connected") {
+            reconnectAttempts = 0;
+            connect();
+          }
+          return { ok: true, method: "deep-link", detail: `Started v${data.version}` };
+        }
+      } catch { /* bridge not ready yet */ }
+    }
+
+    // Deep-link was sent but bridge didn't respond within timeout
+    addLog("warn", "Deep-link sent but bridge didn't respond in 7.5s");
+    return null;
+  } catch (err) {
+    addLog("warn", `Termux deep-link failed: ${err.message}`);
+    return null;
+  }
+}
 
 // --- Startup -----------------------------------------------------------------
 

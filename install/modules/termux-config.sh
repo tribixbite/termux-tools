@@ -64,7 +64,55 @@ module_termux_config() {
     fi
   done
 
-  # Step 4: Check Termux:API app
+  # Step 4: termux-url-opener for deep-link bridge launch
+  # TermuxFileReceiverActivity calls this script when extension sends ACTION_SEND
+  local url_opener="${TERMUX_HOME}/bin/termux-url-opener"
+  mkdir -p "${TERMUX_HOME}/bin"
+  if [[ -f "$url_opener" ]] && grep -q "cfcbridge" "$url_opener" 2>/dev/null; then
+    ok "termux-url-opener has CFC handler"
+  else
+    info "termux-url-opener enables one-tap bridge launch from the extension"
+    if ask_yn "Install termux-url-opener with CFC handler?" Y; then
+      if [[ -f "$url_opener" ]]; then
+        # Existing script — prepend CFC handler before the default case
+        if ! grep -q "cfc-bridge-start" "$url_opener" 2>/dev/null; then
+          warn "Existing termux-url-opener found — adding CFC handler"
+          info "Review ~/bin/termux-url-opener if you have custom URL handling"
+        fi
+      fi
+      # Write the standard CFC-aware url-opener
+      cat > "$url_opener" << 'URLEOF'
+#!/data/data/com.termux/files/usr/bin/bash
+# termux-url-opener — handles URLs shared to Termux via Android share menu
+# Called by TermuxFileReceiverActivity with the shared URL as $1
+set -euo pipefail
+url="${1:-}"
+case "$url" in
+  *cfcbridge*/start*)
+    BRIDGE_SCRIPT="$HOME/git/termux-tools/claude-chrome-bridge.ts"
+    BRIDGE_LOG="$PREFIX/tmp/bridge.log"
+    BUN="${HOME}/.bun/bin/bun"
+    [[ -x "$BUN" ]] || BUN="$(command -v bun 2>/dev/null || true)"
+    if pgrep -f "claude-chrome-bridge" > /dev/null 2>&1; then exit 0; fi
+    if [[ ! -f "$BRIDGE_SCRIPT" || -z "$BUN" ]]; then exit 1; fi
+    setsid nohup "$BUN" "$BRIDGE_SCRIPT" > "$BRIDGE_LOG" 2>&1 &
+    exit 0
+    ;;
+  *)
+    if command -v termux-open-url > /dev/null 2>&1; then
+      termux-open-url "$url"
+    elif command -v xdg-open > /dev/null 2>&1; then
+      xdg-open "$url"
+    fi
+    ;;
+esac
+URLEOF
+      chmod +x "$url_opener"
+      ok "Installed termux-url-opener"
+    fi
+  fi
+
+  # Step 5: Check Termux:API app
   if adb shell pm list packages com.termux.api 2>/dev/null | grep -q "com.termux.api"; then
     ok "Termux:API app installed"
   elif pm list packages com.termux.api 2>/dev/null | grep -q "com.termux.api"; then
