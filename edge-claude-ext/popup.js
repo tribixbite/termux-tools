@@ -116,7 +116,7 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
   btn.disabled = true;
 
   // Step 1: Check if bridge is already running via service worker
-  chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
+  chrome.runtime.sendMessage({ type: "launch_bridge" }, async (response) => {
     if (response?.method === "already_running") {
       btn.disabled = false;
       btn.textContent = response.detail || "Already running";
@@ -162,11 +162,8 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
     if (!injected) {
       const launcherUrl = chrome.runtime.getURL("launcher.html")
         + "?url=" + encodeURIComponent(intentUrl);
-      chrome.tabs.create({ url: launcherUrl, active: true }, (tab) => {
-        if (tab?.id) {
-          setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 4000);
-        }
-      });
+      // Don't auto-close — user may need to tap the manual launch button
+      chrome.tabs.create({ url: launcherUrl, active: true });
     }
 
     btn.disabled = false;
