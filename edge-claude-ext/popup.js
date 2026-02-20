@@ -115,35 +115,52 @@ document.getElementById("btn-launch-bridge").addEventListener("click", async () 
   btn.textContent = "Launching...";
   btn.disabled = true;
 
-  // Copy launch command from popup context (reliable — has user gesture + DOM)
-  const cmd =
-    "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
-  try {
-    await navigator.clipboard.writeText(cmd);
-  } catch {
-    /* service worker will attempt clipboard via content script as fallback */
-  }
-
+  // Step 1: Check if bridge is already running via service worker
   chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
-    btn.disabled = false;
-    if (response?.ok) {
-      btn.textContent = response.detail || "Launched!";
+    if (response?.method === "already_running") {
+      btn.disabled = false;
+      btn.textContent = response.detail || "Already running";
       btn.classList.add("btn-primary");
       setTimeout(() => {
         btn.textContent = "Launch Bridge";
         btn.classList.remove("btn-primary");
       }, 3000);
-    } else if (response?.method === "manual") {
-      btn.textContent = response.detail || "Cmd copied — paste in Termux";
+      return;
+    }
+
+    // Step 2: Fire intent deep-link from popup context (has user gesture).
+    // chrome.tabs.create() in the service worker lacks user gesture context,
+    // so Android doesn't resolve the intent: URI. Must fire from here.
+    const intentUrl = "intent:#Intent;action=android.intent.action.SEND;"
+      + "type=text%2Fplain;"
+      + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
+      + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end";
+
+    try {
+      // Create active tab with intent URI — popup user gesture propagates
+      chrome.tabs.create({ url: intentUrl, active: true }, (tab) => {
+        // Clean up blank tab after intent fires
+        if (tab?.id) {
+          setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 3000);
+        }
+      });
+    } catch {
+      // Fallback: copy command to clipboard
+      const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
+      navigator.clipboard.writeText(cmd).catch(() => {});
+      btn.disabled = false;
+      btn.textContent = "Cmd copied — paste in Termux";
       btn.style.fontSize = "10px";
       setTimeout(() => {
         btn.textContent = "Launch Bridge";
         btn.style.fontSize = "";
       }, 8000);
-    } else {
-      btn.textContent = response?.detail || response?.error || "Failed";
-      setTimeout(() => { btn.textContent = "Launch Bridge"; }, 3000);
+      return;
     }
+
+    btn.disabled = false;
+    btn.textContent = "Launching...";
+    setTimeout(() => { btn.textContent = "Launch Bridge"; }, 5000);
   });
 });
 

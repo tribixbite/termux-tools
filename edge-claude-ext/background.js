@@ -1095,7 +1095,7 @@ async function stopBridge() {
 async function launchBridge() {
   addLog("info", "Attempting to launch bridge");
 
-  // Step 1: Check if bridge is already running (fast 2s timeout)
+  // Check if bridge is already running (fast 2s timeout)
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2000);
@@ -1108,68 +1108,17 @@ async function launchBridge() {
         reconnectAttempts = 0;
         connect();
       }
-      return { ok: true, method: "health", detail: `Already running v${data.version}` };
+      return { ok: true, method: "already_running", detail: `Already running v${data.version}` };
     }
   } catch {
-    addLog("info", "Bridge not responding — needs manual start");
+    addLog("info", "Bridge not responding — popup will fire deep-link");
   }
 
-  // Step 2: Deep-link via ACTION_SEND to TermuxFileReceiverActivity
-  // This is the only Termux Activity that accepts external intents for execution.
-  // It calls ~/bin/termux-url-opener with the URL as $1, which starts the bridge.
-  // Trade-off: creates a brief temporary terminal session (doesn't affect existing ones).
-  //
-  // NOTE: On Android, chrome.tabs.create() with an intent: URI switches focus to Termux,
-  // which closes the popup and kills the sendResponse callback. We respond immediately
-  // and poll for startup in the background.
-  try {
-    // active: true is required — Android browsers only resolve intent: URIs
-    // during active navigation. A background tab just stays blank.
-    const tab = await chrome.tabs.create({
-      url: "intent:#Intent;action=android.intent.action.SEND;"
-        + "type=text%2Fplain;"
-        + "S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;"
-        + "component=com.termux/.filepicker.TermuxFileReceiverActivity;end",
-      active: true,
-    });
-    // Clean up the blank tab left behind after intent fires
-    setTimeout(() => chrome.tabs.remove(tab.id).catch(() => {}), 3000);
-    addLog("info", "Sent ACTION_SEND deep-link to Termux url-opener");
+  // Deep-link is fired from popup.js (needs user gesture context for intent: URI).
+  // Start background polling so we auto-connect when bridge comes up.
+  pollForBridgeStartup();
 
-    // Poll in background — auto-connect when bridge comes up
-    pollForBridgeStartup();
-
-    return { ok: true, method: "deep-link", detail: "Launching via Termux..." };
-  } catch (err) {
-    addLog("warn", `Termux deep-link failed: ${err.message}`);
-  }
-
-  // Step 3: Fallback — copy command to clipboard (popup.js also writes from DOM context)
-  const cmd =
-    "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
-  let copied = false;
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id && !/^(chrome|edge|about):/.test(tab.url || "")) {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: (text) => navigator.clipboard.writeText(text),
-        args: [cmd],
-      });
-      copied = true;
-      addLog("info", "Bridge start command copied to clipboard");
-    }
-  } catch (err) {
-    addLog("warn", `Clipboard via content script failed: ${err.message}`);
-  }
-
-  return {
-    ok: false,
-    method: "manual",
-    detail: copied
-      ? "Cmd copied — switch to Termux & paste"
-      : `Open Termux and run: ${cmd}`,
-  };
+  return { ok: false, method: "needs_deeplink" };
 }
 
 /**
