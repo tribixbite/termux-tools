@@ -110,31 +110,11 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
-  // Edge Canary Android does NOT resolve intent: URIs (just puts them in address bar).
-  // Use navigator.share() instead — brings up Android share sheet, user taps Termux.
-  // TermuxFileReceiverActivity handles ACTION_SEND text/plain → termux-url-opener.
-  const shareUrl = "https://cfcbridge.example.com/start";
-
-  try {
-    await navigator.share({ text: shareUrl });
-    // User selected a share target — start polling for bridge
-    chrome.runtime.sendMessage({ type: "launch_bridge" });
-  } catch (e) {
-    // User cancelled share sheet, or share API unavailable
-    if (e.name !== "AbortError") {
-      // Fallback: copy command to clipboard
-      const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
-      try { await navigator.clipboard.writeText(cmd); } catch {}
-      const btn = document.getElementById("btn-launch-bridge");
-      btn.textContent = "Cmd copied — paste in Termux";
-      btn.style.fontSize = "10px";
-      setTimeout(() => {
-        btn.textContent = "Launch Bridge";
-        btn.style.fontSize = "";
-      }, 6000);
-    }
-  }
+document.getElementById("btn-launch-bridge").addEventListener("click", () => {
+  // Open the intent test/launcher page with 10 different approaches
+  chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html"), active: true });
+  // Start polling for bridge in background
+  chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
 // --- Stop Bridge button ------------------------------------------------------

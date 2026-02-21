@@ -1,53 +1,53 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>CFC Bridge Launcher</title>
+  <title>CFC Intent Test</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      background: #0d1117;
-      color: #e6edf3;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-      text-align: center;
-      padding: 20px;
+    body { font-family: system-ui; background: #0d1117; color: #e6edf3; margin: 0; padding: 12px; }
+    h2 { font-size: 16px; margin: 8px 0; color: #58a6ff; }
+    .section { margin-bottom: 16px; }
+    button {
+      display: block; width: 100%; padding: 12px; margin: 4px 0;
+      border: 1px solid #30363d; border-radius: 6px;
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      text-align: left; color: #e6edf3;
     }
-    .card {
-      background: #161b22;
-      padding: 24px;
-      border-radius: 12px;
-      border: 1px solid #30363d;
-      max-width: 320px;
-      width: 100%;
-    }
-    h2 { margin-top: 0; font-size: 18px; }
-    p { color: #8b949e; font-size: 14px; margin-bottom: 20px; }
-    a.btn {
-      display: block;
-      background: #238636;
-      color: #fff;
-      text-decoration: none;
-      padding: 14px 24px;
-      border-radius: 8px;
-      font-size: 16px;
-      font-weight: 600;
-      text-align: center;
-    }
-    a.btn:active { background: #2ea043; }
+    .gemini { background: #1a3a2a; }
+    .gemini:active { background: #238636; }
+    .mine { background: #1a2a3a; }
+    .mine:active { background: #1f6feb; }
+    #log { font-family: monospace; font-size: 11px; color: #8b949e; padding: 8px;
+      background: #161b22; border-radius: 6px; max-height: 200px; overflow-y: auto; }
   </style>
 </head>
 <body>
-<div class="card">
-  <h2>Launch Bridge</h2>
-  <p>Tap below to start the CFC bridge in Termux.</p>
-  <a class="btn" id="launch-link" href="#">Tap to Open Termux</a>
+<h2>Gemini 3.1 Pro Suggestions</h2>
+<div class="section">
+  <button class="gemini" id="g1">G1: window.location.href (unencoded extras)</button>
+  <button class="gemini" id="g2">G2: chrome.tabs.create intent:// host format</button>
+  <button class="gemini" id="g3">G3: window.open (encoded extras)</button>
+  <button class="gemini" id="g4">G4: chrome.tabs.update + package param</button>
+  <button class="gemini" id="g5">G5: anchor click simulation + scheme</button>
 </div>
-<!-- MV3 CSP blocks inline scripts — must use external JS -->
+<h2>Additional Variations</h2>
+<div class="section">
+  <button class="mine" id="m1">M1: navigator.share() share sheet</button>
+  <button class="mine" id="m2">M2: iframe navigation</button>
+  <button class="mine" id="m3">M3: tabs.create intent:// with encoded type</button>
+  <button class="mine" id="m4">M4: real &lt;a&gt; link (tap directly)</button>
+  <button class="mine" id="m5">M5: window.open + tabs.create combo</button>
+</div>
+<h2>Direct Tap Link</h2>
+<div class="section">
+  <a id="direct-link" href="#" style="display:block;padding:14px;background:#238636;color:#fff;
+    text-decoration:none;border-radius:6px;font-size:15px;font-weight:600;text-align:center;">
+    M4: Tap this link directly
+  </a>
+</div>
+<h2>Log</h2>
+<div id="log"></div>
+
 <script src="launcher.js"></script>
 </body>
 </html>
