@@ -1,6 +1,6 @@
-// Intent launch test suite — 10 different approaches
-// G1-G5: Gemini 3.1 Pro verbatim suggestions
-// M1-M5: Additional variations
+// Intent launch test — focused on navigator.share() and working approaches
+// Browser intent: URIs add CATEGORY_BROWSABLE which Termux doesn't declare.
+// navigator.share() uses the OS share system without BROWSABLE restriction.
 
 const logEl = document.getElementById("log");
 function log(msg) {
@@ -11,100 +11,104 @@ function log(msg) {
   console.log(msg);
 }
 
-// === GEMINI 3.1 PRO — VERBATIM ===
-
-// G1: window.location.href with basic intent:#Intent syntax, unencoded extras
-document.getElementById("g1").addEventListener("click", () => {
-  log("G1: window.location.href");
-  const intent = 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-  window.location.href = intent;
-});
-
-// G2: chrome.tabs.create with intent:// host-based URI
-document.getElementById("g2").addEventListener("click", () => {
-  log("G2: chrome.tabs.create intent://share/");
-  const intent = 'intent://share/#Intent;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-  chrome.tabs.create({ url: intent });
-});
-
-// G3: window.open with URL-encoded extras
-document.getElementById("g3").addEventListener("click", () => {
-  log("G3: window.open (encoded extras)");
-  const intent = 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;end';
-  window.open(intent, '_blank');
-});
-
-// G4: chrome.tabs.update with explicit package param
-document.getElementById("g4").addEventListener("click", () => {
-  log("G4: chrome.tabs.update + package");
-  const intent = 'intent:#Intent;package=com.termux;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-  chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-    if (tabs[0]) {
-      chrome.tabs.update(tabs[0].id, { url: intent });
-    }
-  });
-});
-
-// G5: Anchor click simulation with scheme param
-document.getElementById("g5").addEventListener("click", () => {
-  log("G5: anchor .click() + scheme");
-  const intent = 'intent:#Intent;scheme=https;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-  const link = document.createElement('a');
-  link.href = intent;
-  link.style.display = 'none';
-  document.body.appendChild(link);
-  link.click();
-  setTimeout(() => document.body.removeChild(link), 100);
-});
-
-// === ADDITIONAL VARIATIONS ===
-
-// M1: navigator.share() — Android share sheet
-document.getElementById("m1").addEventListener("click", async () => {
-  log("M1: navigator.share()");
+// S1: navigator.share with text only
+document.getElementById("s1").addEventListener("click", async () => {
+  log("S1: navigator.share({ text })");
   try {
     await navigator.share({ text: "https://cfcbridge.example.com/start" });
-    log("M1: share completed");
+    log("S1: share completed (user picked a target)");
   } catch (e) {
-    log("M1: " + e.name + " — " + e.message);
+    log("S1 error: " + e.name + " — " + e.message);
   }
 });
 
-// M2: Hidden iframe navigation
-document.getElementById("m2").addEventListener("click", () => {
-  log("M2: iframe src");
-  const intent = 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-  const iframe = document.createElement("iframe");
-  iframe.style.display = "none";
-  iframe.src = intent;
-  document.body.appendChild(iframe);
-  setTimeout(() => iframe.remove(), 3000);
+// S2: navigator.share with title + text
+document.getElementById("s2").addEventListener("click", async () => {
+  log("S2: navigator.share({ title, text })");
+  try {
+    await navigator.share({
+      title: "CFC Bridge",
+      text: "https://cfcbridge.example.com/start",
+    });
+    log("S2: share completed");
+  } catch (e) {
+    log("S2 error: " + e.name + " — " + e.message);
+  }
 });
 
-// M3: chrome.tabs.create with intent:// format + encoded MIME type
-document.getElementById("m3").addEventListener("click", () => {
-  log("M3: tabs.create intent:// + encoded type");
-  const intent = 'intent://share/#Intent;action=android.intent.action.SEND;type=text%2Fplain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https%3A%2F%2Fcfcbridge.example.com%2Fstart;end';
-  chrome.tabs.create({ url: intent, active: true });
+// S3: navigator.share with url field
+document.getElementById("s3").addEventListener("click", async () => {
+  log("S3: navigator.share({ url })");
+  try {
+    await navigator.share({ url: "https://cfcbridge.example.com/start" });
+    log("S3: share completed");
+  } catch (e) {
+    log("S3 error: " + e.name + " — " + e.message);
+  }
 });
 
-// M4: Direct <a> link — set href so user can tap it directly (real gesture)
-const directLink = document.getElementById("direct-link");
-const directIntent = 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;component=com.termux/.filepicker.TermuxFileReceiverActivity;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end';
-directLink.href = directIntent;
-directLink.addEventListener("click", () => {
-  log("M4: direct <a> tap");
+// S4: navigator.share with title + url
+document.getElementById("s4").addEventListener("click", async () => {
+  log("S4: navigator.share({ title, url })");
+  try {
+    await navigator.share({
+      title: "CFC Bridge",
+      url: "https://cfcbridge.example.com/start",
+    });
+    log("S4: share completed");
+  } catch (e) {
+    log("S4 error: " + e.name + " — " + e.message);
+  }
 });
 
-// M5: window.open then tabs.create fallback
-document.getElementById("m5").addEventListener("click", () => {
-  log("M5: window.open + tabs.create combo");
-  const intent = 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;component=com.termux/.filepicker.TermuxFileReceiverActivity;end';
-  const w = window.open(intent, '_self');
-  setTimeout(() => {
-    log("M5: fallback to tabs.create");
-    chrome.tabs.create({ url: intent, active: true });
-  }, 800);
+// S5: navigator.share with text + url
+document.getElementById("s5").addEventListener("click", async () => {
+  log("S5: navigator.share({ text, url })");
+  try {
+    await navigator.share({
+      text: "start bridge",
+      url: "https://cfcbridge.example.com/start",
+    });
+    log("S5: share completed");
+  } catch (e) {
+    log("S5 error: " + e.name + " — " + e.message);
+  }
 });
 
-log("Test page loaded — " + new Date().toTimeString().slice(0, 8));
+// S6: Check if share API is even available
+document.getElementById("s6").addEventListener("click", () => {
+  log("S6: API check");
+  log("  navigator.share: " + (typeof navigator.share));
+  log("  navigator.canShare: " + (typeof navigator.canShare));
+  if (navigator.canShare) {
+    const can1 = navigator.canShare({ text: "test" });
+    const can2 = navigator.canShare({ url: "https://example.com" });
+    log("  canShare({text}): " + can1);
+    log("  canShare({url}): " + can2);
+  }
+  log("  isSecureContext: " + window.isSecureContext);
+  log("  protocol: " + window.location.protocol);
+});
+
+// I1: intent: URI via tabs.create (for comparison — expected to fail due to BROWSABLE)
+document.getElementById("i1").addEventListener("click", () => {
+  log("I1: tabs.create intent: (expect wrong apps due to BROWSABLE)");
+  chrome.tabs.create({
+    url: 'intent:#Intent;action=android.intent.action.SEND;type=text/plain;package=com.termux;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end',
+    active: true,
+  });
+});
+
+// I2: intent:// format via tabs.create
+document.getElementById("i2").addEventListener("click", () => {
+  log("I2: tabs.create intent:// format");
+  chrome.tabs.create({
+    url: 'intent://share/#Intent;action=android.intent.action.SEND;type=text/plain;package=com.termux;S.android.intent.extra.TEXT=https://cfcbridge.example.com/start;end',
+    active: true,
+  });
+});
+
+log("Loaded — " + new Date().toTimeString().slice(0, 8));
+log("TermuxFileReceiverActivity has CATEGORY_DEFAULT only (no BROWSABLE)");
+log("Browser intent: URIs add BROWSABLE → Termux never matches");
+log("navigator.share() uses OS share system → should show Termux");
