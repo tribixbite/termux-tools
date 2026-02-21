@@ -110,36 +110,31 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", () => {
-  // Navigate the popup WebView directly to the intent: URI.
-  // The popup is a WebView — it should hand off intent: schemes to the OS.
-  // Fallback: update the active tab with the intent URI.
-  const targetUrl = "https://cfcbridge.example.com/start";
-  const intentUrl = "intent:#Intent;"
-    + "action=android.intent.action.SEND;"
-    + "type=text/plain;"
-    + "S.android.intent.extra.TEXT=" + encodeURIComponent(targetUrl) + ";"
-    + "component=com.termux/.filepicker.TermuxFileReceiverActivity;"
-    + "end";
+document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
+  // Edge Canary Android does NOT resolve intent: URIs (just puts them in address bar).
+  // Use navigator.share() instead — brings up Android share sheet, user taps Termux.
+  // TermuxFileReceiverActivity handles ACTION_SEND text/plain → termux-url-opener.
+  const shareUrl = "https://cfcbridge.example.com/start";
 
   try {
-    // Method 1: Direct popup navigation — simplest path to OS intent resolver
-    window.location.href = intentUrl;
-
-    // If still here after 500ms, popup didn't hand off — try active tab
-    setTimeout(() => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (tabs[0]) {
-          chrome.tabs.update(tabs[0].id, { url: intentUrl });
-        }
-      });
-    }, 500);
+    await navigator.share({ text: shareUrl });
+    // User selected a share target — start polling for bridge
+    chrome.runtime.sendMessage({ type: "launch_bridge" });
   } catch (e) {
-    console.error("Intent launch failed:", e);
+    // User cancelled share sheet, or share API unavailable
+    if (e.name !== "AbortError") {
+      // Fallback: copy command to clipboard
+      const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
+      try { await navigator.clipboard.writeText(cmd); } catch {}
+      const btn = document.getElementById("btn-launch-bridge");
+      btn.textContent = "Cmd copied — paste in Termux";
+      btn.style.fontSize = "10px";
+      setTimeout(() => {
+        btn.textContent = "Launch Bridge";
+        btn.style.fontSize = "";
+      }, 6000);
+    }
   }
-
-  // Tell background.js to start polling for bridge startup
-  chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
 // --- Stop Bridge button ------------------------------------------------------
