@@ -1,45 +1,40 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>CFC Intent Test</title>
+  <title>Launch Bridge</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
-    body { font-family: system-ui; background: #0d1117; color: #e6edf3; margin: 0; padding: 12px; }
-    h2 { font-size: 14px; margin: 12px 0 6px; color: #58a6ff; }
-    button {
-      display: block; width: 100%; padding: 12px; margin: 4px 0;
-      border: 1px solid #30363d; border-radius: 6px;
-      font-size: 13px; font-weight: 600; cursor: pointer;
-      text-align: left; color: #e6edf3;
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #0d1117; color: #e6edf3;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      height: 100vh; margin: 0; padding: 20px;
+      text-align: center;
     }
-    .share { background: #1a3a2a; }
-    .share:active { background: #238636; }
-    .check { background: #3a2a1a; }
-    .check:active { background: #d29922; }
-    .intent { background: #1a2a3a; }
-    .intent:active { background: #1f6feb; }
-    #log { font-family: monospace; font-size: 10px; color: #8b949e; padding: 8px;
-      background: #161b22; border-radius: 6px; max-height: 250px; overflow-y: auto;
-      white-space: pre-wrap; word-break: break-all; }
+    .card {
+      background: #161b22; padding: 24px; border-radius: 12px;
+      border: 1px solid #30363d; max-width: 320px; width: 100%;
+    }
+    h2 { margin-top: 0; font-size: 18px; }
+    p { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+    button {
+      background: #238636; color: #fff; border: none;
+      padding: 14px 24px; border-radius: 8px;
+      font-size: 16px; font-weight: 600;
+      cursor: pointer; width: 100%;
+    }
+    button:active { background: #2ea043; }
+    #status { color: #8b949e; font-size: 12px; margin-top: 12px; min-height: 16px; }
   </style>
 </head>
 <body>
-<h2>navigator.share() — should show Termux in share sheet</h2>
-<button class="share" id="s1">S1: share({ text: url })</button>
-<button class="share" id="s2">S2: share({ title, text: url })</button>
-<button class="share" id="s3">S3: share({ url: url })</button>
-<button class="share" id="s4">S4: share({ title, url })</button>
-<button class="share" id="s5">S5: share({ text: "start", url })</button>
-
-<h2>API diagnostics</h2>
-<button class="check" id="s6">S6: Check share API availability</button>
-
-<h2>intent: URI — for comparison (BROWSABLE blocks Termux)</h2>
-<button class="intent" id="i1">I1: intent:#Intent + package (no component)</button>
-<button class="intent" id="i2">I2: intent://share/ + package</button>
-
-<h2>Log</h2>
-<div id="log"></div>
+<div class="card">
+  <h2>Launch CFC Bridge</h2>
+  <p>Share to Termux to start the bridge.<br>Select <b>Termux</b> from the share sheet.</p>
+  <button id="share-btn">Share to Termux</button>
+  <div id="status"></div>
+</div>
 <script src="launcher.js"></script>
 </body>
 </html>
