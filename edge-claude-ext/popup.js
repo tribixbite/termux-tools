@@ -110,11 +110,33 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", () => {
-  // Open the intent test/launcher page with 10 different approaches
-  chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html"), active: true });
-  // Start polling for bridge in background
-  chrome.runtime.sendMessage({ type: "launch_bridge" });
+document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-launch-bridge");
+  btn.textContent = "Share → Termux";
+  btn.disabled = true;
+
+  try {
+    // navigator.share() uses Android's native share mechanism (no BROWSABLE category).
+    // Browser intent: URIs add BROWSABLE which TermuxFileReceiverActivity doesn't declare.
+    await navigator.share({ text: "https://cfcbridge.example.com/start" });
+    // User picked a share target — start polling for bridge startup
+    btn.textContent = "Launching...";
+    chrome.runtime.sendMessage({ type: "launch_bridge" });
+    setTimeout(() => { btn.textContent = "Launch Bridge"; btn.disabled = false; }, 5000);
+  } catch (e) {
+    btn.disabled = false;
+    if (e.name === "AbortError") {
+      // User cancelled share sheet
+      btn.textContent = "Launch Bridge";
+    } else {
+      // Share API unavailable — fallback to clipboard
+      const cmd = "nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>&1 &";
+      try { await navigator.clipboard.writeText(cmd); } catch {}
+      btn.textContent = "Cmd copied — paste in Termux";
+      btn.style.fontSize = "10px";
+      setTimeout(() => { btn.textContent = "Launch Bridge"; btn.style.fontSize = ""; }, 6000);
+    }
+  }
 });
 
 // --- Stop Bridge button ------------------------------------------------------
