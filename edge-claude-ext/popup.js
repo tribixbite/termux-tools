@@ -111,9 +111,15 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
 });
 
 document.getElementById("btn-launch-bridge").addEventListener("click", () => {
-  // navigator.share() doesn't work from extension popups — open launcher.html
-  // as a tab where the Web Share API is available. User taps "Share to Termux".
-  chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html"), active: true });
+  // Navigate the active tab to launcher.html (chrome.tabs.create dies with popup).
+  // Launcher has a "Share to Termux" button using navigator.share().
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
+    } else {
+      chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
+    }
+  });
   chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
