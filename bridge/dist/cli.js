@@ -5616,11 +5616,14 @@ var init_claude_chrome_bridge = __esm({
           try {
             const extDir = (0, import_path.resolve)(SCRIPT_DIR, "edge-claude-ext");
             const pemPath = (0, import_path.resolve)(SCRIPT_DIR, "edge-claude-ext.pem");
-            const outPath = (0, import_path.resolve)(SCRIPT_DIR, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
+            const crxName = `claude-code-bridge-v${BRIDGE_VERSION}.crx`;
+            const { existsSync: existsSync2 } = require("fs");
+            const candidates = [(0, import_path.resolve)(SCRIPT_DIR, crxName), (0, import_path.resolve)(SCRIPT_DIR, "dist", crxName)];
+            const outPath = candidates.find((p) => existsSync2(p)) ?? candidates[0];
             const crxExists = await fileExists(outPath);
             let needsBuild = !crxExists;
             if (crxExists) {
-              const { statSync } = await import("node:fs");
+              const { statSync } = require("fs");
               const crxMtime = statSync(outPath).mtimeMs;
               for (const name of ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"]) {
                 try {
