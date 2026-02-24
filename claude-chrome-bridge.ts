@@ -1561,13 +1561,17 @@ const server: BridgeServer = createBridgeServer({
       try {
         const extDir = resolve(SCRIPT_DIR, "edge-claude-ext");
         const pemPath = resolve(SCRIPT_DIR, "edge-claude-ext.pem");
-        const outPath = resolve(SCRIPT_DIR, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
+        const crxName = `claude-code-bridge-v${BRIDGE_VERSION}.crx`;
+        // Check root and dist/ directories for pre-built CRX
+        const { existsSync } = require("fs");
+        const candidates = [resolve(SCRIPT_DIR, crxName), resolve(SCRIPT_DIR, "dist", crxName)];
+        const outPath = candidates.find(p => existsSync(p)) ?? candidates[0];
 
         // Rebuild CRX if source files are newer than existing CRX
         const crxExists = await fileExists(outPath);
         let needsBuild = !crxExists;
         if (crxExists) {
-          const { statSync } = await import("node:fs");
+          const { statSync } = require("fs");
           const crxMtime = statSync(outPath).mtimeMs;
           // Check if any extension source file is newer
           for (const name of ["manifest.json", "background.js", "content.js", "popup.html", "popup.js"]) {
