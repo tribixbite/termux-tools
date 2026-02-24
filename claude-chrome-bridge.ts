@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 /**
  * Claude Chrome Bridge — WebSocket ↔ Native Messaging bridge
  *
@@ -13,16 +13,34 @@
  *   Edge ext ←WS→ bridge ←stdio→ native host ←unix socket→ MCP server ←→ Claude
  */
 
-import { spawn, type Subprocess } from "bun";
 import { resolve, dirname } from "path";
 import { inflateSync, deflateSync } from "node:zlib";
+import {
+  IS_BUN,
+  fileExists,
+  readFileText,
+  getFileSize,
+  createFileStream,
+  runSync,
+  runDetached,
+  spawnProcess,
+  createBridgeServer,
+  type BridgeWebSocket,
+  type BridgeServer,
+  type SpawnedProcess,
+} from "./compat";
 // --- Configuration -----------------------------------------------------------
 
 // Read version from extension manifest — single source of truth
-const MANIFEST_PATH = resolve(import.meta.dir, "edge-claude-ext/manifest.json");
-const BRIDGE_VERSION: string = await (async () => {
+// import.meta.dir is Bun-only; dirname(import.meta.url) works on both
+const SCRIPT_DIR = IS_BUN
+  ? (globalThis as any).Bun.main ? dirname((globalThis as any).Bun.main) : dirname(new URL(import.meta.url).pathname)
+  : dirname(new URL(import.meta.url).pathname);
+const MANIFEST_PATH = resolve(SCRIPT_DIR, "edge-claude-ext/manifest.json");
+const BRIDGE_VERSION: string = (() => {
   try {
-    const manifest = JSON.parse(await Bun.file(MANIFEST_PATH).text());
+    const { readFileSync } = require("fs");
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
     return manifest.version ?? "0.0.0";
   } catch {
     return "0.0.0";
@@ -55,11 +73,7 @@ const ADB_PATH = `${TERMUX_BIN}/adb`;
  */
 function adbNotify(tag: string, title: string, text: string): void {
   try {
-    Bun.spawn({
-      cmd: [ADB_PATH, "shell", "cmd", "notification", "post", "-t", title, tag, text],
-      stdout: "ignore",
-      stderr: "ignore",
-    });
+    runDetached([ADB_PATH, "shell", "cmd", "notification", "post", "-t", title, tag, text]);
   } catch {
     // ADB may not be connected — non-fatal
   }
@@ -70,30 +84,52 @@ function adbNotify(tag: string, title: string, text: string): void {
 // Ideally we'd use termux-notification (ongoing, buttons, actions) but Bun's process spawning
 // breaks termux-api-broadcast's abstract Unix socket IPC. See commit history for investigation.
 
-// Resolve cli.js path — check repo copy first, then bun global install
-const REPO_CLI = resolve(import.meta.dir, "cli.js");
-const GLOBAL_CLI = resolve(
+// Resolve cli.js path — check multiple locations
+const REPO_CLI = resolve(SCRIPT_DIR, "cli.js");
+const BUN_GLOBAL_CLI = resolve(
   process.env.HOME ?? "~",
   ".bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
 );
-const CLI_PATH = (await Bun.file(REPO_CLI).exists()) ? REPO_CLI : GLOBAL_CLI;
-
-// Resolve bun binary — process.execPath returns the glibc loader on Termux,
-// so we resolve from PATH via which, or fall back to known locations.
-async function findBun(): Promise<string> {
-  // Use `bun` (wrapper script) which handles glibc runner setup via `grun`.
-  // `buno` (raw binary) can't be spawned directly — it needs grun's LD_LIBRARY_PATH.
-  const candidates = [
-    resolve(process.env.HOME ?? "~", ".bun/bin/bun"),
-    "/data/data/com.termux/files/home/.bun/bin/bun",
-    "/usr/local/bin/bun",
-  ];
-  for (const p of candidates) {
-    if (await Bun.file(p).exists()) return p;
+const NPM_GLOBAL_CLI = resolve(
+  process.env.HOME ?? "~",
+  ".npm/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+);
+const CLI_PATH = (() => {
+  const { existsSync } = require("fs");
+  for (const p of [REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI]) {
+    if (existsSync(p)) return p;
   }
-  return "bun"; // hope it's in PATH
+  // Last resort: try to find via which
+  const result = runSync(["which", "claude"]);
+  if (result.success) {
+    const claudeBin = result.stdout.toString().trim();
+    // claude binary is usually a wrapper; cli.js is in the same package
+    const resolved = resolve(dirname(claudeBin), "../lib/node_modules/@anthropic-ai/claude-code/cli.js");
+    if (existsSync(resolved)) return resolved;
+  }
+  return BUN_GLOBAL_CLI; // fallback, may fail at runtime
+})();
+
+// Resolve runtime binary (bun or node) for spawning the native host subprocess.
+// On Bun: use bun. On Node: use node.
+function findRuntime(): string {
+  const { existsSync } = require("fs");
+  if (IS_BUN) {
+    // Use `bun` wrapper script which handles glibc runner setup via `grun`.
+    const candidates = [
+      resolve(process.env.HOME ?? "~", ".bun/bin/bun"),
+      "/data/data/com.termux/files/home/.bun/bin/bun",
+      "/usr/local/bin/bun",
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+    return "bun"; // hope it's in PATH
+  }
+  // On Node, use the current process executable
+  return process.execPath;
 }
-const BUN_PATH = await findBun();
+const RUNTIME_PATH = findRuntime();
 
 // --- Logging -----------------------------------------------------------------
 
@@ -206,7 +242,7 @@ class CdpManager {
     this.state = "connecting";
     try {
       // Step 1: find Edge PID
-      const pidResult = Bun.spawnSync({ cmd: [ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0]; // take first PID if multiple
       if (!pidStr || pidResult.exitCode !== 0) {
         log("debug", "CDP: Edge not running or ADB unavailable");
@@ -229,9 +265,9 @@ class CdpManager {
       ];
       let versionData: Record<string, string> | null = null;
       for (const socketName of socketCandidates) {
-        const fwdResult = Bun.spawnSync({
-          cmd: [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`],
-        });
+        const fwdResult = runSync(
+          [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`]
+        );
         if (fwdResult.exitCode !== 0) continue;
         try {
           const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
@@ -240,7 +276,7 @@ class CdpManager {
           break;
         } catch {
           // This socket didn't work — remove forward and try next
-          Bun.spawnSync({ cmd: [ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`] });
+          runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
         }
       }
       if (!versionData) {
@@ -549,22 +585,14 @@ class CdpManager {
     // ADB screencap — reliable on Android where CDP Page.captureScreenshot times out
     try {
       const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
-      const cap = Bun.spawnSync({
-        cmd: [ADB_PATH, "shell", "screencap", "-p", "/sdcard/cdp-screencap.png"],
-        timeout: 5000,
-      });
+      const cap = runSync([ADB_PATH, "shell", "screencap", "-p", "/sdcard/cdp-screencap.png"]);
       if (cap.exitCode === 0) {
-        const pull = Bun.spawnSync({
-          cmd: [ADB_PATH, "pull", "/sdcard/cdp-screencap.png", tmpPath],
-          timeout: 5000,
-        });
-        if (pull.exitCode === 0) {
-          const file = Bun.file(tmpPath);
-          if (await file.exists()) {
-            const buf = Buffer.from(await file.arrayBuffer());
-            log("info", `CDP: ADB screencap captured ${buf.length} bytes`);
-            return { data: buf.toString("base64") };
-          }
+        const pull = runSync([ADB_PATH, "pull", "/sdcard/cdp-screencap.png", tmpPath]);
+        if (pull.exitCode === 0 && await fileExists(tmpPath)) {
+          const { readFile: rf } = await import("node:fs/promises");
+          const buf = await rf(tmpPath);
+          log("info", `CDP: ADB screencap captured ${buf.length} bytes`);
+          return { data: buf.toString("base64") };
         }
       }
     } catch { /* ADB not available — continue */ }
@@ -765,7 +793,7 @@ class CdpManager {
   /** Re-check Edge PID — reconnect if changed (Edge restarted) */
   private async recheckPid(): Promise<void> {
     try {
-      const pidResult = Bun.spawnSync({ cmd: [ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"] });
+      const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
       const newPid = parseInt(pidStr, 10);
 
@@ -810,7 +838,7 @@ class CdpManager {
     this.pending.clear();
 
     // Remove ADB forward
-    Bun.spawnSync({ cmd: [ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`] });
+    runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
     log("info", "CDP: cleaned up");
   }
 }
@@ -1138,11 +1166,11 @@ function encodeGIF(
 
 // --- Child Process Management ------------------------------------------------
 
-let nativeHost: Subprocess | null = null;
+let nativeHost: SpawnedProcess | null = null;
 const stdoutDecoder = new NativeMessageDecoder();
 
 // Track connected WebSocket clients
-const wsClients = new Set<import("bun").ServerWebSocket<{ authenticated: boolean }>>();
+const wsClients = new Set<BridgeWebSocket>();
 
 function spawnNativeHost(): void {
   if (nativeHost) {
@@ -1151,22 +1179,19 @@ function spawnNativeHost(): void {
     nativeHost = null;
   }
 
-  log("info", `Spawning native host: ${BUN_PATH} ${CLI_PATH} --chrome-native-host`);
+  log("info", `Spawning native host: ${RUNTIME_PATH} ${CLI_PATH} --chrome-native-host`);
 
-  nativeHost = spawn({
-    cmd: [BUN_PATH, CLI_PATH, "--chrome-native-host"],
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-    env: {
+  nativeHost = spawnProcess(
+    [RUNTIME_PATH, CLI_PATH, "--chrome-native-host"],
+    {
       ...process.env,
       // Ensure CFC is enabled
       CLAUDE_CODE_ENABLE_CFC: "true",
       // Termux has no USER set — os.userInfo().username may return "unknown",
       // creating a socket dir mismatch vs the MCP server. Force it.
-      USER: process.env.USER || Bun.spawnSync({ cmd: ["id", "-un"] }).stdout.toString().trim() || "u0_a364",
-    },
-  });
+      USER: process.env.USER || runSync(["id", "-un"]).stdout.toString().trim() || "u0_a364",
+    }
+  );
 
   // Read stdout — native messaging protocol
   const readStdout = async () => {
@@ -1419,13 +1444,11 @@ function sendToNativeHost(json: string): boolean {
 
 // --- WebSocket Server --------------------------------------------------------
 
-type WsData = { authenticated: boolean };
-
-const server = Bun.serve<WsData>({
+const server: BridgeServer = createBridgeServer({
   hostname: WS_HOST,
   port: WS_PORT,
 
-  async fetch(req, server) {
+  async fetch(req, upgrade) {
     const url = new URL(req.url);
 
     // Health check endpoint
@@ -1536,12 +1559,12 @@ const server = Bun.serve<WsData>({
     // Build and serve fresh CRX from extension source directory
     if (url.pathname === "/ext/crx") {
       try {
-        const extDir = resolve(import.meta.dir, "edge-claude-ext");
-        const pemPath = resolve(import.meta.dir, "edge-claude-ext.pem");
-        const outPath = resolve(import.meta.dir, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
+        const extDir = resolve(SCRIPT_DIR, "edge-claude-ext");
+        const pemPath = resolve(SCRIPT_DIR, "edge-claude-ext.pem");
+        const outPath = resolve(SCRIPT_DIR, `claude-code-bridge-v${BRIDGE_VERSION}.crx`);
 
         // Rebuild CRX if source files are newer than existing CRX
-        const crxExists = await Bun.file(outPath).exists();
+        const crxExists = await fileExists(outPath);
         let needsBuild = !crxExists;
         if (crxExists) {
           const { statSync } = await import("node:fs");
@@ -1560,21 +1583,22 @@ const server = Bun.serve<WsData>({
           const crx3Paths = ["/data/data/com.termux/files/usr/bin/crx3", "crx3"];
           let built = false;
           for (const crx3Bin of crx3Paths) {
-            const result = Bun.spawnSync([crx3Bin, extDir, "-o", outPath, "-p", pemPath]);
+            const result = runSync([crx3Bin, extDir, "-o", outPath, "-p", pemPath]);
             if (result.success) { built = true; break; }
           }
           if (!built) throw new Error("crx3 not found — install via: npm i -g crx3-utils");
         }
 
-        const crxFile = Bun.file(outPath);
-        if (!(await crxFile.exists())) throw new Error("CRX file not found after build");
+        if (!(await fileExists(outPath))) throw new Error("CRX file not found after build");
 
-        log("info", `Serving CRX v${BRIDGE_VERSION} (${Math.round(crxFile.size / 1024)}KB, rebuilt=${needsBuild})`);
-        return new Response(crxFile.stream(), {
+        const crxSize = await getFileSize(outPath);
+        const crxStream = await createFileStream(outPath);
+        log("info", `Serving CRX v${BRIDGE_VERSION} (${Math.round(crxSize / 1024)}KB, rebuilt=${needsBuild})`);
+        return new Response(crxStream, {
           headers: {
             "Content-Type": "application/x-chrome-extension",
             "Content-Disposition": `attachment; filename="claude-code-bridge-v${BRIDGE_VERSION}.crx"`,
-            "Content-Length": String(crxFile.size),
+            "Content-Length": String(crxSize),
           },
         });
       } catch (err) {
@@ -1606,9 +1630,7 @@ const server = Bun.serve<WsData>({
         }
       }
 
-      const success = server.upgrade(req, {
-        data: { authenticated: true },
-      });
+      const success = upgrade({ authenticated: true });
       if (success) return undefined;
       return new Response("WebSocket upgrade failed", { status: 500 });
     }
@@ -1745,14 +1767,7 @@ function shutdown(): void {
   cdpManager.cleanup();
 
   // Post a "stopped" notification (replaces the running one via same tag)
-  try {
-    Bun.spawnSync({
-      cmd: [ADB_PATH, "shell", "cmd", "notification", "post", "-t", "CFC Bridge stopped", "cfc-bridge", "Bridge is no longer running"],
-      stdout: "ignore", stderr: "ignore",
-    });
-  } catch {
-    // ADB may not be connected — non-fatal
-  }
+  adbNotify("cfc-bridge", "CFC Bridge stopped", "Bridge is no longer running");
 
   server.stop();
   log("info", "Bridge stopped");

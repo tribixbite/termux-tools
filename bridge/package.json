@@ -1,0 +1,37 @@
+{
+  "name": "claude-chrome-android",
+  "version": "1.0.0",
+  "description": "Claude Code Browser Bridge for Android — connects Claude Code CLI to Chrome/Edge via WebSocket",
+  "author": "willstone",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/willstone/termux-tools"
+  },
+  "bin": {
+    "claude-chrome-android": "./dist/cli.js"
+  },
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.cjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0",
+    "ws": "^8.18.0",
+    "@anthropic-ai/claude-code": "*"
+  },
+  "keywords": [
+    "claude",
+    "android",
+    "termux",
+    "browser-bridge",
+    "chrome-extension",
+    "mcp"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
