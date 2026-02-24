@@ -4,6 +4,27 @@
 
 const btn = document.getElementById("share-btn");
 const status = document.getElementById("status");
+const setupHint = document.getElementById("setup-hint");
+
+// Listen for state updates from background.js (single source of truth for polling)
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "state_update") {
+    if (msg.state === "connected") {
+      status.textContent = "Bridge connected";
+      // Auto-close launcher tab after successful connection
+      setTimeout(() => window.close(), 1000);
+    }
+  }
+});
+
+// Check initial bridge state
+chrome.runtime.sendMessage({ type: "get_state" }, (resp) => {
+  if (resp?.state === "connected") {
+    status.textContent = "Bridge is already connected";
+    btn.textContent = "Already Running";
+    btn.disabled = true;
+  }
+});
 
 btn.addEventListener("click", async () => {
   btn.textContent = "Opening share sheet...";
@@ -16,22 +37,15 @@ btn.addEventListener("click", async () => {
     btn.textContent = "Share to Termux";
     btn.disabled = false;
 
-    // Poll for bridge health, auto-close when it's up
-    for (let i = 0; i < 10; i++) {
-      await new Promise(r => setTimeout(r, 1500));
-      try {
-        const resp = await fetch("http://127.0.0.1:18963/health", {
-          signal: AbortSignal.timeout(1500),
-        });
-        const data = await resp.json();
-        if (data.status === "ok") {
-          status.textContent = "Bridge running v" + data.version;
-          setTimeout(() => window.close(), 1000);
-          return;
-        }
-      } catch {}
-    }
-    status.textContent = "Bridge didn't start — try again or start manually in Termux";
+    // Notify background.js to start polling (it's the single source of truth)
+    chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
+
+    // Simple local timeout — background handles the actual polling
+    setTimeout(() => {
+      if (status.textContent.includes("waiting")) {
+        status.textContent = "Bridge didn't start — try again or start manually in Termux";
+      }
+    }, 15000);
   } catch (e) {
     btn.textContent = "Share to Termux";
     btn.disabled = false;

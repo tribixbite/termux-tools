@@ -956,6 +956,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
+
+  // Launcher page notifies us after the share completes — we poll as single source of truth
+  if (msg.type === "bridge_launch_initiated") {
+    addLog("info", "Bridge launch initiated via share");
+    pollForBridgeStartup();
+    sendResponse({ ok: true });
+    return true;
+  }
 });
 
 // --- Self-test suite ---------------------------------------------------------
@@ -1068,28 +1076,50 @@ async function runSelfTest(testName) {
 
 async function stopBridge() {
   addLog("info", "Requesting bridge shutdown");
+
+  // 1. Try graceful shutdown via POST /shutdown
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3000);
-    const resp = await fetch("http://127.0.0.1:18963/shutdown", {
+    await fetch("http://127.0.0.1:18963/shutdown", {
       method: "POST",
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-    const data = await resp.json();
-    addLog("info", `Bridge shutdown: ${data.status}`);
-    // Disconnect our WS
-    if (ws) {
-      ws.close();
-      ws = null;
-    }
-    connectionState = "disconnected";
-    broadcastState();
-    return { ok: true, detail: "Bridge stopped" };
-  } catch (err) {
-    addLog("warn", `Bridge shutdown failed: ${err.message}`);
-    return { ok: false, error: `Shutdown failed: ${err.message}` };
+  } catch {
+    // Timeout or bridge already dead — continue to verify
   }
+
+  // 2. Wait, then verify bridge is actually dead via /health
+  await new Promise((r) => setTimeout(r, 800));
+  let stillAlive = false;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 1500);
+    const resp = await fetch(BRIDGE_HEALTH_URL, { signal: ctrl.signal });
+    clearTimeout(timer);
+    stillAlive = resp.ok;
+  } catch {
+    // Health check failed = bridge is dead = success
+  }
+
+  // 3. Cleanup WS regardless
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+  connectionState = "disconnected";
+  clearTimeout(reconnectTimer);
+  reconnectTimer = null;
+  broadcastState();
+
+  if (stillAlive) {
+    addLog("warn", "Bridge didn't stop gracefully — kill manually: pkill -f claude-chrome-bridge");
+    return { ok: false, error: "Bridge didn't stop. Kill manually in Termux: pkill -f claude-chrome-bridge" };
+  }
+
+  addLog("info", "Bridge stopped successfully");
+  return { ok: true, detail: "Bridge stopped" };
 }
 
 async function launchBridge() {
