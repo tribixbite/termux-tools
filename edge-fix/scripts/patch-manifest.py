@@ -140,18 +140,31 @@ def main():
     print("\n=== Stripping tracker meta-data ===")
     n_meta = strip_metadata(root, config_dir)
 
-    # Fix @null meta-data values that crash PackageManager
-    # (apktool compiles @null to @0x00000000 which Android rejects)
-    print("\n=== Fixing @null meta-data values ===")
+    # Remove @null meta-data entries to avoid apktool compilation issues
+    # (apktool compiles @null to @0x00000000 which GMS rejects as invalid)
+    # Removing the entries entirely is safer than replacing with "0"
+    print("\n=== Removing @null meta-data entries ===")
     for parent in [root, root.find("application")]:
         if parent is None:
             continue
-        for elem in parent.iter("meta-data"):
-            val = elem.get(android_attr("value"))
-            if val == "@null":
-                elem.set(android_attr("value"), "0")
-                name = elem.get(android_attr("name"), "???")
-                print(f"  [x] Fixed @null -> 0: {name}")
+        to_remove = []
+        for elem in list(parent):
+            if elem.tag == "meta-data":
+                val = elem.get(android_attr("value"))
+                if val == "@null":
+                    name = elem.get(android_attr("name"), "???")
+                    # Keep com.google.android.gms.version - GMS requires it
+                    if name == "com.google.android.gms.version":
+                        # Set to the GMS SDK version the APK was compiled against.
+                        # This must match @integer/google_play_services_version.
+                        # Value 12451000 corresponds to play-services 18.x used by Edge.
+                        elem.set(android_attr("value"), "12451000")
+                        print(f"  [x] Fixed {name}: @null -> 12451000")
+                    else:
+                        to_remove.append((parent, elem, name))
+        for p, e, n in to_remove:
+            p.remove(e)
+            print(f"  [x] Removed @null meta-data: {n}")
 
     # Write patched manifest
     tree.write(manifest_path, encoding="utf-8", xml_declaration=True)

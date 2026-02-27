@@ -1,0 +1,7 @@
+# Targeted method stubs: stub only specific methods, not entire classes
+# Format: smali_path|method_name
+# The method body is replaced with a safe return default while the rest
+# of the class remains untouched.
+
+# -- OneAuth token sharing registration (prevents cross-app token leaking) --
+smali_classes2/com/microsoft/authentication/OneAuth.smali|registerTokenSharing

@@ -4,6 +4,9 @@ output/
 *.keystore
 *.idsig
 
+# Tool binaries (download with: gh release download 3.0.9 --repo baksmali/smali --pattern '*fat*')
+tools/*.jar
+
 # Editor
 .idea/
 *.swp

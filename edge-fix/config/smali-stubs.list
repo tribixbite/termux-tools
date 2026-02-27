@@ -56,6 +56,7 @@ smali_classes2/com/kwai/koom/base/Monitor.smali
 # -- Citrix MITM --
 smali/com/citrix/mvpn/service/MITMService.smali
 
-# -- Microsoft Token Sharing (neutralize without removing from manifest) --
-smali_classes3/com/microsoft/tokenshare/TokenSharingManager.smali
-smali_classes3/com/microsoft/tokenshare/TokenSharingService.smali
+# -- Microsoft Token Sharing --
+# NOTE: Do NOT stub TokenSharingManager or TokenSharingService - they are tightly
+# coupled to OneAuth and crash if getInstance() returns null.
+# Instead, stub only registerTokenSharing in OneAuth via targeted-stubs.list.
