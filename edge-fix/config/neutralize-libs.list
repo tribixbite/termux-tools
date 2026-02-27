@@ -1,0 +1,14 @@
+# Files containing System.loadLibrary calls for telemetry native libs
+# All loadLibrary invoke-static instructions in these files will be replaced with nop
+# Format: smali_path
+
+# -- Citrix logging (ctxlog, log4cpp) in static initializer --
+smali/w760.smali
+
+# -- KOOM heap analysis native libs (koom-fast-dump, koom-strip-dump, kwai-android-base) --
+smali_classes2/com/kwai/koom/base/CommonConfig$Builder$build$6.smali
+
+# -- Tencent Matrix trace-canary in static initializers --
+smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali
+smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali
+smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali

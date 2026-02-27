@@ -1,0 +1,8 @@
+# Telemetry endpoint URLs to replace with localhost
+# Format: original_url
+# Each URL found in const-string instructions will be replaced with http://127.0.0.1
+# This black-holes telemetry requests locally without breaking control flow
+
+# -- Microsoft OneCollector telemetry endpoint --
+https://mobile.events.data.microsoft.com/OneCollector/1.0/
+https://mobile.events.data.microsoft.com/OneCollector/1.0

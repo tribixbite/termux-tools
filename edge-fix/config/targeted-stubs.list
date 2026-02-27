@@ -5,3 +5,41 @@
 
 # -- OneAuth token sharing registration (prevents cross-app token leaking) --
 smali_classes2/com/microsoft/authentication/OneAuth.smali|registerTokenSharing
+
+# -- Intune MAM background handlers (keep in manifest, neuter logic) --
+# MAMBackgroundService handles Intune policy sync in background
+smali_classes3/com/microsoft/intune/mam/client/service/MAMBackgroundService.smali|onHandleIntent
+# MAMBackgroundJobService handles Intune compliance checks via JobScheduler
+smali_classes3/com/microsoft/intune/mam/client/service/MAMBackgroundJobService.smali|onStartCommand
+# MAMBackgroundReceiver listens for DOWNLOAD_COMPLETE to fetch Intune policies
+smali_classes3/com/microsoft/intune/mam/client/service/MAMBackgroundReceiver.smali|onReceive
+# MAMNotificationReceiverService handles Intune push notification processing
+smali_classes3/com/microsoft/intune/mam/client/notification/MAMNotificationReceiverService.smali|onCreate
+
+# -- OneDS native library loader (prevents liboneds.so / libtelclient.so from loading) --
+# This is the generic loader that calls System.loadLibrary for OneDS telemetry
+smali_classes3/com/microsoft/foundation/onedswrapper/libraryloader/SystemNativeLibraryLoader.smali|loadLibrary
+
+# -- OneDS telemetry initialization --
+# TelemetryLoggerProvider.initializeOneDs sets up the OneDS telemetry pipeline
+smali_classes3/com/microsoft/foundation/onedswrapper/TelemetryLoggerProvider.smali|initializeOneDs
+
+# -- Microsoft applications telemetry (C++ bridge via JNI) --
+# LogManager.initialize bootstraps the native telemetry engine
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|initialize
+# LogManager.flush/upload sends queued telemetry
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flush
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flushAndTeardown
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|uploadNow
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|setTransmitProfile
+
+# -- Adjust SDK (attribution/tracking) --
+# Adjust.trackEvent sends tracking events to Adjust servers
+smali/com/adjust/sdk/Adjust.smali|trackEvent
+
+# -- Tencent Matrix trace-canary (native methods require libtrace-canary.so) --
+# Since we NOP the loadLibrary("trace-canary"), must also stub the methods
+# that call native functions, otherwise UnsatisfiedLinkError
+smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali|onAlive
+smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali|onAlive
+smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali|onAlive

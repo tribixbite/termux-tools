@@ -167,85 +167,126 @@ unzip -o "$WORK_DIR/manifest-rebuilt.apk" AndroidManifest.xml -d "$WORK_DIR/patc
 echo "  Binary manifest: $(ls -lh "$PATCHED_MANIFEST" | awk '{print $5}')"
 echo ""
 
-# ─── 3. Patch DEX (targeted method stubs) ───
+# ─── 3. Patch DEX ───
 # Strategy: use standalone baksmali/smali to decompile only the DEX files
-# that contain methods we need to stub, apply stubs, then recompile.
+# that need changes, apply all patches, then recompile.
 # This avoids apktool's baksmali/smali round-trip bugs entirely.
-echo "=== Step 3/5: Patching DEX (targeted method stubs) ==="
+#
+# Three patch types are applied:
+#   a) Targeted method stubs (config/targeted-stubs.list)
+#   b) System.loadLibrary neutralization (config/neutralize-libs.list)
+#   c) Telemetry URL replacement (config/replace-urls.list)
+echo "=== Step 3/5: Patching DEX ==="
 
 DEX_WORK="$WORK_DIR/dex-patch"
 rm -rf "$DEX_WORK"
 mkdir -p "$DEX_WORK"
 
 TARGETED_STUBS="$CONFIG_DIR/targeted-stubs.list"
-if [ ! -f "$TARGETED_STUBS" ]; then
-    echo "  No targeted-stubs.list found, skipping DEX patching"
-else
-    # Parse targeted-stubs.list to determine which DEX files need patching
-    # smali/ → classes.dex, smali_classes2/ → classes2.dex, etc.
-    declare -A DEX_NEEDS_PATCH
+NEUTRALIZE_LIBS="$CONFIG_DIR/neutralize-libs.list"
+REPLACE_URLS="$CONFIG_DIR/replace-urls.list"
 
-    while IFS='|' read -r smali_path method_name; do
-        # Extract the top-level smali directory (e.g., "smali_classes2")
-        smali_dir="${smali_path%%/*}"
-        case "$smali_dir" in
-            smali) dex_name="classes.dex" ;;
-            smali_classes*) dex_name="${smali_dir/smali_/}.dex" ;; # smali_classes2 → classes2.dex
-            *) echo "  [!] Unknown smali dir: $smali_dir"; continue ;;
-        esac
-        DEX_NEEDS_PATCH["$dex_name"]=1
-    done < <(grep -v '^#' "$TARGETED_STUBS" | grep -v '^[[:space:]]*$' | sed 's/[[:space:]]*$//')
+# Helper: read config file, skip comments and blanks
+read_config() {
+    grep -v '^#' "$1" | grep -v '^[[:space:]]*$' | sed 's/[[:space:]]*$//'
+}
 
-    # Process each DEX file that needs patching
-    for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
-        echo "  Processing $dex_name..."
+# Helper: map smali path prefix to DEX filename
+smali_to_dex() {
+    local smali_dir="${1%%/*}"
+    case "$smali_dir" in
+        smali) echo "classes.dex" ;;
+        smali_classes*) echo "${smali_dir/smali_/}.dex" ;;
+        *) echo "" ;;
+    esac
+}
 
-        # Extract DEX from original APK
-        unzip -o "$BASE_APK" "$dex_name" -d "$DEX_WORK" > /dev/null
+# Collect all DEX files that need patching from all config sources
+declare -A DEX_NEEDS_PATCH
 
-        # Map dex name back to smali directory name
-        case "$dex_name" in
-            classes.dex) smali_dir_name="smali" ;;
-            classes*.dex) smali_dir_name="smali_${dex_name%.dex}" ;; # classes2.dex → smali_classes2
-        esac
+# From targeted-stubs.list
+if [ -f "$TARGETED_STUBS" ]; then
+    while IFS='|' read -r smali_path _method; do
+        dex=$(smali_to_dex "$smali_path")
+        [ -n "$dex" ] && DEX_NEEDS_PATCH["$dex"]=1
+    done < <(read_config "$TARGETED_STUBS")
+fi
 
-        SMALI_OUT="$DEX_WORK/$smali_dir_name"
+# From neutralize-libs.list
+if [ -f "$NEUTRALIZE_LIBS" ]; then
+    while IFS= read -r smali_path; do
+        dex=$(smali_to_dex "$smali_path")
+        [ -n "$dex" ] && DEX_NEEDS_PATCH["$dex"]=1
+    done < <(read_config "$NEUTRALIZE_LIBS")
+fi
 
-        # Decompile with baksmali v3.0.9
-        echo "    baksmali: decompiling $dex_name..."
-        java -jar "$BAKSMALI_JAR" d "$DEX_WORK/$dex_name" -o "$SMALI_OUT" 2>&1
+# From replace-urls.list: need to scan all DEX files for matching URLs
+# We'll handle URL replacement across all decompiled DEX files below
 
-        # Apply targeted method stubs for this DEX
+# Process each DEX file that needs patching
+for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
+    echo "  Processing $dex_name..."
+
+    # Extract DEX from original APK
+    unzip -o "$BASE_APK" "$dex_name" -d "$DEX_WORK" > /dev/null
+
+    # Map dex name back to smali directory name
+    case "$dex_name" in
+        classes.dex) smali_dir_name="smali" ;;
+        classes*.dex) smali_dir_name="smali_${dex_name%.dex}" ;;
+    esac
+
+    SMALI_OUT="$DEX_WORK/$smali_dir_name"
+
+    # Decompile with baksmali v3.0.9
+    echo "    baksmali: decompiling..."
+    java -jar "$BAKSMALI_JAR" d "$DEX_WORK/$dex_name" -o "$SMALI_OUT" 2>&1
+
+    # (a) Apply targeted method stubs
+    if [ -f "$TARGETED_STUBS" ]; then
         while IFS='|' read -r smali_path method_name; do
-            this_smali_dir="${smali_path%%/*}"
-            case "$this_smali_dir" in
-                smali) this_dex="classes.dex" ;;
-                smali_classes*) this_dex="${this_smali_dir/smali_/}.dex" ;;
-            esac
-
-            # Only process stubs belonging to this DEX
-            [ "$this_dex" != "$dex_name" ] && continue
-
+            [ "$(smali_to_dex "$smali_path")" != "$dex_name" ] && continue
             full_path="$DEX_WORK/$smali_path"
             if [ ! -f "$full_path" ]; then
                 echo "    [!] Not found: $smali_path"
                 continue
             fi
-
-            # Stub the specific method using Python
             python3 "$SCRIPT_DIR/scripts/stub-method.py" "$full_path" "$method_name"
+        done < <(read_config "$TARGETED_STUBS")
+    fi
 
-        done < <(grep -v '^#' "$TARGETED_STUBS" | grep -v '^[[:space:]]*$' | sed 's/[[:space:]]*$//')
+    # (b) Neutralize System.loadLibrary calls
+    if [ -f "$NEUTRALIZE_LIBS" ]; then
+        while IFS= read -r smali_path; do
+            [ "$(smali_to_dex "$smali_path")" != "$dex_name" ] && continue
+            full_path="$DEX_WORK/$smali_path"
+            if [ ! -f "$full_path" ]; then
+                echo "    [!] Not found: $smali_path"
+                continue
+            fi
+            python3 "$SCRIPT_DIR/scripts/neutralize-loadlibrary.py" "$full_path"
+        done < <(read_config "$NEUTRALIZE_LIBS")
+    fi
 
-        # Recompile with smali v3.0.9
-        echo "    smali: recompiling $dex_name..."
-        java -jar "$SMALI_JAR" a "$SMALI_OUT" -o "$DEX_WORK/${dex_name%.dex}-patched.dex" 2>&1
+    # (c) Replace telemetry endpoint URLs across all smali files in this DEX
+    if [ -f "$REPLACE_URLS" ]; then
+        while IFS= read -r url; do
+            # Search for the URL in all smali files of this DEX
+            matching_files=$(grep -rl "$url" "$SMALI_OUT" 2>/dev/null || true)
+            for match_file in $matching_files; do
+                python3 "$SCRIPT_DIR/scripts/replace-strings.py" "$match_file" "$url" "http://127.0.0.1"
+            done
+        done < <(read_config "$REPLACE_URLS")
+    fi
 
-        ORIG_SIZE=$(wc -c < "$DEX_WORK/$dex_name")
-        NEW_SIZE=$(wc -c < "$DEX_WORK/${dex_name%.dex}-patched.dex")
-        echo "    $dex_name: $ORIG_SIZE → $NEW_SIZE bytes"
-    done
-fi
+    # Recompile with smali v3.0.9
+    echo "    smali: recompiling..."
+    java -jar "$SMALI_JAR" a "$SMALI_OUT" -o "$DEX_WORK/${dex_name%.dex}-patched.dex" 2>&1
+
+    ORIG_SIZE=$(wc -c < "$DEX_WORK/$dex_name")
+    NEW_SIZE=$(wc -c < "$DEX_WORK/${dex_name%.dex}-patched.dex")
+    echo "    $dex_name: $ORIG_SIZE → $NEW_SIZE bytes"
+done
 echo ""
 
 # ─── 4. Assemble output APK ───
@@ -344,7 +385,7 @@ echo "║  Version: $VERSION (privacy patched)"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 echo "What was neutralized:"
-echo "  Manifest:"
+echo "  Manifest (56 removals):"
 echo "    - Tracking permissions (AD_ID, ADSERVICES, SMS, QUERY_ALL_PACKAGES)"
 echo "    - Device ID vendor queries (MSA, Samsung, Coolpad, OPPO)"
 echo "    - Adjust SDK content provider (auto-initialization)"
@@ -354,12 +395,19 @@ echo "    - Google DataTransport/Firebase (6 components)"
 echo "    - KOOM heap monitoring service"
 echo "    - Citrix MITM proxy (4 components)"
 echo "    - @null meta-data entries (prevents apktool compile issues)"
-echo "  DEX:"
-echo "    - OneAuth.registerTokenSharing() (prevents cross-app token leaking)"
-echo "  Preserved (to avoid crashes):"
-echo "    - Native libs (.so) kept but initialization stubbed at Java level"
-echo "    - Intune MAM components (deeply integrated into Application class)"
-echo "    - TokenSharingService manifest entry (programmatic enable/disable)"
+echo "  DEX targeted stubs:"
+echo "    - OneAuth.registerTokenSharing() (cross-app token leaking)"
+echo "    - Intune MAM handlers (onHandleIntent, onStartCommand, onReceive)"
+echo "    - OneDS SystemNativeLibraryLoader.loadLibrary() (native lib loading)"
+echo "    - OneDS TelemetryLoggerProvider.initializeOneDs() (telemetry init)"
+echo "    - MS LogManager initialize/flush/upload (JNI telemetry bridge)"
+echo "    - Adjust.trackEvent() (attribution tracking)"
+echo "  DEX native lib neutralization:"
+echo "    - Citrix ctxlog/log4cpp loadLibrary calls → nop"
+echo "    - KOOM heap dump loadLibrary calls → nop"
+echo "    - Tencent Matrix trace-canary loadLibrary calls → nop"
+echo "  DEX telemetry URL replacement:"
+echo "    - mobile.events.data.microsoft.com/OneCollector → 127.0.0.1"
 echo ""
 
 # Build install command
