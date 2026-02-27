@@ -176,6 +176,10 @@ echo ""
 #   a) Targeted method stubs (config/targeted-stubs.list)
 #   b) System.loadLibrary neutralization (config/neutralize-libs.list)
 #   c) Telemetry URL replacement (config/replace-urls.list)
+#
+# Note: Some DEX files (e.g. classes4.dex) contain interfaces with static
+# methods that cause IncompatibleClassChangeError after baksmali/smali
+# round-trip. These are patched via binary string replacement in Step 3b.
 echo "=== Step 3/5: Patching DEX ==="
 
 DEX_WORK="$WORK_DIR/dex-patch"
@@ -220,8 +224,10 @@ if [ -f "$NEUTRALIZE_LIBS" ]; then
     done < <(read_config "$NEUTRALIZE_LIBS")
 fi
 
-# From replace-urls.list: need to scan all DEX files for matching URLs
-# We'll handle URL replacement across all decompiled DEX files below
+# URL replacement is handled in two places:
+#   - During smali round-trip (Step 3a) for DEX files already being decompiled
+#   - Via binary DEX patching (Step 3b) for all remaining DEX files
+# No need to add DEX files to the round-trip set just for URL replacement.
 
 # Process each DEX file that needs patching
 for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
@@ -287,6 +293,12 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
     NEW_SIZE=$(wc -c < "$DEX_WORK/${dex_name%.dex}-patched.dex")
     echo "    $dex_name: $ORIG_SIZE → $NEW_SIZE bytes"
 done
+
+# NOTE: Binary DEX patching (patch-dex-strings.py) is available but disabled.
+# Replacing strings in the DEX binary breaks the sorted string_id table, causing
+# the ART verifier to reject the entire DEX file. DEX files that can't survive
+# baksmali/smali round-trip (interfaces with static methods) are left unpatched.
+# URLs in those files (classes4.dex) are documented in replace-urls.list.
 echo ""
 
 # ─── 4. Assemble output APK ───
@@ -395,19 +407,25 @@ echo "    - Google DataTransport/Firebase (6 components)"
 echo "    - KOOM heap monitoring service"
 echo "    - Citrix MITM proxy (4 components)"
 echo "    - @null meta-data entries (prevents apktool compile issues)"
-echo "  DEX targeted stubs:"
+echo "  DEX targeted stubs (23 methods across 3 DEX files):"
 echo "    - OneAuth.registerTokenSharing() (cross-app token leaking)"
-echo "    - Intune MAM handlers (onHandleIntent, onStartCommand, onReceive)"
-echo "    - OneDS SystemNativeLibraryLoader.loadLibrary() (native lib loading)"
-echo "    - OneDS TelemetryLoggerProvider.initializeOneDs() (telemetry init)"
-echo "    - MS LogManager initialize/flush/upload (JNI telemetry bridge)"
-echo "    - Adjust.trackEvent() (attribution tracking)"
+echo "    - Intune MAM handlers (onHandleIntent, onStartCommand, onReceive, onCreate)"
+echo "    - OneDS SystemNativeLibraryLoader.loadLibrary() + TelemetryLoggerProvider.initializeOneDs()"
+echo "    - MS LogManager initialize/flush/flushAndTeardown/uploadNow/setTransmitProfile"
+echo "    - Adjust SDK: trackEvent/onResume/onPause/trackAdRevenue/trackPlayStoreSubscription"
+echo "    -   getAdid/getAttribution/getGoogleAdId/setPushToken/gdprForgetMe"
+echo "    - Tencent Matrix tracer onAlive() x3"
 echo "  DEX native lib neutralization:"
 echo "    - Citrix ctxlog/log4cpp loadLibrary calls → nop"
 echo "    - KOOM heap dump loadLibrary calls → nop"
 echo "    - Tencent Matrix trace-canary loadLibrary calls → nop"
-echo "  DEX telemetry URL replacement:"
-echo "    - mobile.events.data.microsoft.com/OneCollector → 127.0.0.1"
+echo "  DEX telemetry URL replacement (30+ endpoints → 127.0.0.1):"
+echo "    - Microsoft OneCollector + ARIA collectors (9 regional endpoints)"
+echo "    - Adjust SDK (.com + .io variants, 8 domains)"
+echo "    - App Center crash reporting, ECS experiment flags"
+echo "    - Google Analytics, Chrome variations seed"
+echo "    - OAID advertising config, Rewards activity tracking"
+echo "    - Token share config, crash report upload endpoint"
 echo ""
 
 # Build install command

@@ -1,10 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/python3
 """
-replace-strings.py - Replace const-string values in smali files.
+replace-strings.py - Replace string values in smali files.
 
-Scans a smali file for `const-string vN, "old_value"` instructions and
-replaces the string literal with a new value. Used to black-hole telemetry
-endpoint URLs by pointing them to localhost.
+Scans a smali file for string literals containing old_value and replaces
+them with a new value. Handles two smali string contexts:
+  1. const-string instructions: `const-string vN, "old_value"`
+  2. Annotation values: `value = "old_value"` (e.g. Retrofit @Url annotations)
+
+Used to black-hole telemetry endpoint URLs by pointing them to localhost.
 
 Usage: python3 replace-strings.py <smali-file> <old-string> <new-string>
 """
@@ -14,27 +17,35 @@ import re
 
 
 def replace_strings(filepath: str, old_str: str, new_str: str) -> int:
-    """Replace const-string values matching old_str with new_str.
+    """Replace string literals containing old_str with new_str.
 
+    Handles both const-string instructions and annotation value strings.
     Returns the number of replacements made.
     """
     with open(filepath, "r") as f:
         content = f.read()
 
-    # Escape the old string for use in regex (handle special chars in URLs)
     escaped = re.escape(old_str)
+    total_count = 0
 
-    # Match const-string and const-string/jumbo instructions
-    pattern = rf'(const-string(?:/jumbo)?\s+[vp]\d+,\s*"){escaped}(")'
-    replacement = rf"\g<1>{new_str}\g<2>"
+    # Pattern 1: const-string and const-string/jumbo instructions
+    pattern1 = rf'(const-string(?:/jumbo)?\s+[vp]\d+,\s*"){escaped}(")'
+    replacement1 = rf"\g<1>{new_str}\g<2>"
+    content, count1 = re.subn(pattern1, replacement1, content)
+    total_count += count1
 
-    new_content, count = re.subn(pattern, replacement, content)
+    # Pattern 2: annotation value strings (e.g. Retrofit @Url, @BaseUrl)
+    # Matches: value = "https://example.com/path"
+    pattern2 = rf'(value\s*=\s*"){escaped}(")'
+    replacement2 = rf"\g<1>{new_str}\g<2>"
+    content, count2 = re.subn(pattern2, replacement2, content)
+    total_count += count2
 
-    if count > 0:
+    if total_count > 0:
         with open(filepath, "w") as f:
-            f.write(new_content)
+            f.write(content)
 
-    return count
+    return total_count
 
 
 def main() -> None:

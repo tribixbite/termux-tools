@@ -36,8 +36,16 @@ def stub_method(filepath: str, target_method: str) -> int:
     while i < len(lines):
         line = lines[i]
 
-        if line.strip().startswith(".method ") and target_method in line:
+        if line.strip().startswith(".method "):
             method_sig = line.strip()
+
+            # Extract the method name from the signature:
+            # .method public foo(Ljava/lang/String;)V → "foo"
+            name_match = re.search(r"(\S+)\(", method_sig)
+            if not name_match or name_match.group(1) != target_method:
+                output.append(line)
+                i += 1
+                continue
 
             # Don't touch abstract or native methods (no body to replace)
             if "abstract" in method_sig or "native" in method_sig:

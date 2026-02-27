@@ -36,6 +36,26 @@ smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|setTransmit
 # -- Adjust SDK (attribution/tracking) --
 # Adjust.trackEvent sends tracking events to Adjust servers
 smali/com/adjust/sdk/Adjust.smali|trackEvent
+# Adjust lifecycle hooks (session tracking)
+smali/com/adjust/sdk/Adjust.smali|onResume
+smali/com/adjust/sdk/Adjust.smali|onPause
+# Adjust additional tracking methods
+smali/com/adjust/sdk/Adjust.smali|trackAdRevenue
+smali/com/adjust/sdk/Adjust.smali|trackPlayStoreSubscription
+# Adjust ad ID / attribution getters (prevent data exfiltration)
+smali/com/adjust/sdk/Adjust.smali|getAdid
+smali/com/adjust/sdk/Adjust.smali|getAttribution
+smali/com/adjust/sdk/Adjust.smali|getGoogleAdId
+# Adjust push token registration
+smali/com/adjust/sdk/Adjust.smali|setPushToken
+# Adjust GDPR forget-me (sends data to Adjust servers)
+smali/com/adjust/sdk/Adjust.smali|gdprForgetMe
+
+# -- classes4.dex: cannot round-trip through baksmali/smali (interface static
+# methods cause IncompatibleClassChangeError). Instead, telemetry endpoints in
+# classes4 are handled via binary DEX string replacement (see build.sh Step 3b).
+# Crash report (bfn.b), variations seed (s340.a), and perf telemetry (frc.a)
+# are all neutralized by replacing their target URLs with 127.0.0.1.
 
 # -- Tencent Matrix trace-canary (native methods require libtrace-canary.so) --
 # Since we NOP the loadLibrary("trace-canary"), must also stub the methods

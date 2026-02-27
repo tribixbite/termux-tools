@@ -6,3 +6,48 @@
 # -- Microsoft OneCollector telemetry endpoint --
 https://mobile.events.data.microsoft.com/OneCollector/1.0/
 https://mobile.events.data.microsoft.com/OneCollector/1.0
+
+# -- Microsoft ARIA telemetry collectors (regional) --
+https://mobile.pipe.aria.microsoft.com/Collector/3.0/
+https://au.pipe.aria.microsoft.com/Collector/3.0/
+https://eu.pipe.aria.microsoft.com/Collector/3.0/
+https://de.pipe.aria.microsoft.com/Collector/3.0/
+https://jp.pipe.aria.microsoft.com/Collector/3.0/
+https://us.pipe.aria.microsoft.com/Collector/3.0/
+https://pf.pipe.aria.microsoft.com/Collector/3.0
+https://tb.pipe.aria.microsoft.com/Collector/3.0
+https://pipe.int.trafficmanager.net/Collector/3.0/
+
+# -- Adjust SDK tracking endpoints (.com and .io variants) --
+https://app.adjust.com
+https://app.adjust.io
+https://gdpr.adjust.com
+https://gdpr.adjust.io
+https://ssrv.adjust.com
+https://ssrv.adjust.io
+https://subscription.adjust.com
+https://subscription.adjust.io
+
+# -- App Center crash reporting --
+https://in.appcenter.ms/logs?api-version=1.0.0
+
+# -- ECS experiment/feature flag configuration --
+https://config.edge.skype.com/config/v1/
+
+# -- Google Analytics (bare hostname in const-string, used for URL building) --
+www.google-analytics.com
+
+# -- OAID advertising ID config (Azure CDN) --
+https://edge-mobile-static.azureedge.net/android/oaid/config.json
+https://edge-mobile-static.azureedge.net/android/oaid/
+
+# -- Token share configuration --
+https://oneclient.sfx.ms/mobile/ts_configuration.jwt
+
+# -- NOTE: The following URLs exist in classes4.dex which cannot be safely
+# patched (baksmali/smali round-trip causes IncompatibleClassChangeError,
+# and binary string replacement breaks DEX string table sort order).
+# They remain active but have limited impact:
+#   - https://clientservices.googleapis.com/chrome-variations/seed (A/B testing)
+#   - https://permanently-removed.invalid/cr/report (already invalid domain)
+#   - https://prod.rewardsplatform.microsoft.com/dapi/me/activities/ (rewards API)
