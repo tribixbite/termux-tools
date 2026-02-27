@@ -79,30 +79,39 @@ crewind() {
   local dir=$(dirname "$file")
   local orig_id=$(basename "$file" .jsonl)
 
-  # --- Step 2: Find user messages, matches, and previews in one awk pass ---
+  # --- Step 2: Extract human-typed user messages (skip tool_results) ---
 
-  # Single awk pass: find all user messages, flag term matches, extract previews
+  # awk pre-filters for "type":"user" lines with line numbers, then jq parses
+  # JSON properly to keep only real human messages (string content or array
+  # with "text" entries but no tool_result entries).
+  local term_lower="${term,,}"  # bash lowercase for matching
   local awk_output
-  awk_output=$(awk -v term="$term" '
-    BEGIN { IGNORECASE=1 }
-    /"type":"user"/ {
-      # Extract text preview — find "text":"..." fields in content array
-      line = $0
-      gsub(/\\n/, " ", line)
-      text = ""
-      while (match(line, /"text":"([^"]*)"/, m)) {
-        if (text != "") text = text " "
-        text = text m[1]
-        line = substr(line, RSTART + RLENGTH)
-      }
-      if (text == "" && match($0, /"content":"([^"]{1,140})"/, m)) text = m[1]
-      gsub(/  +/, " ", text)
-      if (length(text) > 140) text = substr(text, 1, 140) "..."
-
-      has_term = (tolower($0) ~ tolower(term)) ? 1 : 0
-      printf "%d\t%d\t%s\n", NR, has_term, text
-    }
-  ' "$file")
+  awk_output=$(awk '/"type":"user"/ { printf "%d\t%s\n", NR, $0 }' "$file" \
+    | jq -Rr --arg term "$term_lower" '
+    # Input: raw lines of "LINENUM\tJSON" — split on first tab only
+    (index("\t")) as $tab |
+    (.[:$tab] | tonumber) as $lnum |
+    (.[($tab+1):] | fromjson? // empty) |
+    select(.type == "user") |
+    # Human messages: string content, or array with "text" entries (no tool_result)
+    select(
+      (.message.content | type) == "string" or
+      ((.message.content | type) == "array"
+       and (.message.content | any(.type == "text"))
+       and (.message.content | any(.type == "tool_result") | not))
+    ) |
+    # Extract preview text
+    (if (.message.content | type) == "string" then .message.content
+     else [.message.content[] | select(.type == "text") | .text] | join(" ")
+     end) |
+    # Clean up newlines/tabs/excess whitespace, truncate
+    gsub("\n"; " ") | gsub("\t"; " ") | gsub("  +"; " ") |
+    (if length > 140 then .[0:140] + "..." else . end) as $text |
+    # Check if term appears (case-insensitive)
+    (($text | ascii_downcase) | test($term; "i")) as $has_term |
+    # Output: tab-separated line (jq -r makes \t a real tab)
+    "\($lnum)\t\(if $has_term then 1 else 0 end)\t\($text)"
+  ' 2>/dev/null)
 
   [[ -z "$awk_output" ]] && { echo "No user messages in session"; return 1; }
 
