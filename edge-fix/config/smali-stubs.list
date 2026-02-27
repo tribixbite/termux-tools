@@ -1,0 +1,61 @@
+# Smali classes whose public/protected methods should be stubbed
+# (method bodies replaced with safe return defaults)
+# Format: relative_smali_path (from decompiled root)
+
+# -- Adjust SDK entry points --
+# ContentProvider that bootstraps Adjust on app start
+smali/com/adjust/sdk/SystemLifecycleContentProvider.smali
+# Main static API class
+smali/com/adjust/sdk/Adjust.smali
+# Config builder that sets tracking parameters
+smali/com/adjust/sdk/AdjustConfig.smali
+# General utility (device info gathering)
+smali/com/adjust/sdk/Util.smali
+# OAID device ID extraction
+smali/com/adjust/sdk/oaid/Util.smali
+
+# -- Microsoft OneDS telemetry entry points --
+# Main initialization class for OneDS
+smali_classes3/com/microsoft/foundation/onedswrapper/TelemetryLoggerProvider.smali
+# OneDS library initializer (interface - may have 0 methods to stub)
+smali_classes3/com/microsoft/foundation/onedswrapper/oneds/OneDsLibraryInitializer.smali
+# Native library loader for liboneds.so (interface)
+smali_classes3/com/microsoft/foundation/onedswrapper/libraryloader/NativeLibraryLoader.smali
+# Logger factory (interface)
+smali_classes3/com/microsoft/foundation/onedswrapper/oneds/OneDsLoggerFactory.smali
+
+# -- Microsoft applications telemetry (low-level C++ bridge) --
+# LogManager is the JNI bridge to liboneds.so
+smali_classes2/com/microsoft/applications/telemetry/LogManager.smali
+# LogConfiguration sets telemetry upload endpoints
+smali_classes2/com/microsoft/applications/telemetry/LogConfiguration.smali
+
+# -- Microsoft auth telemetry --
+smali_classes2/com/microsoft/authentication/TelemetryConfiguration.smali
+
+# -- Google DataTransport entry points --
+smali/com/google/android/datatransport/cct/CctBackendFactory.smali
+smali/com/google/android/datatransport/runtime/backends/TransportBackendDiscovery.smali
+
+# -- Firebase installation/messaging --
+smali_classes2/com/google/firebase/components/ComponentDiscoveryService.smali
+smali_classes2/com/google/firebase/messaging/FirebaseMessagingService.smali
+
+# -- Huawei HMS initialization providers --
+smali_classes2/com/huawei/agconnect/core/provider/AGConnectInitializeProvider.smali
+smali_classes2/com/huawei/hms/aaid/InitProvider.smali
+smali_classes2/com/huawei/hms/support/api/push/PushProvider.smali
+
+# -- Xiaomi Push entry points --
+smali_classes3/com/xiaomi/push/service/XMPushService.smali
+smali_classes3/com/xiaomi/mipush/sdk/PushMessageHandler.smali
+
+# -- KOOM heap analysis --
+smali_classes2/com/kwai/koom/base/Monitor.smali
+
+# -- Citrix MITM --
+smali/com/citrix/mvpn/service/MITMService.smali
+
+# -- Microsoft Token Sharing (neutralize without removing from manifest) --
+smali_classes3/com/microsoft/tokenshare/TokenSharingManager.smali
+smali_classes3/com/microsoft/tokenshare/TokenSharingService.smali

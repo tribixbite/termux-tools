@@ -1,0 +1,14 @@
+# Permissions to strip from AndroidManifest.xml
+# Lines starting with # are comments
+# Format: exact permission name
+
+# -- Advertising & Attribution --
+com.google.android.gms.permission.AD_ID
+android.permission.ACCESS_ADSERVICES_ATTRIBUTION
+com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE
+
+# -- App enumeration (fingerprinting) --
+android.permission.QUERY_ALL_PACKAGES
+
+# -- SMS interception (not needed for browser) --
+android.permission.RECEIVE_SMS

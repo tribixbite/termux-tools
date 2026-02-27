@@ -1,0 +1,47 @@
+# Meta-data entries to remove from AndroidManifest.xml
+# Format: exact android:name value
+
+# -- Huawei HMS service declarations --
+com.huawei.hms.client.service.name:ads-identifier
+com.huawei.hms.client.service.name:base
+com.huawei.hms.min_api_level:base:hmscore
+com.huawei.hms.client.service.name:opendevice
+com.huawei.hms.min_api_level:opendevice:push
+com.huawei.hms.client.service.name:push
+com.huawei.hms.min_api_level:push:push
+hwc-theme
+availableLoaded
+
+# -- Xiaomi Push SDK version --
+MIPUSH_SDK_VERSION_CODE
+MIPUSH_SDK_VERSION_NAME
+supportStyle
+
+# -- Google DataTransport backend registration --
+backend:com.google.android.datatransport.cct.CctBackendFactory
+
+# -- Firebase component registrations --
+com.google.firebase.components:com.google.firebase.FirebaseCommonKtxRegistrar
+com.google.firebase.components:com.google.firebase.datatransport.TransportRegistrar
+com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsKtxRegistrar
+com.google.firebase.components:com.google.firebase.installations.FirebaseInstallationsRegistrar
+com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingKtxRegistrar
+com.google.firebase.components:com.google.firebase.messaging.FirebaseMessagingRegistrar
+com.google.android.gms.cloudmessaging.FINISHED_AFTER_HANDLED
+
+# -- Google Play billing version (telemetry vector) --
+com.google.android.play.billingclient.version
+
+# -- Intune MAM --
+com.microsoft.intune.mam.MAMSDKVersion
+
+# -- Token sharing --
+token_share_sdk_version
+token_share_build_version
+token_share_parcelable_version
+
+# -- Play Store stamps (install attribution) --
+com.android.stamp.source
+com.android.stamp.type
+com.android.vending.derived.apk.id
+com.android.vending.splits.required

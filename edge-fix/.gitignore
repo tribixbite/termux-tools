@@ -1,0 +1,9 @@
+# Build artifacts
+work/
+output/
+*.keystore
+*.idsig
+
+# Editor
+.idea/
+*.swp

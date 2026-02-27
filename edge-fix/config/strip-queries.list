@@ -1,0 +1,13 @@
+# Package queries to remove from AndroidManifest.xml <queries> block
+# These enable device fingerprinting via vendor-specific device ID services
+
+# -- Chinese device ID alliance (MSA/OAID) --
+com.mdid.msa
+
+# -- Vendor device ID services --
+com.samsung.android.deviceidservice
+com.coolpad.deviceidsupport
+com.heytap.openid
+
+# -- AR (not privacy critical, but optional) --
+# com.google.ar.core

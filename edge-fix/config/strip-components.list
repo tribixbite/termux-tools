@@ -1,0 +1,67 @@
+# Components to remove from AndroidManifest.xml
+# Format: type|fully_qualified_class_name
+# Types: service, receiver, provider, activity
+
+# -- Adjust SDK --
+provider|com.adjust.sdk.SystemLifecycleContentProvider
+
+# -- Huawei HMS / AGConnect --
+service|com.huawei.agconnect.core.ServiceDiscovery
+service|com.huawei.hms.support.api.push.service.HmsMsgService
+receiver|com.huawei.hms.support.api.push.PushMsgReceiver
+receiver|com.huawei.hms.support.api.push.PushReceiver
+activity|com.huawei.hms.support.api.push.TransActivity
+provider|com.huawei.agconnect.core.provider.AGConnectInitializeProvider
+provider|com.huawei.hms.aaid.InitProvider
+provider|com.huawei.hms.support.api.push.PushProvider
+
+# -- Xiaomi Push --
+service|com.xiaomi.push.service.XMJobService
+service|com.xiaomi.push.service.XMPushService
+service|com.xiaomi.mipush.sdk.PushMessageHandler
+service|com.xiaomi.mipush.sdk.MessageHandleService
+receiver|com.xiaomi.push.service.receivers.PingReceiver
+# Edge's own Xiaomi wrapper (survives com.xiaomi.* signature matching)
+receiver|org.chromium.browser.edge_xiaomi_push.EdgeXiaoMiPushMessageReceiver
+
+# -- Google DataTransport (Firebase telemetry exfiltration) --
+service|com.google.android.datatransport.runtime.backends.TransportBackendDiscovery
+service|com.google.android.datatransport.runtime.scheduling.jobscheduling.JobInfoSchedulerService
+receiver|com.google.android.datatransport.runtime.scheduling.jobscheduling.AlarmManagerSchedulerBroadcastReceiver
+
+# -- Firebase (installation tracking, messaging) --
+service|com.google.firebase.components.ComponentDiscoveryService
+service|com.google.firebase.messaging.FirebaseMessagingService
+receiver|com.google.firebase.iid.FirebaseInstanceIdReceiver
+
+# -- Microsoft Intune MAM (enterprise telemetry) --
+# NOTE: Do NOT remove from manifest - MAM is deeply integrated into Edge's
+# Application class (MAMApplication). Removing components causes
+# ExceptionInInitializerError during onCreatePrimaryProcess.
+# Instead, stub smali to neutralize telemetry (see smali-stubs.list).
+# service|com.microsoft.intune.mam.client.notification.MAMNotificationReceiverService
+# service|com.microsoft.intune.mam.client.service.MAMBackgroundService
+# service|com.microsoft.intune.mam.client.service.MAMBackgroundJobService
+# receiver|com.microsoft.intune.mam.client.service.MAMBackgroundReceiver
+
+# -- Microsoft Token Sharing (cross-app auth token leaking) --
+# NOTE: Do NOT remove from manifest - TokenSharingManager programmatically
+# calls setComponentEnabledSetting() on it and crashes if missing.
+# Instead, stub the smali (see smali-stubs.list).
+# service|com.microsoft.tokenshare.TokenSharingService
+
+# -- Citrix MITM proxy --
+service|com.citrix.mvpn.service.MITMService
+provider|com.citrix.mvpn.contentprovider.TunnelStateContentProvider
+provider|com.citrix.sdk.logging.helper.DiagContentProvider
+provider|com.citrix.sdk.securestorage.api.SecureStorageProvider
+
+# -- KOOM heap analysis --
+service|com.kwai.koom.javaoom.monitor.analysis.HeapAnalysisService
+
+# -- Google Billing (not tracking per se, but enables billing tracking) --
+# activity|com.android.billingclient.api.ProxyBillingActivity
+# activity|com.android.billingclient.api.ProxyBillingActivityV2
+
+# -- Google Sign-In revocation (tracks auth state) --
+service|com.google.android.gms.auth.api.signin.RevocationBoundService
