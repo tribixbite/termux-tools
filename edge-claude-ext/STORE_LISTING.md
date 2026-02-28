@@ -87,6 +87,18 @@ The extension requires the companion bridge server running on localhost:18963.
 Without it, the popup will show "Disconnected" status — this is expected behavior.
 The extension does not crash or degrade; it simply retries the connection periodically.
 
+### To fully test with the bridge (requires Node.js 18+)
+1. Install Node.js (https://nodejs.org) or use an existing installation
+2. Run the bridge server: `npx claude-chrome-android@latest`
+   - This starts a WebSocket server on localhost:18963
+   - First run will download the package (~214KB) automatically
+3. Install this extension in Edge
+4. Open the extension popup — status should change from "Disconnected" to "Connected"
+5. The Dashboard tab should show live stats (0 requests, uptime counting)
+6. Click the "Tests" tab → "Run All" to execute the built-in test suite
+   - Tests verify: WebSocket connection, bridge health, tab queries, navigation,
+     JavaScript execution, page reading, screenshots, and tool roundtrips
+
 ### To verify basic functionality without the bridge
 1. Install the extension
 2. Open the popup — it should render the dashboard UI with "Disconnected" status
