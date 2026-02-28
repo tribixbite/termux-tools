@@ -28,17 +28,17 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// src/import-meta-shim.js
+// bridge/src/import-meta-shim.js
 var import_meta_url;
 var init_import_meta_shim = __esm({
-  "src/import-meta-shim.js"() {
+  "bridge/src/import-meta-shim.js"() {
     import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "";
   }
 });
 
-// ../../../node_modules/ws/lib/constants.js
+// ../../node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "../../../node_modules/ws/lib/constants.js"(exports2, module2) {
+  "../../node_modules/ws/lib/constants.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -46,6 +46,7 @@ var require_constants = __commonJS({
     if (hasBlob) BINARY_TYPES.push("blob");
     module2.exports = {
       BINARY_TYPES,
+      CLOSE_TIMEOUT: 3e4,
       EMPTY_BUFFER: Buffer.alloc(0),
       GUID: "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
       hasBlob,
@@ -59,9 +60,9 @@ var require_constants = __commonJS({
   }
 });
 
-// ../../../node_modules/node-gyp-build/node-gyp-build.js
+// ../../node_modules/node-gyp-build/node-gyp-build.js
 var require_node_gyp_build = __commonJS({
-  "../../../node_modules/node-gyp-build/node-gyp-build.js"(exports2, module2) {
+  "../../node_modules/node-gyp-build/node-gyp-build.js"(exports2, module2) {
     init_import_meta_shim();
     var fs = require("fs");
     var path = require("path");
@@ -229,9 +230,9 @@ var require_node_gyp_build = __commonJS({
   }
 });
 
-// ../../../node_modules/node-gyp-build/index.js
+// ../../node_modules/node-gyp-build/index.js
 var require_node_gyp_build2 = __commonJS({
-  "../../../node_modules/node-gyp-build/index.js"(exports2, module2) {
+  "../../node_modules/node-gyp-build/index.js"(exports2, module2) {
     init_import_meta_shim();
     var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
     if (typeof runtimeRequire.addon === "function") {
@@ -242,9 +243,9 @@ var require_node_gyp_build2 = __commonJS({
   }
 });
 
-// ../../../node_modules/bufferutil/fallback.js
+// ../../node_modules/bufferutil/fallback.js
 var require_fallback = __commonJS({
-  "../../../node_modules/bufferutil/fallback.js"(exports2, module2) {
+  "../../node_modules/bufferutil/fallback.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var mask = (source, mask2, output, offset, length) => {
@@ -262,9 +263,9 @@ var require_fallback = __commonJS({
   }
 });
 
-// ../../../node_modules/bufferutil/index.js
+// ../../node_modules/bufferutil/index.js
 var require_bufferutil = __commonJS({
-  "../../../node_modules/bufferutil/index.js"(exports2, module2) {
+  "../../node_modules/bufferutil/index.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     try {
@@ -275,9 +276,9 @@ var require_bufferutil = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/buffer-util.js
+// ../../node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "../../../node_modules/ws/lib/buffer-util.js"(exports2, module2) {
+  "../../node_modules/ws/lib/buffer-util.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { EMPTY_BUFFER } = require_constants();
@@ -351,9 +352,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/limiter.js
+// ../../node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "../../../node_modules/ws/lib/limiter.js"(exports2, module2) {
+  "../../node_modules/ws/lib/limiter.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var kDone = /* @__PURE__ */ Symbol("kDone");
@@ -402,9 +403,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/permessage-deflate.js
+// ../../node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "../../../node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
+  "../../node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var zlib = require("zlib");
@@ -786,9 +787,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// ../../../node_modules/utf-8-validate/fallback.js
+// ../../node_modules/utf-8-validate/fallback.js
 var require_fallback2 = __commonJS({
-  "../../../node_modules/utf-8-validate/fallback.js"(exports2, module2) {
+  "../../node_modules/utf-8-validate/fallback.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     function isValidUTF8(buf) {
@@ -824,9 +825,9 @@ var require_fallback2 = __commonJS({
   }
 });
 
-// ../../../node_modules/utf-8-validate/index.js
+// ../../node_modules/utf-8-validate/index.js
 var require_utf_8_validate = __commonJS({
-  "../../../node_modules/utf-8-validate/index.js"(exports2, module2) {
+  "../../node_modules/utf-8-validate/index.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     try {
@@ -837,9 +838,9 @@ var require_utf_8_validate = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/validation.js
+// ../../node_modules/ws/lib/validation.js
 var require_validation = __commonJS({
-  "../../../node_modules/ws/lib/validation.js"(exports2, module2) {
+  "../../node_modules/ws/lib/validation.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { isUtf8 } = require("buffer");
@@ -1039,9 +1040,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/receiver.js
+// ../../node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "../../../node_modules/ws/lib/receiver.js"(exports2, module2) {
+  "../../node_modules/ws/lib/receiver.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Writable } = require("stream");
@@ -1632,9 +1633,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/sender.js
+// ../../node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "../../../node_modules/ws/lib/sender.js"(exports2, module2) {
+  "../../node_modules/ws/lib/sender.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Duplex } = require("stream");
@@ -2121,9 +2122,9 @@ var require_sender = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/event-target.js
+// ../../node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "../../../node_modules/ws/lib/event-target.js"(exports2, module2) {
+  "../../node_modules/ws/lib/event-target.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { kForOnEventAttribute, kListener } = require_constants();
@@ -2351,9 +2352,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/extension.js
+// ../../node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "../../../node_modules/ws/lib/extension.js"(exports2, module2) {
+  "../../node_modules/ws/lib/extension.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -2505,9 +2506,9 @@ var require_extension = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/websocket.js
+// ../../node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "../../../node_modules/ws/lib/websocket.js"(exports2, module2) {
+  "../../node_modules/ws/lib/websocket.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -2524,6 +2525,7 @@ var require_websocket = __commonJS({
     var { isBlob } = require_validation();
     var {
       BINARY_TYPES,
+      CLOSE_TIMEOUT,
       EMPTY_BUFFER,
       GUID,
       kForOnEventAttribute,
@@ -2537,7 +2539,6 @@ var require_websocket = __commonJS({
     } = require_event_target();
     var { format, parse } = require_extension();
     var { toBuffer } = require_buffer_util();
-    var closeTimeout = 30 * 1e3;
     var kAborted = /* @__PURE__ */ Symbol("kAborted");
     var protocolVersions = [8, 13];
     var readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -2583,6 +2584,7 @@ var require_websocket = __commonJS({
           initAsClient(this, address, protocols, options);
         } else {
           this._autoPong = options.autoPong;
+          this._closeTimeout = options.closeTimeout;
           this._isServer = true;
         }
       }
@@ -2984,6 +2986,7 @@ var require_websocket = __commonJS({
       const opts = {
         allowSynchronousEvents: true,
         autoPong: true,
+        closeTimeout: CLOSE_TIMEOUT,
         protocolVersion: protocolVersions[1],
         maxPayload: 100 * 1024 * 1024,
         skipUTF8Validation: false,
@@ -3001,6 +3004,7 @@ var require_websocket = __commonJS({
         port: void 0
       };
       websocket._autoPong = opts.autoPong;
+      websocket._closeTimeout = opts.closeTimeout;
       if (!protocolVersions.includes(opts.protocolVersion)) {
         throw new RangeError(
           `Unsupported protocol version: ${opts.protocolVersion} (supported versions: ${protocolVersions.join(", ")})`
@@ -3343,7 +3347,7 @@ var require_websocket = __commonJS({
     function setCloseTimer(websocket) {
       websocket._closeTimer = setTimeout(
         websocket._socket.destroy.bind(websocket._socket),
-        closeTimeout
+        websocket._closeTimeout
       );
     }
     function socketOnClose() {
@@ -3352,8 +3356,8 @@ var require_websocket = __commonJS({
       this.removeListener("data", socketOnData);
       this.removeListener("end", socketOnEnd);
       websocket._readyState = WebSocket3.CLOSING;
-      let chunk;
-      if (!this._readableState.endEmitted && !websocket._closeFrameReceived && !websocket._receiver._writableState.errorEmitted && (chunk = websocket._socket.read()) !== null) {
+      if (!this._readableState.endEmitted && !websocket._closeFrameReceived && !websocket._receiver._writableState.errorEmitted && this._readableState.length !== 0) {
+        const chunk = this.read(this._readableState.length);
         websocket._receiver.write(chunk);
       }
       websocket._receiver.end();
@@ -3389,9 +3393,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/stream.js
+// ../../node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "../../../node_modules/ws/lib/stream.js"(exports2, module2) {
+  "../../node_modules/ws/lib/stream.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var WebSocket3 = require_websocket();
@@ -3488,9 +3492,9 @@ var require_stream = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/subprotocol.js
+// ../../node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "../../../node_modules/ws/lib/subprotocol.js"(exports2, module2) {
+  "../../node_modules/ws/lib/subprotocol.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -3534,9 +3538,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/lib/websocket-server.js
+// ../../node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "../../../node_modules/ws/lib/websocket-server.js"(exports2, module2) {
+  "../../node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3547,7 +3551,7 @@ var require_websocket_server = __commonJS({
     var PerMessageDeflate = require_permessage_deflate();
     var subprotocol = require_subprotocol();
     var WebSocket3 = require_websocket();
-    var { GUID, kWebSocket } = require_constants();
+    var { CLOSE_TIMEOUT, GUID, kWebSocket } = require_constants();
     var keyRegex = /^[+/0-9A-Za-z]{22}==$/;
     var RUNNING = 0;
     var CLOSING = 1;
@@ -3566,6 +3570,9 @@ var require_websocket_server = __commonJS({
        *     pending connections
        * @param {Boolean} [options.clientTracking=true] Specifies whether or not to
        *     track clients
+       * @param {Number} [options.closeTimeout=30000] Duration in milliseconds to
+       *     wait for the closing handshake to finish after `websocket.close()` is
+       *     called
        * @param {Function} [options.handleProtocols] A hook to handle protocols
        * @param {String} [options.host] The hostname where to bind the server
        * @param {Number} [options.maxPayload=104857600] The maximum allowed message
@@ -3594,6 +3601,7 @@ var require_websocket_server = __commonJS({
           perMessageDeflate: false,
           handleProtocols: null,
           clientTracking: true,
+          closeTimeout: CLOSE_TIMEOUT,
           verifyClient: null,
           noServer: false,
           backlog: null,
@@ -3924,10 +3932,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// ../../../node_modules/ws/wrapper.mjs
+// ../../node_modules/ws/wrapper.mjs
 var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "../../../node_modules/ws/wrapper.mjs"() {
+  "../../node_modules/ws/wrapper.mjs"() {
     init_import_meta_shim();
     import_stream = __toESM(require_stream(), 1);
     import_receiver = __toESM(require_receiver(), 1);
@@ -3937,7 +3945,7 @@ var init_wrapper = __esm({
   }
 });
 
-// ../compat.ts
+// compat.ts
 async function fileExists(path) {
   if (IS_BUN) {
     return Bun.file(path).exists();
@@ -4192,7 +4200,7 @@ function createNodeServer(config) {
 }
 var import_promises, import_node_fs, import_node_stream, cp, http, IS_BUN;
 var init_compat = __esm({
-  "../compat.ts"() {
+  "compat.ts"() {
     init_import_meta_shim();
     import_promises = require("node:fs/promises");
     import_node_fs = require("node:fs");
@@ -4204,11 +4212,14 @@ var init_compat = __esm({
   }
 });
 
-// ../claude-chrome-bridge.ts
+// claude-chrome-bridge.ts
 var claude_chrome_bridge_exports = {};
+function adb(...args2) {
+  return ADB_SERIAL ? [ADB_PATH, "-s", ADB_SERIAL, ...args2] : [ADB_PATH, ...args2];
+}
 function adbNotify(tag, title, text) {
   try {
-    runDetached([ADB_PATH, "shell", "cmd", "notification", "post", "-t", title, tag, text]);
+    runDetached(adb("shell", "cmd", "notification", "post", "-t", title, tag, text));
   } catch {
   }
 }
@@ -4549,6 +4560,16 @@ function encodeGIF(frames, delayMs) {
   }
   return result;
 }
+function drainToolQueue() {
+  if (pendingToolQueue.length === 0) return;
+  const next = pendingToolQueue[0];
+  for (const client of wsClients) {
+    try {
+      client.send(next.requestJson);
+    } catch {
+    }
+  }
+}
 function spawnNativeHost() {
   if (nativeHost) {
     log("warn", "Native host already running, killing first");
@@ -4842,9 +4863,9 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, ADB_SERIAL, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, pendingToolQueue, HTTP_TOOL_TIMEOUT_MS, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
-  "../claude-chrome-bridge.ts"() {
+  "claude-chrome-bridge.ts"() {
     init_import_meta_shim();
     import_path = require("path");
     import_node_zlib = require("node:zlib");
@@ -4869,6 +4890,21 @@ var init_claude_chrome_bridge = __esm({
     TERMUX_PREFIX = "/data/data/com.termux/files/usr";
     TERMUX_BIN = `${TERMUX_PREFIX}/bin`;
     ADB_PATH = `${TERMUX_BIN}/adb`;
+    ADB_SERIAL = (() => {
+      try {
+        const result = runSync([ADB_PATH, "devices"]);
+        const lines = result.stdout.toString().trim().split("\n").filter((l) => l.endsWith("	device"));
+        if (lines.length <= 1) return "";
+        for (const line of lines) {
+          const serial = line.split("	")[0];
+          const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
+          if (check.exitCode === 0 && check.stdout.toString().trim()) return serial;
+        }
+        return lines[0]?.split("	")[0] ?? "";
+      } catch {
+        return "";
+      }
+    })();
     REPO_CLI = (0, import_path.resolve)(SCRIPT_DIR, "cli.js");
     BUN_GLOBAL_CLI = (0, import_path.resolve)(
       process.env.HOME ?? "~",
@@ -4950,10 +4986,10 @@ var init_claude_chrome_bridge = __esm({
         if (this.state === "connecting") return false;
         this.state = "connecting";
         try {
-          const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
+          const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
           const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
           if (!pidStr || pidResult.exitCode !== 0) {
-            log("debug", "CDP: Edge not running or ADB unavailable");
+            log("debug", `CDP: Edge not running or ADB unavailable (exit=${pidResult.exitCode}, stderr=${pidResult.stderr?.toString().trim()}, serial=${ADB_SERIAL || "default"})`);
             this.state = "disconnected";
             return false;
           }
@@ -4972,7 +5008,7 @@ var init_claude_chrome_bridge = __esm({
           let versionData = null;
           for (const socketName of socketCandidates) {
             const fwdResult = runSync(
-              [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`]
+              adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
             );
             if (fwdResult.exitCode !== 0) continue;
             try {
@@ -4981,7 +5017,7 @@ var init_claude_chrome_bridge = __esm({
               log("info", `CDP: Edge version \u2014 ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
               break;
             } catch {
-              runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
+              runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
             }
           }
           if (!versionData) {
@@ -5236,9 +5272,9 @@ var init_claude_chrome_bridge = __esm({
         }
         try {
           const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
-          const cap = runSync([ADB_PATH, "shell", "screencap", "-p", "/sdcard/cdp-screencap.png"]);
+          const cap = runSync(adb("shell", "screencap", "-p", "/sdcard/cdp-screencap.png"));
           if (cap.exitCode === 0) {
-            const pull = runSync([ADB_PATH, "pull", "/sdcard/cdp-screencap.png", tmpPath]);
+            const pull = runSync(adb("pull", "/sdcard/cdp-screencap.png", tmpPath));
             if (pull.exitCode === 0 && await fileExists(tmpPath)) {
               const { readFile: rf } = await import("node:fs/promises");
               const buf = await rf(tmpPath);
@@ -5469,7 +5505,7 @@ var init_claude_chrome_bridge = __esm({
       /** Re-check Edge PID — reconnect if changed (Edge restarted) */
       async recheckPid() {
         try {
-          const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
+          const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
           const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
           const newPid = parseInt(pidStr, 10);
           if (isNaN(newPid)) {
@@ -5510,7 +5546,7 @@ var init_claude_chrome_bridge = __esm({
           p.reject(new Error("CDP cleanup"));
         });
         this.pending.clear();
-        runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
+        runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
         log("info", "CDP: cleaned up");
       }
     };
@@ -5521,6 +5557,8 @@ var init_claude_chrome_bridge = __esm({
       for (let j = 0; j < 8; j++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
       crc32Table[i] = c;
     }
+    pendingToolQueue = [];
+    HTTP_TOOL_TIMEOUT_MS = 3e4;
     nativeHost = null;
     stdoutDecoder = new NativeMessageDecoder();
     wsClients = /* @__PURE__ */ new Set();
@@ -5672,6 +5710,44 @@ var init_claude_chrome_bridge = __esm({
             headers: { "Content-Type": "text/html; charset=utf-8" }
           });
         }
+        if (url.pathname === "/tool" && req.method === "POST") {
+          if (wsClients.size === 0) {
+            return new Response(
+              JSON.stringify({ error: "No extension connected" }),
+              { status: 503, headers: { "Content-Type": "application/json" } }
+            );
+          }
+          try {
+            const body = await req.json();
+            const toolRequest = JSON.stringify({
+              type: "tool_request",
+              method: body.method,
+              params: body.params ?? {}
+            });
+            const queuePos = pendingToolQueue.length;
+            log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
+            const result = await new Promise((resolve3) => {
+              const timeout = setTimeout(() => {
+                const idx = pendingToolQueue.findIndex((e) => e.resolve === resolve3);
+                const wasHead = idx === 0;
+                if (idx !== -1) pendingToolQueue.splice(idx, 1);
+                resolve3({ type: "tool_response", error: "Tool call timed out (30s)" });
+                if (wasHead) drainToolQueue();
+              }, HTTP_TOOL_TIMEOUT_MS);
+              pendingToolQueue.push({ requestJson: toolRequest, resolve: resolve3, timeout });
+              if (pendingToolQueue.length === 1) drainToolQueue();
+            });
+            return new Response(
+              JSON.stringify(result),
+              { headers: { "Content-Type": "application/json" } }
+            );
+          } catch (err) {
+            return new Response(
+              JSON.stringify({ error: err.message }),
+              { status: 500, headers: { "Content-Type": "application/json" } }
+            );
+          }
+        }
         if (url.pathname === "/ws" || url.pathname === "/") {
           if (BRIDGE_TOKEN) {
             const token = url.searchParams.get("token") ?? req.headers.get("x-bridge-token") ?? "";
@@ -5713,6 +5789,15 @@ var init_claude_chrome_bridge = __esm({
                   cdpManager.cacheTabUrl(tab.id, tab.url);
                 }
               }
+            }
+            if (parsed.type === "tool_response" && pendingToolQueue.length > 0) {
+              const { resolve: resolve3, timeout } = pendingToolQueue.shift();
+              clearTimeout(timeout);
+              if ("method" in parsed) delete parsed.method;
+              log("debug", `HTTP /tool response (${pendingToolQueue.length} queued): ${json.slice(0, 200)}`);
+              resolve3(parsed);
+              drainToolQueue();
+              return;
             }
             if (parsed.type === "tool_response" && "method" in parsed) {
               delete parsed.method;
@@ -5773,10 +5858,22 @@ var init_claude_chrome_bridge = __esm({
     log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:${WS_PORT}`);
     log("info", `CLI path: ${CLI_PATH}`);
     log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
-    cdpManager.connect().then((ok) => {
-      if (ok) log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
-      else log("info", "CDP: not available (ADB/Edge not running \u2014 will use extension fallback)");
-    });
+    (async () => {
+      const CDP_RETRY_ATTEMPTS = 5;
+      const CDP_RETRY_DELAY_MS = 1e4;
+      for (let attempt = 1; attempt <= CDP_RETRY_ATTEMPTS; attempt++) {
+        const ok = await cdpManager.connect();
+        if (ok) {
+          log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
+          return;
+        }
+        if (attempt < CDP_RETRY_ATTEMPTS) {
+          log("info", `CDP: attempt ${attempt}/${CDP_RETRY_ATTEMPTS} failed \u2014 retrying in ${CDP_RETRY_DELAY_MS / 1e3}s`);
+          await new Promise((r) => setTimeout(r, CDP_RETRY_DELAY_MS));
+        }
+      }
+      log("info", "CDP: not available after retries (ADB/Edge not running \u2014 will use extension fallback)");
+    })();
     log("info", "Waiting for WebSocket connections...");
     adbNotify("cfc-bridge", `CFC Bridge v${BRIDGE_VERSION}`, `Running on :${WS_PORT} (PID ${process.pid})`);
     TEST_PAGE_HTML = `<!DOCTYPE html>
@@ -5891,7 +5988,7 @@ var init_claude_chrome_bridge = __esm({
   }
 });
 
-// src/cli.ts
+// bridge/src/cli.ts
 init_import_meta_shim();
 var import_path2 = require("path");
 var import_fs = require("fs");
@@ -5906,8 +6003,11 @@ var PKG_VERSION = (() => {
 })();
 var WS_PORT2 = parseInt(process.env.BRIDGE_PORT ?? "18963", 10);
 var WS_HOST2 = "127.0.0.1";
-var HEALTH_URL = `http://${WS_HOST2}:${WS_PORT2}/health`;
-var SHUTDOWN_URL = `http://${WS_HOST2}:${WS_PORT2}/shutdown`;
+var BRIDGE_URL = process.env.BRIDGE_URL ?? `http://${WS_HOST2}:${WS_PORT2}`;
+var HEALTH_URL = `${BRIDGE_URL}/health`;
+var SHUTDOWN_URL = `${BRIDGE_URL}/shutdown`;
+var TOOL_URL = `${BRIDGE_URL}/tool`;
+var TOOL_TIMEOUT_MS = 3e4;
 async function fetchWithTimeout(url, opts = {}) {
   const { timeout = 3e3, ...fetchOpts } = opts;
   const controller = new AbortController();
@@ -5936,8 +6036,9 @@ CFC Bridge \u2014 connects Claude Code CLI to Chrome/Edge on Android via WebSock
 
 Usage:
   claude-chrome-android              Start the bridge server
+  claude-chrome-android --mcp        MCP server mode (spawned by Claude Code)
   claude-chrome-android --stop       Stop a running bridge
-  claude-chrome-android --setup      Create ~/bin/termux-url-opener + verify deps
+  claude-chrome-android --setup      Register MCP server in Claude Code + create url-opener
   claude-chrome-android --version    Print version
   claude-chrome-android --help       Show this help
 
@@ -5951,18 +6052,14 @@ async function cmdStop() {
   console.log("Stopping bridge...");
   try {
     const res = await fetchWithTimeout(SHUTDOWN_URL, { method: "POST", timeout: 3e3 });
-    if (res.ok) {
-      console.log("Shutdown request accepted");
-    }
+    if (res.ok) console.log("Shutdown request accepted");
   } catch {
   }
   await new Promise((r) => setTimeout(r, 800));
   if (await isBridgeAlive()) {
     console.log("Bridge didn't stop gracefully, attempting pkill...");
     const { spawnSync: spawnSync2 } = await import("child_process");
-    const result = spawnSync2("pkill", ["-f", "(bun|node).*claude-chrome"], {
-      stdio: "ignore"
-    });
+    spawnSync2("pkill", ["-f", "(bun|node).*claude-chrome"], { stdio: "ignore" });
     await new Promise((r) => setTimeout(r, 500));
     if (await isBridgeAlive()) {
       console.error("Bridge is still running. Kill manually: pkill -f claude-chrome-bridge");
@@ -5984,15 +6081,43 @@ async function cmdSetup() {
   const { spawnSync: spawnSync2 } = await import("child_process");
   const bunCheck = spawnSync2("bun", ["--version"], { stdio: "pipe", encoding: "utf-8" });
   if (bunCheck.status === 0) {
-    console.log(`Bun: ${bunCheck.stdout.trim()} (will prefer bun for performance)`);
-  } else {
-    console.log("Bun: not found (will use Node.js)");
+    console.log(`Bun: ${bunCheck.stdout.trim()}`);
   }
-  const claudeCheck = spawnSync2("which", ["claude"], { stdio: "pipe", encoding: "utf-8" });
-  if (claudeCheck.status === 0) {
-    console.log(`Claude CLI: ${claudeCheck.stdout.trim()}`);
+  const claudeDir = (0, import_path2.resolve)(process.env.HOME ?? "~", ".claude");
+  const settingsPath = (0, import_path2.resolve)(claudeDir, "settings.json");
+  const cliPath = typeof __filename !== "undefined" ? __filename : "";
+  let mcpCommand;
+  let mcpArgs;
+  if (cliPath && (0, import_fs.existsSync)(cliPath)) {
+    mcpCommand = "node";
+    mcpArgs = [cliPath, "--mcp"];
   } else {
-    console.warn("Warning: Claude Code CLI not found. Install with: npm i -g @anthropic-ai/claude-code");
+    mcpCommand = "npx";
+    mcpArgs = ["claude-chrome-android", "--mcp"];
+  }
+  try {
+    if (!(0, import_fs.existsSync)(claudeDir)) {
+      (0, import_fs.mkdirSync)(claudeDir, { recursive: true });
+    }
+    let settings = {};
+    if ((0, import_fs.existsSync)(settingsPath)) {
+      settings = JSON.parse((0, import_fs.readFileSync)(settingsPath, "utf-8"));
+    }
+    const mcpServers = settings.mcpServers ?? {};
+    const existing = mcpServers["cfc-bridge"];
+    const desired = { command: mcpCommand, args: mcpArgs };
+    const changed = !existing || existing.command !== desired.command || JSON.stringify(existing.args) !== JSON.stringify(desired.args);
+    if (changed) {
+      mcpServers["cfc-bridge"] = desired;
+      settings.mcpServers = mcpServers;
+      (0, import_fs.writeFileSync)(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      console.log(`Registered MCP server "cfc-bridge" in ${settingsPath}`);
+      console.log(`  command: ${mcpCommand} ${mcpArgs.join(" ")}`);
+    } else {
+      console.log(`MCP server already registered in ${settingsPath}`);
+    }
+  } catch (err) {
+    console.error(`Failed to register MCP server: ${err.message}`);
   }
   const binDir = (0, import_path2.resolve)(process.env.HOME ?? "/data/data/com.termux/files/home", "bin");
   if (!(0, import_fs.existsSync)(binDir)) {
@@ -6004,90 +6129,51 @@ Created ${binDir}/`);
   const urlOpenerExists = (0, import_fs.existsSync)(urlOpenerPath);
   const urlOpenerScript = `#!/data/data/com.termux/files/usr/bin/bash
 # termux-url-opener \u2014 handles URLs shared to Termux via Android share menu
-# Called by TermuxFileReceiverActivity with the shared URL as $1
-#
 # Generated by: claude-chrome-android --setup v${PKG_VERSION}
-# NOTE: TermuxFileReceiverActivity runs this in a terminal session managed by
-# TermuxService. When the script exits, the session closes and SIGHUP is sent
-# to the process group. We use setsid to escape the process group.
 
 set -euo pipefail
-
 url="\${1:-}"
-
-# Debug log
 echo "[$(date +%H:%M:%S)] termux-url-opener: $url" >> "$PREFIX/tmp/url-opener.log"
 
 case "$url" in
   *cfcbridge*/start*)
-    # CFC bridge deep-link from the Chrome/Edge extension
     BRIDGE_LOG="$PREFIX/tmp/bridge.log"
-
     if pgrep -f "(bun|node).*claude-chrome" > /dev/null 2>&1; then
       echo "[$(date +%H:%M:%S)] bridge already running" >> "$PREFIX/tmp/url-opener.log"
       exit 0
     fi
-
-    # Prefer bun (faster startup), fallback to node
     RUNTIME=""
-    if [[ -x "$HOME/.bun/bin/bun" ]]; then
-      RUNTIME="$HOME/.bun/bin/bun"
-    elif command -v bun > /dev/null 2>&1; then
-      RUNTIME="$(command -v bun)"
-    elif command -v node > /dev/null 2>&1; then
-      RUNTIME="$(command -v node)"
+    if [[ -x "$HOME/.bun/bin/bun" ]]; then RUNTIME="$HOME/.bun/bin/bun"
+    elif command -v bun > /dev/null 2>&1; then RUNTIME="$(command -v bun)"
+    elif command -v node > /dev/null 2>&1; then RUNTIME="$(command -v node)"
     fi
-
-    if [[ -z "$RUNTIME" ]]; then
-      echo "[$(date +%H:%M:%S)] ERROR: neither bun nor node found" >> "$PREFIX/tmp/url-opener.log"
-      exit 1
-    fi
-
-    # Find the bridge script \u2014 check npx cache, repo checkout, or run via npx
+    if [[ -z "$RUNTIME" ]]; then exit 1; fi
     BRIDGE_SCRIPT=""
-    # 1. Local repo checkout
     if [[ -f "$HOME/git/termux-tools/claude-chrome-bridge.ts" ]]; then
       BRIDGE_SCRIPT="$HOME/git/termux-tools/claude-chrome-bridge.ts"
     fi
-    # 2. npm global install (bunx or npx)
     NPM_GLOBAL="$HOME/.npm/lib/node_modules/claude-chrome-android/dist/cli.js"
     BUN_GLOBAL="$HOME/.bun/install/global/node_modules/claude-chrome-android/dist/cli.js"
-    if [[ -z "$BRIDGE_SCRIPT" && -f "$NPM_GLOBAL" ]]; then
-      BRIDGE_SCRIPT="$NPM_GLOBAL"
-    elif [[ -z "$BRIDGE_SCRIPT" && -f "$BUN_GLOBAL" ]]; then
-      BRIDGE_SCRIPT="$BUN_GLOBAL"
+    if [[ -z "$BRIDGE_SCRIPT" && -f "$NPM_GLOBAL" ]]; then BRIDGE_SCRIPT="$NPM_GLOBAL"
+    elif [[ -z "$BRIDGE_SCRIPT" && -f "$BUN_GLOBAL" ]]; then BRIDGE_SCRIPT="$BUN_GLOBAL"
     fi
-
     if [[ -n "$BRIDGE_SCRIPT" ]]; then
-      # setsid creates a new session leader \u2014 the child process survives when
-      # TermuxService kills this session's process group on script exit
       setsid nohup "$RUNTIME" "$BRIDGE_SCRIPT" > "$BRIDGE_LOG" 2>&1 &
-      echo "[$(date +%H:%M:%S)] bridge started PID=$!" >> "$PREFIX/tmp/url-opener.log"
     else
-      # Fallback: use npx to download and run on the fly
       setsid nohup npx claude-chrome-android > "$BRIDGE_LOG" 2>&1 &
-      echo "[$(date +%H:%M:%S)] bridge started via npx PID=$!" >> "$PREFIX/tmp/url-opener.log"
     fi
-    exit 0
-    ;;
-
+    exit 0 ;;
   *)
-    # Default: open URL in browser
-    if command -v termux-open-url > /dev/null 2>&1; then
-      termux-open-url "$url"
-    elif command -v xdg-open > /dev/null 2>&1; then
-      xdg-open "$url"
-    fi
-    ;;
+    if command -v termux-open-url > /dev/null 2>&1; then termux-open-url "$url"
+    elif command -v xdg-open > /dev/null 2>&1; then xdg-open "$url"
+    fi ;;
 esac
 `;
   if (urlOpenerExists) {
     const existing = (0, import_fs.readFileSync)(urlOpenerPath, "utf-8");
     if (existing.includes("cfcbridge")) {
-      const backupPath = `${urlOpenerPath}.bak`;
-      (0, import_fs.writeFileSync)(backupPath, existing);
-      console.log(`
-Backed up existing url-opener to ${backupPath}`);
+      (0, import_fs.writeFileSync)(`${urlOpenerPath}.bak`, existing);
+      console.log(`Backed up existing url-opener to ${urlOpenerPath}.bak`);
     }
   }
   (0, import_fs.writeFileSync)(urlOpenerPath, urlOpenerScript);
@@ -6097,12 +6183,9 @@ Backed up existing url-opener to ${backupPath}`);
 Setup complete!
 
 Next steps:
-  1. Install the CRX extension in Chrome/Edge on your phone
-  2. Start the bridge:  npx claude-chrome-android
-  3. Or use the extension's "Launch Bridge" button (shares to Termux)
-
-The bridge runs on ws://${WS_HOST2}:${WS_PORT2} and connects
-Claude Code CLI to your browser via the Chrome extension.
+  1. Start the bridge:  npx claude-chrome-android
+  2. Open a new Claude Code session \u2014 browser tools (mcp__cfc-bridge__*) will be available
+  3. Use ToolSearch to find and load cfc-bridge tools
 `);
 }
 async function cmdStart() {
@@ -6117,9 +6200,343 @@ async function cmdStart() {
   } catch (err) {
     console.error("Failed to start bridge:", err.message);
     console.error("\nIf you installed via npm, the bridge should be bundled in this file.");
-    console.error("Try rebuilding: cd bridge && node build.js");
+    console.error("Try rebuilding: cd bridge && node build.cjs");
     process.exit(1);
   }
+}
+var MCP_TOOLS = [
+  {
+    name: "tabs_context_mcp",
+    description: "Get context information about the current MCP tab group. Returns all tab IDs inside the group if it exists. CRITICAL: You must get the context at least once before using other browser automation tools so you know what tabs exist.",
+    inputSchema: {
+      type: "object",
+      properties: { createIfEmpty: { type: "boolean", description: "Creates a new MCP tab group if none exists." } },
+      required: []
+    }
+  },
+  {
+    name: "tabs_create_mcp",
+    description: "Creates a new empty tab in the MCP tab group.",
+    inputSchema: { type: "object", properties: {}, required: [] }
+  },
+  {
+    name: "navigate",
+    description: "Navigate to a URL, or go forward/back in browser history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: 'URL to navigate to. Use "forward" or "back" for history.' },
+        tabId: { type: "number", description: "Tab ID to navigate." }
+      },
+      required: ["url", "tabId"]
+    }
+  },
+  {
+    name: "computer",
+    description: "Use a mouse and keyboard to interact with a web browser, and take screenshots.\n* Consult a screenshot to determine coordinates before clicking.\n* Click buttons/icons in the center of the element.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["left_click", "right_click", "type", "screenshot", "wait", "scroll", "key", "left_click_drag", "double_click", "triple_click", "zoom", "scroll_to", "hover"],
+          description: "The action to perform."
+        },
+        coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "(x, y) pixel coordinates." },
+        text: { type: "string", description: "Text to type or key(s) to press." },
+        duration: { type: "number", minimum: 0, maximum: 30, description: "Seconds to wait." },
+        scroll_direction: { type: "string", enum: ["up", "down", "left", "right"], description: "Scroll direction." },
+        scroll_amount: { type: "number", minimum: 1, maximum: 10, description: "Scroll ticks (default: 3)." },
+        start_coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Start coords for drag." },
+        region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "(x0,y0,x1,y1) for zoom." },
+        repeat: { type: "number", minimum: 1, maximum: 100, description: "Key repeat count." },
+        ref: { type: "string", description: "Element ref ID for scroll_to." },
+        modifiers: { type: "string", description: 'Modifier keys: "ctrl", "shift", "alt", "cmd".' },
+        tabId: { type: "number", description: "Tab ID." }
+      },
+      required: ["action", "tabId"]
+    }
+  },
+  {
+    name: "javascript_tool",
+    description: "Execute JavaScript in the page context. Returns the last expression result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", description: "Must be 'javascript_exec'" },
+        text: { type: "string", description: "JavaScript code. Don't use 'return'." },
+        tabId: { type: "number", description: "Tab ID." }
+      },
+      required: ["action", "text", "tabId"]
+    }
+  },
+  {
+    name: "read_page",
+    description: "Get accessibility tree of page elements. Filter for interactive elements or get all.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filter: { type: "string", enum: ["interactive", "all"], description: "Element filter." },
+        tabId: { type: "number", description: "Tab ID." },
+        depth: { type: "number", description: "Max tree depth (default: 15)." },
+        ref_id: { type: "string", description: "Parent element ref to focus on." },
+        max_chars: { type: "number", description: "Max output chars (default: 50000)." }
+      },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "find",
+    description: 'Find elements by natural language (e.g., "search bar", "login button").',
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to find." },
+        tabId: { type: "number", description: "Tab ID." }
+      },
+      required: ["query", "tabId"]
+    }
+  },
+  {
+    name: "form_input",
+    description: "Set form element values using ref ID from read_page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: { type: "string", description: "Element ref ID." },
+        value: { type: ["string", "boolean", "number"], description: "Value to set." },
+        tabId: { type: "number", description: "Tab ID." }
+      },
+      required: ["ref", "value", "tabId"]
+    }
+  },
+  {
+    name: "get_page_text",
+    description: "Extract raw text content from the page.",
+    inputSchema: {
+      type: "object",
+      properties: { tabId: { type: "number", description: "Tab ID." } },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "read_console_messages",
+    description: "Read browser console messages. Always provide a pattern to filter.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "number", description: "Tab ID." },
+        onlyErrors: { type: "boolean", description: "Errors only." },
+        clear: { type: "boolean", description: "Clear after reading." },
+        pattern: { type: "string", description: "Regex filter pattern." },
+        limit: { type: "number", description: "Max messages (default: 100)." }
+      },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "read_network_requests",
+    description: "Read HTTP network requests from a tab.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "number", description: "Tab ID." },
+        urlPattern: { type: "string", description: "URL substring filter." },
+        clear: { type: "boolean", description: "Clear after reading." },
+        limit: { type: "number", description: "Max requests (default: 100)." }
+      },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "resize_window",
+    description: "Resize browser window.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        width: { type: "number", description: "Width in pixels." },
+        height: { type: "number", description: "Height in pixels." },
+        tabId: { type: "number", description: "Tab ID." }
+      },
+      required: ["width", "height", "tabId"]
+    }
+  },
+  {
+    name: "gif_creator",
+    description: "Record and export browser session GIFs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["start_recording", "stop_recording", "export", "clear"], description: "Action." },
+        tabId: { type: "number", description: "Tab ID." },
+        download: { type: "boolean", description: "Download GIF on export." },
+        filename: { type: "string", description: "GIF filename." },
+        options: { type: "object", description: "GIF options." }
+      },
+      required: ["action", "tabId"]
+    }
+  },
+  {
+    name: "upload_image",
+    description: "Upload a screenshot to a file input or drag & drop target.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        imageId: { type: "string", description: "Screenshot ID." },
+        ref: { type: "string", description: "Element ref ID." },
+        coordinate: { type: "array", items: { type: "number" }, description: "Drop coords [x,y]." },
+        tabId: { type: "number", description: "Tab ID." },
+        filename: { type: "string", description: "Filename." }
+      },
+      required: ["imageId", "tabId"]
+    }
+  },
+  {
+    name: "update_plan",
+    description: "Present a plan to the user for approval.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        domains: { type: "array", items: { type: "string" }, description: "Domains to visit." },
+        approach: { type: "array", items: { type: "string" }, description: "Steps to take." }
+      },
+      required: ["domains", "approach"]
+    }
+  },
+  {
+    name: "shortcuts_list",
+    description: "List available shortcuts and workflows.",
+    inputSchema: {
+      type: "object",
+      properties: { tabId: { type: "number", description: "Tab ID." } },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "shortcuts_execute",
+    description: "Execute a shortcut or workflow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "number", description: "Tab ID." },
+        shortcutId: { type: "string", description: "Shortcut ID." },
+        command: { type: "string", description: "Command name." }
+      },
+      required: ["tabId"]
+    }
+  },
+  {
+    name: "switch_browser",
+    description: "Switch which Chrome browser is used for automation.",
+    inputSchema: { type: "object", properties: {}, required: [] }
+  }
+];
+function mcpResult(id, result) {
+  return { jsonrpc: "2.0", id, result };
+}
+function mcpError(id, code, message) {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+function mcpSend(response) {
+  process.stdout.write(JSON.stringify(response) + "\n");
+}
+async function callBridgeTool(method, params) {
+  try {
+    const resp = await fetch(TOOL_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params }),
+      signal: AbortSignal.timeout(TOOL_TIMEOUT_MS)
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      return { error: `Bridge HTTP ${resp.status}: ${body}` };
+    }
+    const data = await resp.json();
+    if (data.error) return { error: String(data.error) };
+    return { result: data.result ?? data };
+  } catch (err) {
+    return { error: `Bridge unreachable: ${err.message}` };
+  }
+}
+function formatToolResult(result) {
+  if (!result || typeof result !== "object") {
+    return [{ type: "text", text: JSON.stringify(result) }];
+  }
+  const r = result;
+  if (Array.isArray(r.content)) return r.content;
+  if (r.data && typeof r.data === "string" && r.media_type) {
+    return [{ type: "image", source: { type: "base64", media_type: r.media_type, data: r.data } }];
+  }
+  if (r.result !== void 0) return formatToolResult(r.result);
+  return [{ type: "text", text: JSON.stringify(result, null, 2) }];
+}
+async function handleMcpRequest(req) {
+  if (req.id === void 0 || req.id === null) return;
+  switch (req.method) {
+    case "initialize":
+      mcpSend(mcpResult(req.id, {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "Claude in Chrome (Bridge)", version: PKG_VERSION }
+      }));
+      break;
+    case "tools/list":
+      mcpSend(mcpResult(req.id, { tools: MCP_TOOLS }));
+      break;
+    case "tools/call": {
+      const toolName = req.params?.name ?? "";
+      const toolArgs = req.params?.arguments ?? {};
+      const tool = MCP_TOOLS.find((t) => t.name === toolName);
+      if (!tool) {
+        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: `Unknown tool: ${toolName}` }], isError: true }));
+        break;
+      }
+      const { result, error } = await callBridgeTool(toolName, toolArgs);
+      if (error) {
+        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: error }], isError: true }));
+      } else {
+        mcpSend(mcpResult(req.id, { content: formatToolResult(result) }));
+      }
+      break;
+    }
+    default:
+      mcpSend(mcpError(req.id, -32601, `Method not found: ${req.method}`));
+  }
+}
+async function cmdMcp() {
+  const log2 = (msg) => process.stderr.write(`[cfc-mcp] ${msg}
+`);
+  log2(`MCP server v${PKG_VERSION} \u2014 bridge at ${BRIDGE_URL}`);
+  try {
+    const h = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2e3) });
+    const d = await h.json();
+    log2(`Bridge OK: clients=${d.clients}, v${d.version}`);
+  } catch {
+    log2("Bridge not reachable \u2014 tool calls will fail until bridge starts");
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const chunk of process.stdin) {
+    buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk);
+    let idx;
+    while ((idx = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, idx).trim();
+      buffer = buffer.slice(idx + 1);
+      if (!line) continue;
+      try {
+        const req = JSON.parse(line);
+        handleMcpRequest(req).catch((err) => {
+          log2(`Error: ${req.method}: ${err.message}`);
+          if (req.id != null) mcpSend(mcpError(req.id, -32603, err.message));
+        });
+      } catch (err) {
+        log2(`Bad JSON-RPC: ${err.message}`);
+      }
+    }
+  }
+  log2("stdin closed");
+  process.exit(0);
 }
 var args = process.argv.slice(2);
 var command = args[0] ?? "";
@@ -6137,6 +6554,9 @@ switch (command) {
     break;
   case "--setup":
     cmdSetup();
+    break;
+  case "--mcp":
+    cmdMcp();
     break;
   case "":
     cmdStart();

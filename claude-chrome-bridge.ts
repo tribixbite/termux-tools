@@ -1192,16 +1192,28 @@ function encodeGIF(
 // --- HTTP Tool Execution (MCP bypass) ----------------------------------------
 
 /**
- * Pending HTTP /tool request. When set, the next tool_response from the
- * extension is routed here instead of to the native host.
+ * Queue of pending HTTP /tool requests. Tool calls from multiple MCP server
+ * instances are serialized — the extension processes one tool at a time, so
+ * we queue requests and drain them in FIFO order. Each entry is resolved
+ * when the extension sends the corresponding tool_response.
  */
-let pendingHttpToolCall: {
+const pendingToolQueue: Array<{
+  requestJson: string;
   resolve: (result: unknown) => void;
   timeout: ReturnType<typeof setTimeout>;
-} | null = null;
+}> = [];
 
 /** Tool call timeout for HTTP /tool endpoint (ms) */
 const HTTP_TOOL_TIMEOUT_MS = 30_000;
+
+/** Send the next queued tool request to the extension (if any) */
+function drainToolQueue(): void {
+  if (pendingToolQueue.length === 0) return;
+  const next = pendingToolQueue[0];
+  for (const client of wsClients) {
+    try { client.send(next.requestJson); } catch {}
+  }
+}
 
 // --- Child Process Management ------------------------------------------------
 
@@ -1662,18 +1674,13 @@ const server: BridgeServer = createBridgeServer({
 
     // Tool execution endpoint — POST /tool
     // Sends a tool_request to the extension via WS, waits for tool_response.
-    // Used by bridge-mcp.ts to bypass Claude Code's broken built-in CFC MCP server.
+    // Requests are queued — multiple MCP server instances can call concurrently
+    // and the extension processes them in FIFO order.
     if (url.pathname === "/tool" && req.method === "POST") {
       if (wsClients.size === 0) {
         return new Response(
           JSON.stringify({ error: "No extension connected" }),
           { status: 503, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      if (pendingHttpToolCall) {
-        return new Response(
-          JSON.stringify({ error: "Another tool call is in progress" }),
-          { status: 429, headers: { "Content-Type": "application/json" } },
         );
       }
 
@@ -1688,21 +1695,24 @@ const server: BridgeServer = createBridgeServer({
           params: body.params ?? {},
         });
 
-        log("info", `HTTP /tool: ${body.method}`);
+        const queuePos = pendingToolQueue.length;
+        log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
 
-        // Create a promise resolved by the WS message handler on tool_response
+        // Enqueue and wait — resolved by WS message handler on tool_response
         const result = await new Promise<unknown>((resolve) => {
           const timeout = setTimeout(() => {
-            pendingHttpToolCall = null;
+            const idx = pendingToolQueue.findIndex((e) => e.resolve === resolve);
+            const wasHead = idx === 0;
+            if (idx !== -1) pendingToolQueue.splice(idx, 1);
             resolve({ type: "tool_response", error: "Tool call timed out (30s)" });
+            // If the timed-out entry was head, send next queued request
+            if (wasHead) drainToolQueue();
           }, HTTP_TOOL_TIMEOUT_MS);
 
-          pendingHttpToolCall = { resolve, timeout };
+          pendingToolQueue.push({ requestJson: toolRequest, resolve, timeout });
 
-          // Forward to extension via WebSocket
-          for (const client of wsClients) {
-            try { client.send(toolRequest); } catch {}
-          }
+          // Send immediately if this is the only item (head of queue)
+          if (pendingToolQueue.length === 1) drainToolQueue();
         });
 
         return new Response(
@@ -1776,16 +1786,18 @@ const server: BridgeServer = createBridgeServer({
           }
         }
 
-        // Route tool_response to pending HTTP /tool caller if present
-        if (parsed.type === "tool_response" && pendingHttpToolCall) {
-          const { resolve, timeout } = pendingHttpToolCall;
-          pendingHttpToolCall = null;
+        // Route tool_response to pending HTTP /tool caller (FIFO queue head)
+        if (parsed.type === "tool_response" && pendingToolQueue.length > 0) {
+          const { resolve, timeout } = pendingToolQueue.shift()!;
           clearTimeout(timeout);
 
           // Strip method field (same fix as native host path)
           if ("method" in parsed) delete parsed.method;
-          log("debug", `HTTP /tool response: ${json.slice(0, 200)}`);
+          log("debug", `HTTP /tool response (${pendingToolQueue.length} queued): ${json.slice(0, 200)}`);
           resolve(parsed);
+
+          // Send next queued request to extension
+          drainToolQueue();
           return;
         }
 
