@@ -67,3 +67,40 @@ https://github.com/tribixbite/termux-tools
 
 ## Logo
 - `dist/store-logo-300x300.png`
+
+## Notes for Certification Testers
+
+This extension is the browser-side component of a two-part system. It connects to a
+local WebSocket server running on the same device (127.0.0.1:18963) — no external
+servers are contacted.
+
+### Architecture
+- A companion CLI tool (`claude-chrome-android`, installed via npm in Termux on
+  Android) runs a local WebSocket bridge
+- This extension connects to that bridge on localhost and exposes browser APIs
+  (read page, screenshot, click, navigate, etc.)
+- Claude Code (Anthropic's CLI AI assistant) sends tool requests through the bridge
+  to control the browser
+
+### Why it can't be fully tested in isolation
+The extension requires the companion bridge server running on localhost:18963.
+Without it, the popup will show "Disconnected" status — this is expected behavior.
+The extension does not crash or degrade; it simply retries the connection periodically.
+
+### To verify basic functionality without the bridge
+1. Install the extension
+2. Open the popup — it should render the dashboard UI with "Disconnected" status
+3. The tabs (Dashboard, Tests, Logs, Tabs) should all be navigable
+4. No errors should appear in the browser console aside from the expected WebSocket
+   connection refusal
+
+### Permissions justification
+- `tabs` — read tab URLs/titles and navigate tabs on behalf of the CLI
+- `activeTab` — capture screenshots and read page content of the active tab
+- `scripting` — inject content scripts that read page accessibility trees
+- `host_permissions (http://127.0.0.1/*)` — connects only to the local bridge
+  server, never to external hosts
+
+### No data collection
+The extension collects no analytics, telemetry, or user data. All communication
+stays on localhost.
