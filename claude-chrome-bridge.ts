@@ -57,6 +57,31 @@ const HEARTBEAT_INTERVAL_MS = 15_000;
 const TERMUX_PREFIX = "/data/data/com.termux/files/usr";
 const TERMUX_BIN = `${TERMUX_PREFIX}/bin`;
 const ADB_PATH = `${TERMUX_BIN}/adb`;
+
+// Auto-detect ADB serial for multi-device environments.
+// ANDROID_SERIAL env var doesn't work with some adb builds when value contains ':'
+// (IP:port format), so we must pass -s explicitly.
+const ADB_SERIAL: string = (() => {
+  try {
+    const result = runSync([ADB_PATH, "devices"]);
+    const lines = result.stdout.toString().trim().split("\n")
+      .filter(l => l.endsWith("\tdevice"));
+    if (lines.length <= 1) return ""; // single or no device — no -s needed
+    // Multiple devices: find the one running Edge Canary
+    for (const line of lines) {
+      const serial = line.split("\t")[0];
+      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      if (check.exitCode === 0 && check.stdout.toString().trim()) return serial;
+    }
+    return lines[0]?.split("\t")[0] ?? ""; // fallback to first device
+  } catch { return ""; }
+})();
+
+/** Build an adb command array, inserting -s <serial> when multiple devices present */
+function adb(...args: string[]): string[] {
+  return ADB_SERIAL ? [ADB_PATH, "-s", ADB_SERIAL, ...args] : [ADB_PATH, ...args];
+}
+
 // NOTE: termux-notification/termux-toast can't be used from Bun — the termux-api-broadcast
 // binary's abstract Unix socket IPC fails (Termux:API app never connects back to the socket).
 // Use adbNotify() instead which calls `adb shell cmd notification`.
@@ -73,7 +98,7 @@ const ADB_PATH = `${TERMUX_BIN}/adb`;
  */
 function adbNotify(tag: string, title: string, text: string): void {
   try {
-    runDetached([ADB_PATH, "shell", "cmd", "notification", "post", "-t", title, tag, text]);
+    runDetached(adb("shell", "cmd", "notification", "post", "-t", title, tag, text));
   } catch {
     // ADB may not be connected — non-fatal
   }
@@ -242,10 +267,10 @@ class CdpManager {
     this.state = "connecting";
     try {
       // Step 1: find Edge PID
-      const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0]; // take first PID if multiple
       if (!pidStr || pidResult.exitCode !== 0) {
-        log("debug", "CDP: Edge not running or ADB unavailable");
+        log("debug", `CDP: Edge not running or ADB unavailable (exit=${pidResult.exitCode}, stderr=${pidResult.stderr?.toString().trim()}, serial=${ADB_SERIAL || "default"})`);
         this.state = "disconnected";
         return false;
       }
@@ -266,7 +291,7 @@ class CdpManager {
       let versionData: Record<string, string> | null = null;
       for (const socketName of socketCandidates) {
         const fwdResult = runSync(
-          [ADB_PATH, "forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`]
+          adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
         );
         if (fwdResult.exitCode !== 0) continue;
         try {
@@ -276,7 +301,7 @@ class CdpManager {
           break;
         } catch {
           // This socket didn't work — remove forward and try next
-          runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
+          runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
         }
       }
       if (!versionData) {
@@ -585,9 +610,9 @@ class CdpManager {
     // ADB screencap — reliable on Android where CDP Page.captureScreenshot times out
     try {
       const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
-      const cap = runSync([ADB_PATH, "shell", "screencap", "-p", "/sdcard/cdp-screencap.png"]);
+      const cap = runSync(adb("shell", "screencap", "-p", "/sdcard/cdp-screencap.png"));
       if (cap.exitCode === 0) {
-        const pull = runSync([ADB_PATH, "pull", "/sdcard/cdp-screencap.png", tmpPath]);
+        const pull = runSync(adb("pull", "/sdcard/cdp-screencap.png", tmpPath));
         if (pull.exitCode === 0 && await fileExists(tmpPath)) {
           const { readFile: rf } = await import("node:fs/promises");
           const buf = await rf(tmpPath);
@@ -793,7 +818,7 @@ class CdpManager {
   /** Re-check Edge PID — reconnect if changed (Edge restarted) */
   private async recheckPid(): Promise<void> {
     try {
-      const pidResult = runSync([ADB_PATH, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
       const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
       const newPid = parseInt(pidStr, 10);
 
@@ -838,7 +863,7 @@ class CdpManager {
     this.pending.clear();
 
     // Remove ADB forward
-    runSync([ADB_PATH, "forward", "--remove", `tcp:${CDP_PORT}`]);
+    runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
     log("info", "CDP: cleaned up");
   }
 }
@@ -1787,11 +1812,23 @@ log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:
 log("info", `CLI path: ${CLI_PATH}`);
 log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
 
-// Attempt CDP connection on startup (non-blocking — CDP is optional)
-cdpManager.connect().then((ok) => {
-  if (ok) log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
-  else log("info", "CDP: not available (ADB/Edge not running — will use extension fallback)");
-});
+// Attempt CDP connection on startup with retries (non-blocking — CDP is optional)
+(async () => {
+  const CDP_RETRY_ATTEMPTS = 5;
+  const CDP_RETRY_DELAY_MS = 10_000;
+  for (let attempt = 1; attempt <= CDP_RETRY_ATTEMPTS; attempt++) {
+    const ok = await cdpManager.connect();
+    if (ok) {
+      log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
+      return;
+    }
+    if (attempt < CDP_RETRY_ATTEMPTS) {
+      log("info", `CDP: attempt ${attempt}/${CDP_RETRY_ATTEMPTS} failed — retrying in ${CDP_RETRY_DELAY_MS / 1000}s`);
+      await new Promise(r => setTimeout(r, CDP_RETRY_DELAY_MS));
+    }
+  }
+  log("info", "CDP: not available after retries (ADB/Edge not running — will use extension fallback)");
+})();
 
 log("info", "Waiting for WebSocket connections...");
 
