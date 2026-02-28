@@ -1189,6 +1189,20 @@ function encodeGIF(
   return result;
 }
 
+// --- HTTP Tool Execution (MCP bypass) ----------------------------------------
+
+/**
+ * Pending HTTP /tool request. When set, the next tool_response from the
+ * extension is routed here instead of to the native host.
+ */
+let pendingHttpToolCall: {
+  resolve: (result: unknown) => void;
+  timeout: ReturnType<typeof setTimeout>;
+} | null = null;
+
+/** Tool call timeout for HTTP /tool endpoint (ms) */
+const HTTP_TOOL_TIMEOUT_MS = 30_000;
+
 // --- Child Process Management ------------------------------------------------
 
 let nativeHost: SpawnedProcess | null = null;
@@ -1646,6 +1660,63 @@ const server: BridgeServer = createBridgeServer({
       });
     }
 
+    // Tool execution endpoint — POST /tool
+    // Sends a tool_request to the extension via WS, waits for tool_response.
+    // Used by bridge-mcp.ts to bypass Claude Code's broken built-in CFC MCP server.
+    if (url.pathname === "/tool" && req.method === "POST") {
+      if (wsClients.size === 0) {
+        return new Response(
+          JSON.stringify({ error: "No extension connected" }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      if (pendingHttpToolCall) {
+        return new Response(
+          JSON.stringify({ error: "Another tool call is in progress" }),
+          { status: 429, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      try {
+        const body = (await req.json()) as {
+          method: string;
+          params?: Record<string, unknown>;
+        };
+        const toolRequest = JSON.stringify({
+          type: "tool_request",
+          method: body.method,
+          params: body.params ?? {},
+        });
+
+        log("info", `HTTP /tool: ${body.method}`);
+
+        // Create a promise resolved by the WS message handler on tool_response
+        const result = await new Promise<unknown>((resolve) => {
+          const timeout = setTimeout(() => {
+            pendingHttpToolCall = null;
+            resolve({ type: "tool_response", error: "Tool call timed out (30s)" });
+          }, HTTP_TOOL_TIMEOUT_MS);
+
+          pendingHttpToolCall = { resolve, timeout };
+
+          // Forward to extension via WebSocket
+          for (const client of wsClients) {
+            try { client.send(toolRequest); } catch {}
+          }
+        });
+
+        return new Response(
+          JSON.stringify(result),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      } catch (err) {
+        return new Response(
+          JSON.stringify({ error: (err as Error).message }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+    }
+
     // WebSocket upgrade
     if (url.pathname === "/ws" || url.pathname === "/") {
       // Token auth check (if configured)
@@ -1703,6 +1774,19 @@ const server: BridgeServer = createBridgeServer({
               cdpManager.cacheTabUrl(tab.id, tab.url);
             }
           }
+        }
+
+        // Route tool_response to pending HTTP /tool caller if present
+        if (parsed.type === "tool_response" && pendingHttpToolCall) {
+          const { resolve, timeout } = pendingHttpToolCall;
+          pendingHttpToolCall = null;
+          clearTimeout(timeout);
+
+          // Strip method field (same fix as native host path)
+          if ("method" in parsed) delete parsed.method;
+          log("debug", `HTTP /tool response: ${json.slice(0, 200)}`);
+          resolve(parsed);
+          return;
         }
 
         // Fix tool_response: strip `method` field so cli.js response classifier
