@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/willstone/termux-tools"
+    "url": "https://github.com/tribixbite/termux-tools"
   },
   "bin": {
     "claude-chrome-android": "./dist/cli.js"

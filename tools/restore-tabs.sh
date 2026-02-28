@@ -1,11 +1,15 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # restore-tabs.sh — Recreate Termux UI tabs attached to existing tmux sessions
 # Usage: restore-tabs.sh [session1 session2 ...]
-# No args = restore all detached sessions. With args = restore only named sessions.
+# No args = restore all detached sessions (skips headless services).
+# With args = restore only named sessions.
 set -euo pipefail
 
 # Colors
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; BLUE='\033[0;34m'; NC='\033[0m'
+
+# Sessions that run headless (no UI tab needed)
+HEADLESS_SESSIONS=("playwright" "termux-x11")
 
 restored=0
 skipped=0
@@ -68,6 +72,19 @@ for session in "${sessions[@]}"; do
     continue
   fi
 
+  # Skip headless sessions when auto-discovering (not when explicitly named)
+  if [[ $# -eq 0 ]]; then
+    is_headless=false
+    for hs in "${HEADLESS_SESSIONS[@]}"; do
+      if [[ "$session" == "$hs" ]]; then is_headless=true; break; fi
+    done
+    if $is_headless; then
+      echo -e "  ${YELLOW}→${NC} $session — headless service, skipping"
+      skipped=$((skipped + 1))
+      continue
+    fi
+  fi
+
   # Check if already attached (has a client)
   attached=$(tmux list-clients -t "$session" 2>/dev/null | wc -l)
   if [[ "$attached" -gt 0 ]]; then
@@ -77,7 +94,8 @@ for session in "${sessions[@]}"; do
   fi
 
   # Create a new Termux tab that attaches to this tmux session
-  if create_tab "tmux attach -t '$session'"; then
+  # Set terminal title first (Termux shows this as tab label), then attach
+  if create_tab "printf '\\033]0;${session}\\007' && tmux attach -t '$session'"; then
     echo -e "  ${GREEN}✓${NC} $session — tab created"
     restored=$((restored + 1))
   else
