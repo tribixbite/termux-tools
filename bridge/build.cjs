@@ -28,6 +28,17 @@ build({
   sourcemap: false,
 }).then(() => {
   console.log("Built dist/cli.js");
+
+  // Copy latest CRX into dist/ for npm package inclusion
+  const { existsSync, copyFileSync } = require("fs");
+  const latestCrx = resolve(__dirname, "../dist/claude-code-bridge-latest.crx");
+  const destCrx = resolve(__dirname, "dist/claude-code-bridge.crx");
+  if (existsSync(latestCrx)) {
+    copyFileSync(latestCrx, destCrx);
+    console.log("Copied CRX → dist/claude-code-bridge.crx");
+  } else {
+    console.warn("Warning: dist/claude-code-bridge-latest.crx not found, CRX not bundled");
+  }
 }).catch((err) => {
   console.error("Build failed:", err);
   process.exit(1);
