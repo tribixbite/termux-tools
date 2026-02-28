@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "setup": "bun install --cwd $PWD --backend=copyfile; node scripts/fix-android-binaries.mjs",
+    "postinstall": "node scripts/fix-android-binaries.mjs"
   },
   "dependencies": {
     "@astrojs/svelte": "^7.2.5",
