@@ -1,0 +1,17 @@
+{
+  "name": "termux-tools-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/svelte": "^7.2.5",
+    "@tailwindcss/vite": "^4.2.1",
+    "astro": "^5.18.0",
+    "svelte": "^5.53.6",
+    "tailwindcss": "^4.2.1"
+  }
+}

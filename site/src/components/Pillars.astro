@@ -1,0 +1,73 @@
+---
+// Static three-pillar feature cards — zero client JS
+
+const features = [
+  {
+    icon: "⌨",
+    title: "Tmux Multi-Instance Manager",
+    description: "Separate tmux instances per project on boot. Fuzzy-search switching, auto-go flags, Claude Code-compatible workflow.",
+    commands: [
+      { cmd: "tm clev", desc: "fuzzy-switch to cleverkeys" },
+      { cmd: "tmgo un", desc: "send 'go' without switching" },
+      { cmd: "tmbs", desc: "list all sessions" },
+      { cmd: "tmbr", desc: "restart all instances" },
+    ],
+    color: "terminal-green",
+  },
+  {
+    icon: "📡",
+    title: "ADB Wireless Automation",
+    description: "Auto-detect and connect ADB over WiFi. Reverse port scanning, cron-based monitoring every 5 min, instant reconnect from cache.",
+    commands: [
+      { cmd: "adb-wireless-connect.sh", desc: "auto-connect" },
+      { cmd: "crontab -e", desc: "schedule reconnect" },
+      { cmd: "adb devices", desc: "verify connection" },
+    ],
+    color: "terminal-amber",
+  },
+  {
+    icon: "🔄",
+    title: "Tasker Crash Recovery",
+    description: "Auto-restarts Termux on crash or OOM. Restores all tmux sessions, health check every 10 min, zero manual intervention.",
+    commands: [
+      { cmd: "auto-setup-tasker.sh", desc: "one-command setup" },
+      { cmd: "check-termux-health.sh", desc: "manual health check" },
+      { cmd: "restore-tabs.sh", desc: "restore UI tabs" },
+    ],
+    color: "terminal-cyan",
+  },
+];
+---
+
+<section id="features" class="px-4 py-16 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-6xl">
+    <h2 class="mb-12 text-center font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+      <span class="text-terminal-green">#</span> Core Features
+    </h2>
+
+    <div class="grid gap-6 md:grid-cols-3">
+      {features.map((f) => (
+        <div class="group rounded-lg border border-terminal-border bg-terminal-surface p-6 transition-colors hover:border-terminal-dim">
+          <!-- Icon + Title -->
+          <div class="mb-4 text-3xl">{f.icon}</div>
+          <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-semibold text-terminal-bright">
+            {f.title}
+          </h3>
+          <p class="mb-5 text-sm leading-relaxed text-terminal-dim">
+            {f.description}
+          </p>
+
+          <!-- Key commands -->
+          <div class="space-y-2">
+            {f.commands.map((c) => (
+              <div class="flex items-baseline gap-2 font-[family-name:var(--font-mono)] text-xs">
+                <code class={`text-${f.color} shrink-0`}>{c.cmd}</code>
+                <span class="text-terminal-dim">— {c.desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

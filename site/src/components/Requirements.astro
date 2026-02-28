@@ -1,0 +1,46 @@
+---
+// Static requirements badges — zero client JS
+
+const requirements = [
+  { name: "Termux", url: "https://f-droid.org/packages/com.termux/", required: true },
+  { name: "tmux", url: "https://wiki.termux.com/wiki/Tmux", required: true },
+  { name: "termux-api", url: "https://wiki.termux.com/wiki/Termux:API", required: true },
+  { name: "Termux:Boot", url: "https://f-droid.org/packages/com.termux.boot/", required: true },
+  { name: "Termux:API app", url: "https://f-droid.org/packages/com.termux.api/", required: true },
+  { name: "Node.js 18+", url: "https://nodejs.org/", required: false },
+  { name: "Bun", url: "https://bun.sh/", required: false },
+];
+---
+
+<section id="requirements" class="px-4 py-16 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-3xl">
+    <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+      <span class="text-terminal-green">#</span> Requirements
+    </h2>
+
+    <div class="flex flex-wrap gap-3">
+      {requirements.map((r) => (
+        <a
+          href={r.url}
+          target="_blank"
+          rel="noopener"
+          class={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs transition-colors
+            ${r.required
+              ? "border-terminal-green/30 bg-terminal-green/5 text-terminal-green hover:bg-terminal-green/10"
+              : "border-terminal-border text-terminal-dim hover:border-terminal-dim hover:text-terminal-text"
+            }`}
+        >
+          <span class={r.required ? "text-terminal-green" : "text-terminal-dim"}>
+            {r.required ? "●" : "○"}
+          </span>
+          {r.name}
+        </a>
+      ))}
+    </div>
+
+    <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+      <span class="text-terminal-green">●</span> required &nbsp;
+      <span class="text-terminal-dim">○</span> optional (for bridge/extension features)
+    </p>
+  </div>
+</section>

@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+/* Terminal color palette */
+@theme {
+  --color-terminal-bg: #0a0a0a;
+  --color-terminal-surface: #141414;
+  --color-terminal-card: #1a1a1a;
+  --color-terminal-border: #2a2a2a;
+  --color-terminal-green: #4ade80;
+  --color-terminal-amber: #fbbf24;
+  --color-terminal-cyan: #22d3ee;
+  --color-terminal-dim: #6b7280;
+  --color-terminal-text: #d1d5db;
+  --color-terminal-bright: #f9fafb;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", ui-monospace, monospace;
+}
+
+/* Base styles */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-terminal-bg);
+  color: var(--color-terminal-text);
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+/* Selection color */
+::selection {
+  background-color: color-mix(in srgb, var(--color-terminal-green) 30%, transparent);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-terminal-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-terminal-border);
+  border-radius: 3px;
+}

@@ -1,0 +1,66 @@
+---
+import CodeBlock from "./CodeBlock.svelte";
+
+const installCode = `# Install required packages
+pkg install tmux termux-api
+
+# Install Termux:Boot and Termux:API from F-Droid
+# (required for boot persistence and notifications)
+
+# Clone the repo
+git clone https://github.com/tribixbite/termux-tools ~/git/termux-tools
+cd ~/git/termux-tools
+
+# Copy configuration templates
+cp examples/startup.sh.example ~/.termux/boot/startup.sh
+mkdir -p ~/.config/termux-boot
+cp examples/repos.conf.example ~/.config/termux-boot/repos.conf
+cp examples/bash_aliases.example ~/.bash_aliases
+chmod +x ~/.termux/boot/startup.sh
+
+# Reload shell to get aliases
+source ~/.bashrc`;
+
+const configCode = `# ~/.config/termux-boot/repos.conf
+# Format: REPOS["path"]="auto_go:enabled"
+
+declare -A REPOS
+REPOS["$HOME/git/swype/cleverkeys"]="1:1"   # auto-go + enabled
+REPOS["$HOME/git/termux-tools"]="0:1"       # enabled, no auto-go
+REPOS["$HOME/git/my-project"]="0:1"         # add your projects`;
+---
+
+<section id="quickstart" class="px-4 py-16 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-3xl">
+    <h2 class="mb-4 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+      <span class="text-terminal-green">#</span> Quick Start
+    </h2>
+    <p class="mb-8 text-terminal-dim">
+      Up and running in under 5 minutes. Requires
+      <a href="https://f-droid.org/packages/com.termux.boot/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">Termux:Boot</a>
+      and
+      <a href="https://f-droid.org/packages/com.termux.api/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">Termux:API</a>
+      from F-Droid.
+    </p>
+
+    <div class="space-y-6">
+      <div>
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">1. Install & Configure</h3>
+        <CodeBlock code={installCode} title="install.sh" client:visible />
+      </div>
+
+      <div>
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">2. Configure Your Projects</h3>
+        <CodeBlock code={configCode} title="repos.conf" client:visible />
+      </div>
+
+      <div>
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">3. Reboot</h3>
+        <p class="text-sm text-terminal-dim">
+          Reboot your device. Termux:Boot will run <code class="text-terminal-green">startup.sh</code>,
+          creating a tmux session for each enabled repo. Use <code class="text-terminal-green">tm &lt;search&gt;</code> to switch between them.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>

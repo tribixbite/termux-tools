@@ -1,0 +1,52 @@
+---
+// Static boot flow diagram — zero client JS
+---
+
+<section id="architecture" class="px-4 py-16 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-3xl">
+    <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+      <span class="text-terminal-green">#</span> How It Works
+    </h2>
+
+    <!-- Boot flow diagram -->
+    <div class="overflow-x-auto rounded-lg border border-terminal-border bg-terminal-surface p-6">
+      <pre class="font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm"><code><span class="text-terminal-dim">┌──────────────────────────────────────────────────────┐</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-amber">Device Boot</span>                                        <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Termux:Boot</span> ──▶ <span class="text-terminal-bright">startup.sh</span>                       <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">termux-wake-lock</span>                         <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">ADB wireless connect + phantom fix</span>       <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">Read</span> <span class="text-terminal-amber">repos.conf</span>                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">For each repo:</span>                                   <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ├── tmux new-session -s <span class="text-terminal-cyan">name</span>                 <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ├── start <span class="text-terminal-bright">claude code</span>                        <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       └── <span class="text-terminal-amber">auto_go=1</span> ? send 'go'                   <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                                      <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Tasker</span> monitors health every 10 min:              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       └── unhealthy? ──▶ relaunch + restore         <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">└──────────────────────────────────────────────────────┘</span></code></pre>
+    </div>
+
+    <!-- Key points -->
+    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">XDG-Compliant Paths</h3>
+        <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          Config in <code>~/.config/termux-boot/</code><br>
+          Logs in <code>~/.local/share/termux-boot/logs/</code>
+        </p>
+      </div>
+      <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Separate Instances</h3>
+        <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          Each project gets its own tmux session.<br>
+          No shared state, no crosstalk.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>

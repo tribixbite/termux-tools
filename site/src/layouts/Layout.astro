@@ -1,0 +1,64 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "termux-tools — Turn your phone into a persistent dev server",
+  description = "Tmux multi-instance manager, ADB wireless automation, Tasker crash recovery, and Claude Code integration for Android development in Termux.",
+} = Astro.props;
+
+const canonicalUrl = "https://tribixbite.github.io/termux-tools";
+const ogImage = `${canonicalUrl}/og.png`;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="generator" content={Astro.generator} />
+
+    <!-- SEO -->
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalUrl} />
+
+    <!-- OpenGraph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={ogImage} />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <!-- Structured Data -->
+    <script type="application/ld+json" set:html={JSON.stringify({
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "termux-tools",
+      "description": description,
+      "url": canonicalUrl,
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Android",
+      "license": "https://opensource.org/licenses/MIT",
+      "codeRepository": "https://github.com/tribixbite/termux-tools",
+      "programmingLanguage": ["Shell", "JavaScript", "TypeScript", "Python"],
+      "softwareVersion": "1.7.0",
+    })} />
+
+    <style is:global>
+      @import "../styles/global.css";
+    </style>
+  </head>
+  <body class="min-h-screen antialiased">
+    <slot />
+  </body>
+</html>

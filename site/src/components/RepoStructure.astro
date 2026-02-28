@@ -1,0 +1,35 @@
+---
+// Static repo structure display — zero client JS
+
+const dirs = [
+  { name: "tools/", desc: "ADB wireless connect, restore-tabs, flutter setup, system fixes", color: "terminal-green" },
+  { name: "tasker/", desc: "Crash recovery automation — auto-setup, health checks, Tasker XML profiles", color: "terminal-amber" },
+  { name: "bridge/", desc: "NPM package (claude-chrome-android) — WS bridge + MCP server for browser tools", color: "terminal-cyan" },
+  { name: "edge-claude-ext/", desc: "Edge browser extension source — manifest v3, background + content scripts", color: "terminal-green" },
+  { name: "scripts/", desc: "Build scripts — CRX packaging, release automation", color: "terminal-dim" },
+  { name: "docs/", desc: "25+ guides — architecture, commands, workflows, device-specific fixes", color: "terminal-dim" },
+  { name: "examples/", desc: "Config templates — startup.sh, repos.conf, bash_aliases, crontab", color: "terminal-amber" },
+  { name: "install/", desc: "Installation helpers and dependency checks", color: "terminal-dim" },
+];
+---
+
+<section id="structure" class="px-4 py-16 sm:px-6 lg:px-8">
+  <div class="mx-auto max-w-3xl">
+    <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+      <span class="text-terminal-green">#</span> Repo Structure
+    </h2>
+
+    <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+      <div class="p-4 font-[family-name:var(--font-mono)] text-sm">
+        <div class="mb-2 text-terminal-dim">termux-tools/</div>
+        {dirs.map((d, i) => (
+          <div class={`flex gap-3 py-1.5 ${i < dirs.length - 1 ? "border-b border-terminal-border/30" : ""}`}>
+            <span class="text-terminal-dim shrink-0">{i < dirs.length - 1 ? "├──" : "└──"}</span>
+            <span class={`text-${d.color} shrink-0`}>{d.name}</span>
+            <span class="text-terminal-dim text-xs leading-5">{d.desc}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
