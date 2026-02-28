@@ -48,7 +48,22 @@ https://github.com/tribixbite/termux-tools/issues
 ## Website
 https://github.com/tribixbite/termux-tools
 
-## Screenshots needed (640x480 or 1280x800)
-1. Extension popup showing connected status with bridge
-2. Claude Code interacting with a web page via the extension
-3. Extension popup showing tab management
+## Search Terms (7 max)
+1. claude code
+2. browser automation
+3. termux
+4. mcp
+5. ai assistant
+6. web scraping
+7. developer tools
+
+## Promotional Tiles
+- Small: 440x280 → `dist/store-tile-small-440x280.png`
+- Large: 1400x560 → `dist/store-tile-large-1400x560.png`
+
+## Screenshots (1280x800)
+- `dist/store-screenshot-1.png` — Dashboard popup + feature overview
+- `dist/store-screenshot-2.png` — Terminal ↔ browser automation demo
+
+## Logo
+- `dist/store-logo-300x300.png`
