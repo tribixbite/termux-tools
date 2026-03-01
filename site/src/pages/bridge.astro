@@ -1,0 +1,321 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+---
+
+<Layout
+  title="Claude Code Browser Bridge — termux-tools"
+  description="WebSocket bridge connecting Claude Code to Chrome/Edge on Android. MCP server, FIFO tool queue, multi-session support."
+  path="bridge"
+>
+  <Nav current="/bridge" />
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-4 pt-16 pb-20 sm:px-6 lg:px-8">
+      <div class="pointer-events-none absolute inset-0 opacity-[0.03]"
+        style="background-image: linear-gradient(var(--color-terminal-cyan) 1px, transparent 1px), linear-gradient(90deg, var(--color-terminal-cyan) 1px, transparent 1px); background-size: 40px 40px;">
+      </div>
+
+      <div class="relative mx-auto max-w-4xl text-center">
+        <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
+          <span class="text-terminal-cyan">$</span> claude-chrome-android <span class="text-terminal-amber">v1.1.0</span>
+        </div>
+
+        <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
+          Claude Code<span class="text-terminal-cyan"> Browser</span> Bridge
+        </h1>
+
+        <p class="mx-auto mb-2 max-w-2xl text-xl text-terminal-text sm:text-2xl">
+          Give Claude Code eyes and hands in your browser
+        </p>
+
+        <p class="mb-8 text-sm text-terminal-dim">
+          WebSocket bridge &middot; MCP server &middot; FIFO queue &middot; npm package
+        </p>
+
+        <div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <a href="https://www.npmjs.com/package/claude-chrome-android"
+            class="inline-flex items-center gap-2 rounded-lg border border-terminal-cyan bg-terminal-cyan/10 px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan transition-colors hover:bg-terminal-cyan/20"
+            target="_blank" rel="noopener">
+            npm install -g claude-chrome-android
+          </a>
+          <a href="https://github.com/tribixbite/termux-tools/tree/main/bridge"
+            class="inline-flex items-center gap-2 rounded-lg border border-terminal-border px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-text transition-colors hover:border-terminal-dim hover:text-terminal-bright"
+            target="_blank" rel="noopener">
+            Source
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section id="architecture" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> How It Works
+        </h2>
+
+        <div class="overflow-x-auto rounded-lg border border-terminal-border bg-terminal-surface p-6">
+          <pre class="font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm"><code><span class="text-terminal-dim">┌──────────────────────────────────────────────────────────────┐</span>
+<span class="text-terminal-dim">│</span>                                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-bright">Claude Code</span> session 1 ──┐                                  <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-bright">Claude Code</span> session 2 ──┤── <span class="text-terminal-amber">cli.js --mcp</span> ──┐               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-bright">Claude Code</span> session N ──┘   <span class="text-terminal-dim">(stdio)</span>       │               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          ▼               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                   <span class="text-terminal-cyan">HTTP POST /tool</span>          <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          │               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          ▼               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                   <span class="text-terminal-green">Bridge (WS :18963)</span>       <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                   <span class="text-terminal-dim">FIFO tool queue</span>          <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          │               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          ▼               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                   <span class="text-terminal-amber">Edge Extension</span>           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          │               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                          ▼               <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                   <span class="text-terminal-bright">Browser tabs</span>             <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">└──────────────────────────────────────────────────────────────┘</span></code></pre>
+        </div>
+
+        <div class="mt-6 grid gap-4 sm:grid-cols-3">
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan">Multi-Session</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              N Claude Code sessions share one bridge.<br>
+              FIFO queue ensures orderly execution.
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">Localhost Only</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              Bridge binds to 127.0.0.1.<br>
+              Optional <code>BRIDGE_TOKEN</code> auth.
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Auto-Recovery</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              Lazy-spawn native host on first connection.<br>
+              Auto-restart on crash, 15s heartbeat.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLI Commands -->
+    <section id="cli" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> CLI
+        </h2>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="p-4 font-[family-name:var(--font-mono)] text-sm leading-relaxed">
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> npm install -g claude-chrome-android</span></div>
+            <div class="mt-3 text-terminal-dim">~ $<span class="text-terminal-bright"> claude-chrome-android --setup</span></div>
+            <div class="mt-1 text-terminal-dim">  <span class="text-terminal-green">✓</span> MCP server registered in ~/.claude/settings.json</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">✓</span> URL opener created at ~/bin/termux-url-opener</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">✓</span> CRX served on :18964 — open Edge to install</div>
+            <div class="mt-3 text-terminal-dim">~ $<span class="text-terminal-bright"> claude-chrome-android</span></div>
+            <div class="mt-1 text-terminal-cyan">Bridge listening on ws://127.0.0.1:18963</div>
+            <div class="mt-2 text-terminal-dim">~ $<span class="ml-1 inline-block h-4 w-2 animate-pulse bg-terminal-cyan"></span></div>
+          </div>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          {[
+            { cmd: "claude-chrome-android", desc: "Start the bridge server" },
+            { cmd: "claude-chrome-android --mcp", desc: "MCP relay mode (spawned by Claude Code automatically)" },
+            { cmd: "claude-chrome-android --setup", desc: "Register MCP server + install extension" },
+            { cmd: "claude-chrome-android --stop", desc: "Stop a running bridge" },
+            { cmd: "claude-chrome-android --version", desc: "Show version" },
+          ].map((c) => (
+            <div class="flex items-baseline gap-3 font-[family-name:var(--font-mono)] text-sm">
+              <code class="text-terminal-cyan shrink-0">{c.cmd}</code>
+              <span class="text-terminal-dim text-xs">— {c.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment Variables -->
+    <section id="env" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> Environment
+        </h2>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <table class="w-full font-[family-name:var(--font-mono)] text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-terminal-border">
+                <th class="px-4 py-3 text-left text-terminal-cyan">Variable</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Default</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { name: "BRIDGE_PORT", def: "18963", desc: "WebSocket / HTTP server port" },
+                { name: "BRIDGE_URL", def: "http://127.0.0.1:18963", desc: "Bridge URL for MCP relay" },
+                { name: "BRIDGE_TOKEN", def: "(empty)", desc: "Optional shared secret for auth" },
+                { name: "BRIDGE_LOG_LEVEL", def: "info", desc: "debug | info | warn | error" },
+                { name: "CDP_PORT", def: "9223", desc: "ADB forward port for Chrome DevTools Protocol" },
+              ].map((v, i) => (
+                <tr class={i < 4 ? "border-b border-terminal-border/30" : ""}>
+                  <td class="px-4 py-2.5 text-terminal-bright">{v.name}</td>
+                  <td class="px-4 py-2.5 text-terminal-amber">{v.def}</td>
+                  <td class="px-4 py-2.5 text-terminal-dim">{v.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- MCP Tools -->
+    <section id="tools" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> MCP Tools
+        </h2>
+
+        <p class="mb-6 text-sm text-terminal-dim">
+          These tools are registered with Claude Code as <code class="text-terminal-cyan">cfc-bridge</code> and appear
+          as <code class="text-terminal-cyan">mcp__cfc-bridge__*</code> in the tool list.
+          The bridge must be running before starting a Claude Code session.
+        </p>
+
+        <div class="grid gap-4 sm:grid-cols-2">
+          {[
+            { name: "read_page", desc: "Read accessibility tree + full page text", priority: "P0" },
+            { name: "navigate", desc: "Navigate a tab to a URL", priority: "P0" },
+            { name: "javascript_tool", desc: "Execute JS via chrome.scripting or content script", priority: "P0" },
+            { name: "computer", desc: "Click, type, scroll via content script events", priority: "P1" },
+            { name: "find", desc: "Find elements by text, role, or aria-label", priority: "P1" },
+            { name: "form_input", desc: "Fill form fields with React/Vue compatible dispatch", priority: "P1" },
+            { name: "tabs_context_mcp", desc: "List open tabs with URLs and titles", priority: "P1" },
+            { name: "tabs_create_mcp", desc: "Open a new tab", priority: "P1" },
+            { name: "get_page_text", desc: "Get full page text content", priority: "P1" },
+            { name: "read_console_messages", desc: "Read intercepted console.log output", priority: "P2" },
+            { name: "read_network_requests", desc: "Monitor network requests via CDP", priority: "P2" },
+            { name: "gif_creator", desc: "Record multi-step interactions as GIF", priority: "P2" },
+            { name: "upload_image", desc: "Upload an image file to a page", priority: "P2" },
+            { name: "resize_window", desc: "Resize browser viewport", priority: "P2" },
+          ].map((t) => (
+            <div class="flex items-start gap-3 rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-3">
+              <span class={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-[10px] font-medium ${
+                t.priority === "P0" ? "bg-terminal-green/10 text-terminal-green" :
+                t.priority === "P1" ? "bg-terminal-amber/10 text-terminal-amber" :
+                "bg-terminal-dim/10 text-terminal-dim"
+              }`}>{t.priority}</span>
+              <div>
+                <code class="font-[family-name:var(--font-mono)] text-sm text-terminal-bright">{t.name}</code>
+                <p class="mt-0.5 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{t.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Setup Steps -->
+    <section id="setup" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> Quick Start
+        </h2>
+
+        <div class="space-y-6">
+          {[
+            {
+              step: "1",
+              title: "Install the package",
+              code: "npm install -g claude-chrome-android",
+            },
+            {
+              step: "2",
+              title: "Run setup",
+              code: "claude-chrome-android --setup",
+              note: "Registers MCP server with Claude Code and prepares extension install.",
+            },
+            {
+              step: "3",
+              title: "Install the extension in Edge",
+              code: null,
+              note: "Setup serves the CRX on port 18964 and opens Edge. Tap \"Add extension\" when prompted.",
+            },
+            {
+              step: "4",
+              title: "Start the bridge, then start Claude Code",
+              code: "claude-chrome-android\n# In another terminal:\nclaude",
+              note: "Bridge must be running before starting Claude Code — MCP tools are loaded at session startup.",
+            },
+          ].map((s) => (
+            <div class="flex gap-4">
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-terminal-cyan/30 font-[family-name:var(--font-mono)] text-sm text-terminal-cyan">
+                {s.step}
+              </div>
+              <div class="flex-1">
+                <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-bright">{s.title}</h3>
+                {s.code && (
+                  <div class="mb-2 overflow-hidden rounded border border-terminal-border bg-terminal-surface px-4 py-2.5 font-[family-name:var(--font-mono)] text-xs text-terminal-text">
+                    {s.code.split("\n").map((line: string) => (
+                      <div class={line.startsWith("#") ? "text-terminal-dim" : ""}>
+                        {!line.startsWith("#") && <span class="text-terminal-dim">$ </span>}{line}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {s.note && (
+                  <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{s.note}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Requirements -->
+    <section id="requirements" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-cyan">#</span> Requirements
+        </h2>
+
+        <div class="flex flex-wrap gap-3">
+          {[
+            { name: "Android device", required: true },
+            { name: "Termux", required: true },
+            { name: "Chrome or Edge", required: true },
+            { name: "Node.js 18+", required: true },
+            { name: "ADB", required: false, note: "for setup" },
+            { name: "Bun", required: false, note: "alternative runtime" },
+          ].map((r) => (
+            <span class={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs
+              ${r.required
+                ? "border-terminal-cyan/30 bg-terminal-cyan/5 text-terminal-cyan"
+                : "border-terminal-border text-terminal-dim"
+              }`}>
+              <span class={r.required ? "text-terminal-cyan" : "text-terminal-dim"}>
+                {r.required ? "●" : "○"}
+              </span>
+              {r.name}
+            </span>
+          ))}
+        </div>
+
+        <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          <span class="text-terminal-cyan">●</span> required &nbsp;
+          <span class="text-terminal-dim">○</span> optional
+        </p>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Layout>

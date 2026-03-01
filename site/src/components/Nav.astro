@@ -1,0 +1,30 @@
+---
+// Static navigation bar — zero client JS
+interface Props {
+  current?: string;
+}
+const { current = "" } = Astro.props;
+
+const links = [
+  { href: "/", label: "termux-tools" },
+  { href: "/bridge", label: "Bridge" },
+  { href: "/extension", label: "Extension" },
+];
+---
+
+<nav class="border-b border-terminal-border px-4 py-3 sm:px-6 lg:px-8">
+  <div class="mx-auto flex max-w-4xl items-center gap-4 font-[family-name:var(--font-mono)] text-xs">
+    {links.map((l) => (
+      <a
+        href={l.href}
+        class={`transition-colors ${
+          current === l.href
+            ? "text-terminal-green"
+            : "text-terminal-dim hover:text-terminal-text"
+        }`}
+      >
+        {current === l.href ? `> ${l.label}` : l.label}
+      </a>
+    ))}
+  </div>
+</nav>

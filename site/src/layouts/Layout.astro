@@ -2,15 +2,18 @@
 interface Props {
   title?: string;
   description?: string;
+  path?: string;
 }
 
 const {
   title = "termux-tools — Turn your phone into a persistent dev server",
   description = "Tmux multi-instance manager, ADB wireless automation, Tasker crash recovery, and Claude Code integration for Android development in Termux.",
+  path = "",
 } = Astro.props;
 
-const canonicalUrl = "https://tribixbite.github.io/termux-tools";
-const ogImage = `${canonicalUrl}/og.png`;
+const siteUrl = "https://termux.party";
+const canonicalUrl = `${siteUrl}${path ? `/${path}` : ""}`;
+const ogImage = `${siteUrl}/og.png`;
 ---
 
 <!doctype html>
