@@ -185,9 +185,11 @@ import Footer from "../components/Footer.astro";
         </h2>
 
         <p class="mb-6 text-sm text-terminal-dim">
-          These tools are registered with Claude Code as <code class="text-terminal-cyan">cfc-bridge</code> and appear
+          The npm package is <code class="text-terminal-cyan">claude-chrome-android</code> (the CLI command).
+          It registers with Claude Code under the MCP namespace <code class="text-terminal-cyan">cfc-bridge</code>, so tools appear
           as <code class="text-terminal-cyan">mcp__cfc-bridge__*</code> in the tool list.
           The bridge must be running before starting a Claude Code session.
+          See the <a href="/extension" class="text-terminal-amber hover:text-terminal-bright transition-colors">extension page</a> for browser-side details.
         </p>
 
         <div class="grid gap-4 sm:grid-cols-2">
@@ -294,7 +296,7 @@ import Footer from "../components/Footer.astro";
             { name: "Termux", required: true },
             { name: "Chrome or Edge", required: true },
             { name: "Node.js 18+", required: true },
-            { name: "ADB", required: false, note: "for setup" },
+            { name: "ADB", required: false, note: "for setup + screenshots" },
             { name: "Bun", required: false, note: "alternative runtime" },
           ].map((r) => (
             <span class={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs
