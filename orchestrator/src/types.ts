@@ -108,6 +108,14 @@ export interface OrchestratorConfig {
   /** Android 12+ phantom process limit */
   process_budget: number;
   wake_lock_policy: WakeLockPolicy;
+  /** HTTP dashboard port (0 = disabled) */
+  dashboard_port: number;
+  /** MemAvailable threshold for warning pressure (MB) */
+  memory_warning_mb: number;
+  /** MemAvailable threshold for critical pressure (MB) */
+  memory_critical_mb: number;
+  /** MemAvailable threshold for emergency pressure (MB) */
+  memory_emergency_mb: number;
 }
 
 /** Default health check configs by session type */
@@ -141,6 +149,10 @@ export interface SessionState {
   consecutive_failures: number;
   /** PID of the tmux server process (if known) */
   tmux_pid: number | null;
+  /** Resident set size of session process tree in MB (from memory monitor) */
+  rss_mb: number | null;
+  /** CPU activity classification (from activity detector) */
+  activity: "active" | "idle" | "stopped" | "unknown" | null;
 }
 
 /** Full persisted state */
@@ -153,6 +165,18 @@ export interface TmxState {
   adb_fixed: boolean;
   /** Per-session states keyed by name */
   sessions: Record<string, SessionState>;
+  /** Latest system memory snapshot (populated by daemon, not persisted) */
+  memory?: SystemMemorySnapshot | null;
+}
+
+/** System memory snapshot stored in state (mirrors SystemMemory from memory.ts) */
+export interface SystemMemorySnapshot {
+  total_mb: number;
+  available_mb: number;
+  swap_total_mb: number;
+  swap_free_mb: number;
+  pressure: string;
+  used_pct: number;
 }
 
 // -- IPC protocol -------------------------------------------------------------
@@ -169,7 +193,8 @@ export type IpcCommand =
   | { cmd: "go"; name: string }
   | { cmd: "send"; name: string; text: string }
   | { cmd: "tabs"; names?: string[] }
-  | { cmd: "config" };
+  | { cmd: "config" }
+  | { cmd: "memory" };
 
 /** Response from daemon to CLI */
 export interface IpcResponse {

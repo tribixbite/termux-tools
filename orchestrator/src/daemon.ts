@@ -19,6 +19,8 @@ import { BudgetTracker } from "./budget.js";
 import { WakeLockManager } from "./wake.js";
 import { computeStartupOrder, computeShutdownOrder } from "./deps.js";
 import { runHealthSweep } from "./health.js";
+import { MemoryMonitor } from "./memory.js";
+import { ActivityDetector } from "./activity.js";
 import {
   createSession,
   sessionExists,
@@ -54,7 +56,10 @@ export class Daemon {
   private ipc: IpcServer;
   private budget: BudgetTracker;
   private wake: WakeLockManager;
+  private memory: MemoryMonitor;
+  private activity: ActivityDetector;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
+  private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
 
@@ -64,6 +69,13 @@ export class Daemon {
     this.state = new StateManager(this.config.orchestrator.state_file, this.log);
     this.budget = new BudgetTracker(this.config.orchestrator.process_budget, this.log);
     this.wake = new WakeLockManager(this.config.orchestrator.wake_lock_policy, this.log);
+    this.memory = new MemoryMonitor(
+      this.log,
+      this.config.orchestrator.memory_warning_mb,
+      this.config.orchestrator.memory_critical_mb,
+      this.config.orchestrator.memory_emergency_mb,
+    );
+    this.activity = new ActivityDetector(this.log);
 
     // Wire up IPC handler
     this.ipc = new IpcServer(
@@ -97,6 +109,9 @@ export class Daemon {
 
     // Start health check timer
     this.startHealthTimer();
+
+    // Start memory monitoring timer (every 15s)
+    this.startMemoryTimer();
 
     notify("tmx daemon", "Orchestrator started");
 
@@ -146,10 +161,14 @@ export class Daemon {
     this.shutdownInProgress = true;
     this.log.info("Shutdown sequence starting");
 
-    // Stop health checks
+    // Stop health checks and memory monitoring
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
+    }
+    if (this.memoryTimer) {
+      clearInterval(this.memoryTimer);
+      this.memoryTimer = null;
     }
     if (this.adbRetryTimer) {
       clearInterval(this.adbRetryTimer);
@@ -492,6 +511,123 @@ export class Daemon {
     }
   }
 
+  // -- Memory monitoring & OOM shedding ----------------------------------------
+
+  /** Start periodic memory monitoring timer (every 15s) */
+  private startMemoryTimer(): void {
+    this.memoryTimer = setInterval(() => {
+      this.memoryPollAndShed();
+    }, 15_000);
+    // Run an initial poll immediately
+    this.memoryPollAndShed();
+  }
+
+  /** Poll system memory, update per-session RSS/activity, shed if needed */
+  private memoryPollAndShed(): void {
+    // System memory
+    const sysMem = this.memory.getSystemMemory();
+    this.state.updateSystemMemory(sysMem);
+
+    // Per-session RSS and activity classification
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      if (!s || (s.status !== "running" && s.status !== "degraded")) {
+        if (s) this.state.updateSessionMetrics(session.name, null, null);
+        continue;
+      }
+
+      // Get tmux pane PID for this session
+      const pid = this.memory.getSessionPid(session.name);
+      if (pid === null) {
+        this.state.updateSessionMetrics(session.name, null, "stopped");
+        continue;
+      }
+
+      // Get RSS for the full process tree
+      const { rss_mb } = this.memory.getProcessTreeRss(pid);
+
+      // Classify activity based on CPU ticks
+      const activityState = this.activity.classifyTree(session.name, pid);
+
+      this.state.updateSessionMetrics(session.name, rss_mb, activityState);
+    }
+
+    // Check if we need to shed sessions due to memory pressure
+    if (sysMem.pressure !== "normal") {
+      this.log.warn(`Memory pressure: ${sysMem.pressure} (${sysMem.available_mb}MB available)`, {
+        available_mb: sysMem.available_mb,
+        total_mb: sysMem.total_mb,
+        pressure: sysMem.pressure,
+      });
+    }
+
+    if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
+      this.shedIdleSessions(sysMem.pressure);
+    }
+  }
+
+  /**
+   * Shed sessions to reduce memory pressure.
+   * Priority: stop idle sessions first (lowest priority number = most important),
+   * then active sessions if still in emergency.
+   */
+  private async shedIdleSessions(pressure: "critical" | "emergency"): Promise<void> {
+    // Collect candidate sessions sorted by priority (highest number = least important)
+    const candidates: Array<{ name: string; priority: number; activity: string | null }> = [];
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      if (!s || s.status !== "running") continue;
+      candidates.push({
+        name: session.name,
+        priority: session.priority,
+        activity: s.activity,
+      });
+    }
+
+    // Sort: idle first, then by priority descending (least important first)
+    candidates.sort((a, b) => {
+      const aIdle = a.activity === "idle" ? 0 : 1;
+      const bIdle = b.activity === "idle" ? 0 : 1;
+      if (aIdle !== bIdle) return aIdle - bIdle;
+      return b.priority - a.priority; // higher priority number = less important
+    });
+
+    // In critical mode, shed idle headless services first
+    // In emergency mode, shed any idle session
+    const maxShed = pressure === "emergency" ? 2 : 1;
+    let shedCount = 0;
+
+    for (const candidate of candidates) {
+      if (shedCount >= maxShed) break;
+
+      const sessionConfig = this.config.sessions.find((s) => s.name === candidate.name);
+      if (!sessionConfig) continue;
+
+      // In critical, only shed idle sessions; in emergency, shed idle first then active
+      if (pressure === "critical" && candidate.activity !== "idle") continue;
+      if (pressure === "emergency" && candidate.activity !== "idle" && shedCount === 0) {
+        // Try idle first even in emergency
+        const hasIdle = candidates.some((c) => c.activity === "idle");
+        if (hasIdle) continue;
+      }
+
+      this.log.warn(`Shedding session '${candidate.name}' due to ${pressure} memory pressure`, {
+        session: candidate.name,
+        activity: candidate.activity,
+        priority: candidate.priority,
+      });
+
+      notify("tmx memory", `Shedding '${candidate.name}' — ${pressure} memory pressure`);
+      await this.stopSessionByName(candidate.name);
+      shedCount++;
+    }
+
+    if (shedCount === 0) {
+      this.log.warn("No sessions available to shed");
+      notify("tmx memory", `${pressure} memory pressure — no sessions to shed`);
+    }
+  }
+
   // -- Cron -------------------------------------------------------------------
 
   /** Start crond if not already running */
@@ -526,6 +662,11 @@ export class Daemon {
         this.config = loadConfig();
         this.state.initFromConfig(this.config.sessions);
         this.budget.setBudget(this.config.orchestrator.process_budget);
+        this.memory.setThresholds(
+          this.config.orchestrator.memory_warning_mb,
+          this.config.orchestrator.memory_critical_mb,
+          this.config.orchestrator.memory_emergency_mb,
+        );
         this.log.info("Config reloaded successfully");
       } catch (err) {
         this.log.error(`Config reload failed: ${err}`);
@@ -575,6 +716,9 @@ export class Daemon {
       case "config":
         return { ok: true, data: this.config };
 
+      case "memory":
+        return this.cmdMemory();
+
       default:
         return { ok: false, error: `Unknown command: ${(cmd as { cmd: string }).cmd}` };
     }
@@ -600,6 +744,7 @@ export class Daemon {
         adb_fixed: state.adb_fixed,
         budget: this.budget.check(),
         wake_lock: this.wake.isHeld(),
+        memory: state.memory ?? null,
         sessions: Object.values(state.sessions).map((s) => ({
           ...s,
           uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null,
@@ -655,6 +800,29 @@ export class Daemon {
   private cmdHealth(): IpcResponse {
     const results = runHealthSweep(this.config, this.state, this.log);
     return { ok: true, data: results };
+  }
+
+  /** Memory command — return system memory + per-session RSS + pressure */
+  private cmdMemory(): IpcResponse {
+    const sysMem = this.memory.getSystemMemory();
+    const sessions: Array<{ name: string; rss_mb: number | null; activity: string | null }> = [];
+
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      sessions.push({
+        name: session.name,
+        rss_mb: s?.rss_mb ?? null,
+        activity: s?.activity ?? null,
+      });
+    }
+
+    return {
+      ok: true,
+      data: {
+        system: sysMem,
+        sessions,
+      },
+    };
   }
 
   /** Go command — send "go" to a Claude session */

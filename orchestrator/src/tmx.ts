@@ -13,7 +13,7 @@ import { loadConfig, findConfigPath, validateConfigFile } from "./config.js";
 import { Logger } from "./log.js";
 import { parseReposConf, generateToml, findReposConf } from "./migrate.js";
 import type { IpcCommand, HealthResult } from "./types.js";
-import type { DaemonStatusData, SessionDetailData, ConfigSessionRow } from "./display-types.js";
+import type { DaemonStatusData, SessionDetailData, ConfigSessionRow, MemoryData } from "./display-types.js";
 
 // -- ANSI helpers -------------------------------------------------------------
 
@@ -80,6 +80,7 @@ async function main(): Promise<void> {
     case "stop":
     case "restart":
     case "health":
+    case "memory":
     case "shutdown":
     case "go":
     case "send":
@@ -176,6 +177,8 @@ function runConfig(): void {
   console.log(`  health_interval:  ${config.orchestrator.health_interval_s}s`);
   console.log(`  process_budget:   ${config.orchestrator.process_budget}`);
   console.log(`  wake_lock_policy: ${config.orchestrator.wake_lock_policy}`);
+  console.log(`  dashboard_port:   ${config.orchestrator.dashboard_port}`);
+  console.log(`  memory_warn/crit: ${config.orchestrator.memory_warning_mb}/${config.orchestrator.memory_critical_mb}/${config.orchestrator.memory_emergency_mb} MB`);
   console.log();
 
   console.log(`${BOLD}ADB${RESET}`);
@@ -297,6 +300,9 @@ async function runIpcCommand(): Promise<void> {
     case "shutdown":
       cmd = { cmd: "shutdown" };
       break;
+    case "memory":
+      cmd = { cmd: "memory" };
+      break;
     case "go":
       if (!subArgs[0]) {
         console.error(`Usage: tmx go <session-name>`);
@@ -369,6 +375,11 @@ function formatOutput(cmd: string, data: unknown): void {
       break;
     }
 
+    case "memory": {
+      formatMemory(data as MemoryData);
+      break;
+    }
+
     default:
       if (typeof data === "string") {
         console.log(data);
@@ -390,24 +401,80 @@ function formatDaemonStatus(data: DaemonStatusData): void {
   const b = data.budget;
   const budgetColor = b.mode === "critical" ? RED : b.mode === "warning" ? YELLOW : GREEN;
   console.log(`  procs: ${budgetColor}${b.total_procs}/${b.budget}${RESET} (${b.usage_pct}%)`);
+
+  // Show memory if available
+  if (data.memory) {
+    const m = data.memory;
+    const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED
+      : m.pressure === "warning" ? YELLOW : GREEN;
+    console.log(`  mem:   ${pressureColor}${m.available_mb}MB free${RESET} / ${m.total_mb}MB (${m.pressure})`);
+  }
   console.log();
 
   // Session table
   if (data.sessions?.length > 0) {
-    const header = `${"NAME".padEnd(22)} ${"STATUS".padEnd(18)} ${"UPTIME".padEnd(10)} ${"RESTARTS".padEnd(10)} HEALTH`;
+    const header = `${"NAME".padEnd(22)} ${"STATUS".padEnd(18)} ${"ACT".padEnd(8)} ${"RSS".padEnd(8)} ${"UPTIME".padEnd(10)} HEALTH`;
     console.log(`${DIM}${header}${RESET}`);
 
     for (const s of data.sessions) {
       const status = STATUS_COLORS[s.status] ?? s.status;
       const uptime = s.uptime ?? "-";
-      const restarts = s.restart_count > 0 ? `${YELLOW}${s.restart_count}${RESET}` : `${DIM}0${RESET}`;
+      // Activity indicator
+      const actIcon = s.activity === "active" ? `${GREEN}run${RESET}`
+        : s.activity === "idle" ? `${YELLOW}idle${RESET}`
+        : s.activity === "stopped" ? `${DIM}stop${RESET}`
+        : `${DIM}-${RESET}`;
+      // RSS display
+      const rss = s.rss_mb != null ? `${s.rss_mb}MB` : "-";
       const health = s.last_health_check
         ? (s.consecutive_failures > 0
           ? `${RED}${s.consecutive_failures} fail${RESET}`
           : `${GREEN}ok${RESET}`)
         : `${DIM}-${RESET}`;
-      console.log(`${s.name.padEnd(22)} ${status.padEnd(27)} ${uptime.padEnd(10)} ${restarts.padEnd(19)} ${health}`);
+      console.log(`${s.name.padEnd(22)} ${status.padEnd(27)} ${actIcon.padEnd(17)} ${rss.padEnd(8)} ${uptime.padEnd(10)} ${health}`);
     }
+  }
+}
+
+/** Format memory command output */
+function formatMemory(data: MemoryData): void {
+  const m = data.system;
+  const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED
+    : m.pressure === "warning" ? YELLOW : GREEN;
+
+  console.log(`${BOLD}System Memory${RESET}`);
+  console.log(`  total:     ${m.total_mb} MB`);
+  console.log(`  available: ${pressureColor}${m.available_mb} MB${RESET}`);
+  console.log(`  used:      ${m.used_pct}%`);
+  console.log(`  pressure:  ${pressureColor}${m.pressure}${RESET}`);
+  if (m.swap_total_mb > 0) {
+    console.log(`  swap:      ${m.swap_free_mb}/${m.swap_total_mb} MB free`);
+  }
+  console.log();
+
+  // Per-session RSS
+  const sessionsWithRss = data.sessions.filter((s) => s.rss_mb !== null);
+  if (sessionsWithRss.length > 0) {
+    console.log(`${BOLD}Session Memory${RESET}`);
+    const header = `${"NAME".padEnd(22)} ${"RSS".padEnd(10)} ACTIVITY`;
+    console.log(`${DIM}${header}${RESET}`);
+
+    // Sort by RSS descending
+    sessionsWithRss.sort((a, b) => (b.rss_mb ?? 0) - (a.rss_mb ?? 0));
+
+    let totalRss = 0;
+    for (const s of sessionsWithRss) {
+      const rss = `${s.rss_mb}MB`;
+      const actIcon = s.activity === "active" ? `${GREEN}active${RESET}`
+        : s.activity === "idle" ? `${YELLOW}idle${RESET}`
+        : s.activity === "stopped" ? `${DIM}stopped${RESET}`
+        : `${DIM}unknown${RESET}`;
+      console.log(`  ${s.name.padEnd(20)} ${rss.padEnd(10)} ${actIcon}`);
+      totalRss += s.rss_mb ?? 0;
+    }
+    console.log(`${DIM}${"".padEnd(22)} ${(totalRss + "MB").padEnd(10)} total${RESET}`);
+  } else {
+    console.log(`${DIM}No session memory data available${RESET}`);
   }
 }
 
@@ -503,6 +570,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}restart${RESET} [name]        Stop then start
   ${CYAN}boot${RESET}                  Full sequence: daemon + ADB fix + start all + cron
   ${CYAN}health${RESET}                Run health sweep now
+  ${CYAN}memory${RESET}                System memory + per-session RSS + pressure level
   ${CYAN}logs${RESET} [name]           Tail structured logs
   ${CYAN}tabs${RESET} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET}                Validate and print resolved config

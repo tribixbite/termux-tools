@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { SessionState, SessionStatus, TmxState, SessionConfig } from "./types.js";
+import type { SessionState, SessionStatus, SystemMemorySnapshot, TmxState, SessionConfig } from "./types.js";
 import { VALID_TRANSITIONS } from "./types.js";
 import type { Logger } from "./log.js";
 
@@ -22,6 +22,8 @@ export function newSessionState(name: string): SessionState {
     last_health_check: null,
     consecutive_failures: 0,
     tmux_pid: null,
+    rss_mb: null,
+    activity: null,
   };
 }
 
@@ -173,6 +175,21 @@ export class StateManager {
       session.tmux_pid = pid;
       this.persist();
     }
+  }
+
+  /** Update memory/activity metrics for a session (does not persist — transient data) */
+  updateSessionMetrics(name: string, rss_mb: number | null, activity: SessionState["activity"]): void {
+    const session = this.state.sessions[name];
+    if (session) {
+      session.rss_mb = rss_mb;
+      session.activity = activity;
+      // Don't persist — these are ephemeral metrics updated every poll cycle
+    }
+  }
+
+  /** Update system memory snapshot (transient, not persisted) */
+  updateSystemMemory(memory: SystemMemorySnapshot | null): void {
+    this.state.memory = memory;
   }
 
   /** Force-set a session's status (for adoption/reconciliation) */

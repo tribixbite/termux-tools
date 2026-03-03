@@ -10,6 +10,10 @@ health_interval_s = 120                 # Seconds between health check sweeps
 boot_timeout_s = 300                    # Max seconds for full boot sequence
 process_budget = 32                     # Android 12+ phantom process limit
 wake_lock_policy = "active_sessions"    # always | active_sessions | boot_only | never
+dashboard_port = 18970                  # HTTP dashboard port (0 = disabled)
+memory_warning_mb = 1500                # MemAvailable threshold for warning (MB)
+memory_critical_mb = 800                # MemAvailable threshold for critical — sheds idle sessions
+memory_emergency_mb = 500               # MemAvailable threshold for emergency — sheds any session
 
 [adb]
 enabled = true

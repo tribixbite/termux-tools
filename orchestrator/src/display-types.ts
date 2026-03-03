@@ -22,10 +22,6 @@ export interface DaemonStatusData {
 export interface SessionSummary extends SessionState {
   /** Human-readable uptime string (e.g. "2h 15m") */
   uptime: string | null;
-  /** RSS in megabytes (from memory monitor, if available) */
-  rss_mb?: number | null;
-  /** Activity classification */
-  activity?: "active" | "idle" | "stopped" | "unknown";
 }
 
 /** Data returned for a single session detail view */
@@ -52,4 +48,15 @@ export interface SystemMemorySummary {
   swap_total_mb: number;
   swap_free_mb: number;
   pressure: string;
+  used_pct: number;
+}
+
+/** Memory command response data */
+export interface MemoryData {
+  system: SystemMemorySummary;
+  sessions: Array<{
+    name: string;
+    rss_mb: number | null;
+    activity: string | null;
+  }>;
 }
