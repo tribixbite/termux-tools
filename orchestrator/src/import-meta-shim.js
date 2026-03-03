@@ -1,3 +1,6 @@
 // CJS shim for import.meta.url — injected by esbuild
-const import_meta_url = require("url").pathToFileURL(__filename).href;
-module.exports = { import_meta_url };
+// Must use ESM export syntax so esbuild hoists the variable to top scope
+// (module.exports causes __commonJS wrapping which scopes the variable)
+export const import_meta_url = typeof __filename !== "undefined"
+  ? require("url").pathToFileURL(__filename).href
+  : undefined;

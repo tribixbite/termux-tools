@@ -6,9 +6,6 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -27,21 +24,13 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/import-meta-shim.js
-var require_import_meta_shim = __commonJS({
-  "src/import-meta-shim.js"(exports2, module2) {
-    "use strict";
-    var import_meta_url2 = require("url").pathToFileURL(__filename).href;
-    module2.exports = { import_meta_url: import_meta_url2 };
-  }
-});
+var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : void 0;
 
 // src/tmx.ts
-var import_import_meta_shim13 = __toESM(require_import_meta_shim());
-var import_node_fs6 = require("node:fs");
-var import_node_child_process6 = require("node:child_process");
+var import_node_fs9 = require("node:fs");
+var import_node_child_process7 = require("node:child_process");
 
 // src/ipc.ts
-var import_import_meta_shim = __toESM(require_import_meta_shim());
 var net = __toESM(require("node:net"));
 var import_node_fs = require("node:fs");
 var IpcServer = class {
@@ -198,11 +187,10 @@ var IpcClient = class {
 };
 
 // src/daemon.ts
-var import_import_meta_shim11 = __toESM(require_import_meta_shim());
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
+var import_node_path3 = require("node:path");
 
 // src/config.ts
-var import_import_meta_shim2 = __toESM(require_import_meta_shim());
 var import_node_fs2 = require("node:fs");
 var CONFIG_PATHS = [
   "$HOME/.config/tmx/tmx.toml",
@@ -347,7 +335,11 @@ function validateConfig(raw) {
       VALID_WAKE_POLICIES,
       "orchestrator.wake_lock_policy",
       "active_sessions"
-    )
+    ),
+    dashboard_port: asNumber(orc.dashboard_port, "orchestrator.dashboard_port", 18970),
+    memory_warning_mb: asNumber(orc.memory_warning_mb, "orchestrator.memory_warning_mb", 1500),
+    memory_critical_mb: asNumber(orc.memory_critical_mb, "orchestrator.memory_critical_mb", 800),
+    memory_emergency_mb: asNumber(orc.memory_emergency_mb, "orchestrator.memory_emergency_mb", 500)
   };
   const adbRaw = raw.adb ?? {};
   const adb = {
@@ -526,7 +518,6 @@ function getHealthConfig(session, defaults) {
 }
 
 // src/log.ts
-var import_import_meta_shim3 = __toESM(require_import_meta_shim());
 var import_node_fs3 = require("node:fs");
 var MAX_LOG_SIZE = 5 * 1024 * 1024;
 var MAX_ROTATED = 3;
@@ -655,12 +646,10 @@ var Logger = class {
 };
 
 // src/state.ts
-var import_import_meta_shim5 = __toESM(require_import_meta_shim());
 var import_node_fs4 = require("node:fs");
 var import_node_path = require("node:path");
 
 // src/types.ts
-var import_import_meta_shim4 = __toESM(require_import_meta_shim());
 var VALID_TRANSITIONS = {
   pending: ["waiting", "stopped"],
   waiting: ["starting", "stopped"],
@@ -682,7 +671,9 @@ function newSessionState(name) {
     last_error: null,
     last_health_check: null,
     consecutive_failures: 0,
-    tmux_pid: null
+    tmux_pid: null,
+    rss_mb: null,
+    activity: null
   };
 }
 function newDaemonState() {
@@ -807,6 +798,18 @@ var StateManager = class {
       this.persist();
     }
   }
+  /** Update memory/activity metrics for a session (does not persist — transient data) */
+  updateSessionMetrics(name, rss_mb, activity) {
+    const session = this.state.sessions[name];
+    if (session) {
+      session.rss_mb = rss_mb;
+      session.activity = activity;
+    }
+  }
+  /** Update system memory snapshot (transient, not persisted) */
+  updateSystemMemory(memory) {
+    this.state.memory = memory;
+  }
   /** Force-set a session's status (for adoption/reconciliation) */
   forceStatus(name, status) {
     const session = this.state.sessions[name];
@@ -844,7 +847,6 @@ var StateManager = class {
 };
 
 // src/budget.ts
-var import_import_meta_shim6 = __toESM(require_import_meta_shim());
 var import_node_child_process = require("node:child_process");
 var WARNING_PCT = 70;
 var CRITICAL_PCT = 90;
@@ -920,7 +922,6 @@ var BudgetTracker = class {
 };
 
 // src/wake.ts
-var import_import_meta_shim7 = __toESM(require_import_meta_shim());
 var import_node_child_process2 = require("node:child_process");
 var WakeLockManager = class {
   policy;
@@ -999,7 +1000,6 @@ var WakeLockManager = class {
 };
 
 // src/deps.ts
-var import_import_meta_shim8 = __toESM(require_import_meta_shim());
 var CycleError = class extends Error {
   constructor(cycle) {
     super(`Dependency cycle detected: ${cycle.join(" \u2192 ")}`);
@@ -1060,11 +1060,9 @@ function computeShutdownOrder(sessions) {
 }
 
 // src/health.ts
-var import_import_meta_shim10 = __toESM(require_import_meta_shim());
 var import_node_child_process4 = require("node:child_process");
 
 // src/session.ts
-var import_import_meta_shim9 = __toESM(require_import_meta_shim());
 var import_node_child_process3 = require("node:child_process");
 var CLAUDE_READY_TIMEOUT = 3e4;
 var CLAUDE_POLL_INTERVAL = 500;
@@ -1411,13 +1409,532 @@ function runHealthSweep(config, state, log) {
   return results;
 }
 
+// src/memory.ts
+var import_node_fs5 = require("node:fs");
+var import_node_child_process5 = require("node:child_process");
+var MemoryMonitor = class {
+  log;
+  warningMb;
+  criticalMb;
+  emergencyMb;
+  constructor(log, warningMb = 1500, criticalMb = 800, emergencyMb = 500) {
+    this.log = log;
+    this.warningMb = warningMb;
+    this.criticalMb = criticalMb;
+    this.emergencyMb = emergencyMb;
+  }
+  /** Update pressure thresholds (e.g. from config reload) */
+  setThresholds(warningMb, criticalMb, emergencyMb) {
+    this.warningMb = warningMb;
+    this.criticalMb = criticalMb;
+    this.emergencyMb = emergencyMb;
+  }
+  /** Read system memory stats from /proc/meminfo */
+  getSystemMemory() {
+    try {
+      const content = (0, import_node_fs5.readFileSync)("/proc/meminfo", "utf-8");
+      const fields = /* @__PURE__ */ new Map();
+      for (const line of content.split("\n")) {
+        const match = line.match(/^(\w+):\s+(\d+)\s+kB/);
+        if (match) {
+          fields.set(match[1], parseInt(match[2], 10));
+        }
+      }
+      const totalKb = fields.get("MemTotal") ?? 0;
+      const availableKb = fields.get("MemAvailable") ?? 0;
+      const swapTotalKb = fields.get("SwapTotal") ?? 0;
+      const swapFreeKb = fields.get("SwapFree") ?? 0;
+      const totalMb = Math.round(totalKb / 1024);
+      const availableMb = Math.round(availableKb / 1024);
+      const usedPct = totalMb > 0 ? Math.round((totalMb - availableMb) / totalMb * 100) : 0;
+      return {
+        total_mb: totalMb,
+        available_mb: availableMb,
+        swap_total_mb: Math.round(swapTotalKb / 1024),
+        swap_free_mb: Math.round(swapFreeKb / 1024),
+        pressure: this.classifyPressure(availableMb),
+        used_pct: usedPct
+      };
+    } catch (err) {
+      this.log.warn(`Failed to read /proc/meminfo: ${err}`);
+      return {
+        total_mb: 0,
+        available_mb: 0,
+        swap_total_mb: 0,
+        swap_free_mb: 0,
+        pressure: "normal",
+        used_pct: 0
+      };
+    }
+  }
+  /** Classify pressure from MemAvailable */
+  classifyPressure(availableMb) {
+    if (availableMb < this.emergencyMb) return "emergency";
+    if (availableMb < this.criticalMb) return "critical";
+    if (availableMb < this.warningMb) return "warning";
+    return "normal";
+  }
+  /**
+   * Get the total RSS for a process tree rooted at the given PID.
+   * Sums RSS of the process and all descendants using ps output.
+   */
+  getProcessTreeRss(rootPid) {
+    const entries = this.getAllProcesses();
+    const descendants = this.findDescendants(rootPid, entries);
+    const root = entries.find((e) => e.pid === rootPid);
+    if (root) descendants.push(root);
+    const totalKb = descendants.reduce((sum, e) => sum + e.rss_kb, 0);
+    return {
+      rss_mb: Math.round(totalKb / 1024),
+      process_count: descendants.length
+    };
+  }
+  /**
+   * Get memory stats for named sessions given their tmux pane PIDs.
+   * @param sessions Map of session name → shell PID inside the tmux pane
+   */
+  getSessionMemory(sessions) {
+    const entries = this.getAllProcesses();
+    const results = [];
+    for (const [name, pid] of sessions) {
+      const descendants = this.findDescendants(pid, entries);
+      const root = entries.find((e) => e.pid === pid);
+      if (root) descendants.push(root);
+      const totalKb = descendants.reduce((sum, e) => sum + e.rss_kb, 0);
+      results.push({
+        name,
+        rss_mb: Math.round(totalKb / 1024),
+        process_count: descendants.length
+      });
+    }
+    return results;
+  }
+  /** Get PID of the shell inside a tmux session pane */
+  getSessionPid(sessionName) {
+    try {
+      const output = (0, import_node_child_process5.execSync)(
+        `tmux list-panes -t "${sessionName}" -F "#{pane_pid}" 2>/dev/null`,
+        { encoding: "utf-8", timeout: 5e3 }
+      ).trim();
+      const pid = parseInt(output.split("\n")[0], 10);
+      return isNaN(pid) ? null : pid;
+    } catch {
+      return null;
+    }
+  }
+  /** Parse ps output to get all processes with pid, ppid, rss */
+  getAllProcesses() {
+    try {
+      const output = (0, import_node_child_process5.execSync)("ps -e -o pid=,ppid=,rss= 2>/dev/null", {
+        encoding: "utf-8",
+        timeout: 5e3
+      });
+      const entries = [];
+      for (const line of output.trim().split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 3) {
+          entries.push({
+            pid: parseInt(parts[0], 10),
+            ppid: parseInt(parts[1], 10),
+            rss_kb: parseInt(parts[2], 10)
+          });
+        }
+      }
+      return entries;
+    } catch {
+      this.log.warn("Failed to read process list via ps");
+      return [];
+    }
+  }
+  /** Find all descendant processes of a given PID */
+  findDescendants(rootPid, entries) {
+    const children = [];
+    const stack = [rootPid];
+    while (stack.length > 0) {
+      const parent = stack.pop();
+      for (const entry of entries) {
+        if (entry.ppid === parent && entry.pid !== rootPid) {
+          children.push(entry);
+          stack.push(entry.pid);
+        }
+      }
+    }
+    return children;
+  }
+};
+
+// src/activity.ts
+var import_node_fs6 = require("node:fs");
+var IDLE_THRESHOLD = 3;
+var ActivityDetector = class {
+  log;
+  /** Previous CPU tick snapshots keyed by session name */
+  snapshots = /* @__PURE__ */ new Map();
+  constructor(log) {
+    this.log = log;
+  }
+  /**
+   * Classify the activity state of a process.
+   * Must be called repeatedly (on each poll interval) for delta computation.
+   *
+   * @param name Session name (used as key for tracking)
+   * @param pid Root PID of the process (tmux pane shell)
+   * @returns Activity state classification
+   */
+  classify(name, pid) {
+    const ticks = this.readCpuTicks(pid);
+    if (ticks === null) {
+      this.snapshots.delete(name);
+      return "stopped";
+    }
+    const prev = this.snapshots.get(name);
+    const now = Date.now();
+    if (!prev) {
+      this.snapshots.set(name, { ticks, ts: now, idle_streak: 0 });
+      return "unknown";
+    }
+    const delta = ticks - prev.ticks;
+    if (delta > 0) {
+      this.snapshots.set(name, { ticks, ts: now, idle_streak: 0 });
+      return "active";
+    }
+    const newStreak = prev.idle_streak + 1;
+    this.snapshots.set(name, { ticks, ts: now, idle_streak: newStreak });
+    if (newStreak >= IDLE_THRESHOLD) {
+      return "idle";
+    }
+    return "active";
+  }
+  /**
+   * Classify activity for a process tree (sum ticks of pid + all children).
+   * More accurate for sessions that spawn many child processes.
+   *
+   * @param name Session name
+   * @param pid Root PID
+   * @returns Activity state
+   */
+  classifyTree(name, pid) {
+    const ticks = this.readTreeCpuTicks(pid);
+    if (ticks === null) {
+      this.snapshots.delete(name);
+      return "stopped";
+    }
+    const prev = this.snapshots.get(name);
+    const now = Date.now();
+    if (!prev) {
+      this.snapshots.set(name, { ticks, ts: now, idle_streak: 0 });
+      return "unknown";
+    }
+    const delta = ticks - prev.ticks;
+    if (delta > 0) {
+      this.snapshots.set(name, { ticks, ts: now, idle_streak: 0 });
+      return "active";
+    }
+    const newStreak = prev.idle_streak + 1;
+    this.snapshots.set(name, { ticks, ts: now, idle_streak: newStreak });
+    return newStreak >= IDLE_THRESHOLD ? "idle" : "active";
+  }
+  /** Remove tracking state for a session */
+  remove(name) {
+    this.snapshots.delete(name);
+  }
+  /**
+   * Read utime + stime from /proc/PID/stat.
+   * Fields are space-separated; field 14 = utime, field 15 = stime (1-indexed).
+   * The comm field (2) can contain spaces within parens, so we parse after ')'.
+   */
+  readCpuTicks(pid) {
+    try {
+      const content = (0, import_node_fs6.readFileSync)(`/proc/${pid}/stat`, "utf-8");
+      return this.parseCpuTicks(content);
+    } catch {
+      return null;
+    }
+  }
+  /** Parse utime + stime from a /proc/PID/stat line */
+  parseCpuTicks(statLine) {
+    const closeParen = statLine.lastIndexOf(")");
+    if (closeParen === -1) return null;
+    const fields = statLine.slice(closeParen + 2).split(" ");
+    const utime = parseInt(fields[11], 10);
+    const stime = parseInt(fields[12], 10);
+    if (isNaN(utime) || isNaN(stime)) return null;
+    return utime + stime;
+  }
+  /**
+   * Sum CPU ticks for a process and all its children.
+   * Reads /proc/PID/stat for the root and each child found via ppid matching.
+   */
+  readTreeCpuTicks(rootPid) {
+    const rootTicks = this.readCpuTicks(rootPid);
+    if (rootTicks === null) return null;
+    let total = rootTicks;
+    try {
+      const procEntries = (0, import_node_fs6.readdirSync)("/proc").filter((e) => /^\d+$/.test(e));
+      const stack = [rootPid];
+      const visited = /* @__PURE__ */ new Set([rootPid]);
+      while (stack.length > 0) {
+        const parent = stack.pop();
+        for (const entry of procEntries) {
+          const childPid = parseInt(entry, 10);
+          if (visited.has(childPid)) continue;
+          try {
+            const stat = (0, import_node_fs6.readFileSync)(`/proc/${childPid}/stat`, "utf-8");
+            const closeParen = stat.lastIndexOf(")");
+            if (closeParen === -1) continue;
+            const fields = stat.slice(closeParen + 2).split(" ");
+            const ppid = parseInt(fields[1], 10);
+            if (ppid === parent) {
+              visited.add(childPid);
+              stack.push(childPid);
+              const utime = parseInt(fields[11], 10);
+              const stime = parseInt(fields[12], 10);
+              if (!isNaN(utime) && !isNaN(stime)) {
+                total += utime + stime;
+              }
+            }
+          } catch {
+          }
+        }
+      }
+    } catch {
+    }
+    return total;
+  }
+};
+
+// src/http.ts
+var http = __toESM(require("node:http"));
+var import_node_fs7 = require("node:fs");
+var import_node_path2 = require("node:path");
+var MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".ttf": "font/ttf"
+};
+var DashboardServer = class {
+  server = null;
+  log;
+  port;
+  staticDir;
+  apiHandler;
+  sseClients = [];
+  sseIdCounter = 0;
+  constructor(port, staticDir, apiHandler, log) {
+    this.port = port;
+    this.log = log;
+    this.staticDir = staticDir;
+    this.apiHandler = apiHandler;
+  }
+  /** Start the HTTP server */
+  start() {
+    return new Promise((resolve, reject) => {
+      this.server = http.createServer((req, res) => this.handleRequest(req, res));
+      this.server.on("error", (err) => {
+        this.log.error(`Dashboard server error: ${err}`);
+        reject(err);
+      });
+      this.server.listen(this.port, "0.0.0.0", () => {
+        this.log.info(`Dashboard server listening on http://0.0.0.0:${this.port}`);
+        resolve();
+      });
+    });
+  }
+  /** Stop the HTTP server */
+  stop() {
+    for (const client of this.sseClients) {
+      client.res.end();
+    }
+    this.sseClients = [];
+    if (this.server) {
+      this.server.close();
+      this.server = null;
+    }
+  }
+  /** Push an SSE event to all connected clients */
+  pushEvent(event, data) {
+    const payload = `event: ${event}
+data: ${JSON.stringify(data)}
+
+`;
+    const dead = [];
+    for (const client of this.sseClients) {
+      try {
+        client.res.write(payload);
+      } catch {
+        dead.push(client.id);
+      }
+    }
+    if (dead.length > 0) {
+      this.sseClients = this.sseClients.filter((c) => !dead.includes(c.id));
+    }
+  }
+  /** Get number of connected SSE clients */
+  get sseClientCount() {
+    return this.sseClients.length;
+  }
+  // -- Request handling -------------------------------------------------------
+  async handleRequest(req, res) {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    const path = url.pathname;
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    try {
+      if (path === "/api/events") {
+        this.handleSse(req, res);
+        return;
+      }
+      if (path.startsWith("/api/")) {
+        await this.handleApi(req, res, path);
+        return;
+      }
+      this.handleStatic(res, path);
+    } catch (err) {
+      this.log.error(`HTTP error: ${err}`);
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Internal server error" }));
+    }
+  }
+  /** Handle SSE connection */
+  handleSse(req, res) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+      "Access-Control-Allow-Origin": "*"
+    });
+    const clientId = ++this.sseIdCounter;
+    const client = { res, id: clientId };
+    this.sseClients.push(client);
+    this.log.debug(`SSE client connected (id=${clientId}, total=${this.sseClients.length})`);
+    res.write(`event: connected
+data: ${JSON.stringify({ id: clientId })}
+
+`);
+    req.on("close", () => {
+      this.sseClients = this.sseClients.filter((c) => c.id !== clientId);
+      this.log.debug(`SSE client disconnected (id=${clientId}, remaining=${this.sseClients.length})`);
+    });
+  }
+  /** Handle API request */
+  async handleApi(req, res, path) {
+    let body = "";
+    if (req.method === "POST") {
+      body = await new Promise((resolve) => {
+        const chunks = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+      });
+    }
+    const result = await this.apiHandler(req.method ?? "GET", path, body);
+    res.writeHead(result.status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result.data));
+  }
+  /** Serve static files from the dashboard dist directory */
+  handleStatic(res, urlPath) {
+    let filePath = urlPath === "/" ? "/index.html" : urlPath;
+    filePath = filePath.replace(/\.\./g, "");
+    const fullPath = (0, import_node_path2.join)(this.staticDir, filePath);
+    if (!(0, import_node_fs7.existsSync)(fullPath) || !(0, import_node_fs7.statSync)(fullPath).isFile()) {
+      const indexPath = (0, import_node_path2.join)(this.staticDir, "index.html");
+      if ((0, import_node_fs7.existsSync)(indexPath)) {
+        const content2 = (0, import_node_fs7.readFileSync)(indexPath);
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(content2);
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(this.getFallbackHtml());
+      return;
+    }
+    const ext = (0, import_node_path2.extname)(fullPath).toLowerCase();
+    const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
+    const content = (0, import_node_fs7.readFileSync)(fullPath);
+    const cacheControl = ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": cacheControl
+    });
+    res.end(content);
+  }
+  /** Minimal HTML fallback when dashboard isn't built */
+  getFallbackHtml() {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tmx dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-monospace, 'Cascadia Code', Menlo, monospace;
+      background: #0d1117; color: #c9d1d9;
+      padding: 1rem; max-width: 800px; margin: 0 auto;
+    }
+    h1 { color: #58a6ff; margin-bottom: 1rem; font-size: 1.2rem; }
+    pre { background: #161b22; padding: 1rem; border-radius: 6px; overflow-x: auto; font-size: 0.85rem; }
+    .status { margin: 1rem 0; }
+    .green { color: #3fb950; } .yellow { color: #d29922; } .red { color: #f85149; }
+    .dim { color: #484f58; }
+    #data { white-space: pre-wrap; }
+    .err { color: #f85149; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>tmx dashboard</h1>
+  <p class="dim">Dashboard not built. Run: <code>cd orchestrator/dashboard && bun install && bun run build</code></p>
+  <div class="status">
+    <h2>Live Status</h2>
+    <pre id="data">Loading...</pre>
+  </div>
+  <script>
+    async function refresh() {
+      try {
+        const [status, memory] = await Promise.all([
+          fetch('/api/status').then(r => r.json()),
+          fetch('/api/memory').then(r => r.json()).catch(() => null),
+        ]);
+        let out = JSON.stringify(status, null, 2);
+        if (memory) out += '\\n\\n--- Memory ---\\n' + JSON.stringify(memory, null, 2);
+        document.getElementById('data').textContent = out;
+      } catch (e) {
+        document.getElementById('data').innerHTML = '<span class="err">Failed to fetch: ' + e.message + '</span>';
+      }
+    }
+    refresh();
+    setInterval(refresh, 5000);
+
+    // SSE for real-time updates
+    const es = new EventSource('/api/events');
+    es.addEventListener('state', () => refresh());
+    es.addEventListener('memory', () => refresh());
+  </script>
+</body>
+</html>`;
+  }
+};
+
 // src/daemon.ts
 function sleep2(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 function notify(title, content) {
   try {
-    (0, import_node_child_process5.spawnSync)("termux-notification", ["--title", title, "--content", content], {
+    (0, import_node_child_process6.spawnSync)("termux-notification", ["--title", title, "--content", content], {
       timeout: 5e3,
       stdio: "ignore"
     });
@@ -1431,7 +1948,11 @@ var Daemon = class {
   ipc;
   budget;
   wake;
+  memory;
+  activity;
+  dashboard = null;
   healthTimer = null;
+  memoryTimer = null;
   adbRetryTimer = null;
   running = false;
   constructor(configPath) {
@@ -1440,6 +1961,13 @@ var Daemon = class {
     this.state = new StateManager(this.config.orchestrator.state_file, this.log);
     this.budget = new BudgetTracker(this.config.orchestrator.process_budget, this.log);
     this.wake = new WakeLockManager(this.config.orchestrator.wake_lock_policy, this.log);
+    this.memory = new MemoryMonitor(
+      this.log,
+      this.config.orchestrator.memory_warning_mb,
+      this.config.orchestrator.memory_critical_mb,
+      this.config.orchestrator.memory_emergency_mb
+    );
+    this.activity = new ActivityDetector(this.log);
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
       (cmd) => this.handleIpcCommand(cmd),
@@ -1460,6 +1988,8 @@ var Daemon = class {
     await this.ipc.start();
     this.setupSignalHandlers();
     this.startHealthTimer();
+    this.startMemoryTimer();
+    await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
     await new Promise((resolve) => {
       const check = setInterval(() => {
@@ -1496,6 +2026,10 @@ var Daemon = class {
       clearInterval(this.healthTimer);
       this.healthTimer = null;
     }
+    if (this.memoryTimer) {
+      clearInterval(this.memoryTimer);
+      this.memoryTimer = null;
+    }
     if (this.adbRetryTimer) {
       clearInterval(this.adbRetryTimer);
       this.adbRetryTimer = null;
@@ -1512,6 +2046,10 @@ var Daemon = class {
       await Promise.all(stopPromises);
     }
     this.wake.forceRelease();
+    if (this.dashboard) {
+      this.dashboard.stop();
+      this.dashboard = null;
+    }
     this.ipc.stop();
     this.running = false;
     this.log.info("Shutdown complete");
@@ -1635,7 +2173,7 @@ var Daemon = class {
     this.log.info("Attempting ADB connection for phantom process fix");
     const { connect_script, connect_timeout_s, phantom_fix } = this.config.adb;
     try {
-      const result = (0, import_node_child_process5.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
+      const result = (0, import_node_child_process6.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
         encoding: "utf-8",
         timeout: (connect_timeout_s + 5) * 1e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -1673,14 +2211,14 @@ var Daemon = class {
     ];
     for (const cmd of commands) {
       try {
-        (0, import_node_child_process5.execSync)(cmd, { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process6.execSync)(cmd, { timeout: 1e4, stdio: "ignore" });
       } catch (err) {
         this.log.warn(`Phantom fix command failed: ${cmd}`, { error: String(err) });
       }
     }
     for (const pkg of samsungPkgs) {
       try {
-        (0, import_node_child_process5.execSync)(`adb shell "pm enable ${pkg}"`, { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process6.execSync)(`adb shell "pm enable ${pkg}"`, { timeout: 1e4, stdio: "ignore" });
       } catch {
       }
     }
@@ -1754,13 +2292,202 @@ var Daemon = class {
       notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`);
     }
   }
+  // -- Memory monitoring & OOM shedding ----------------------------------------
+  /** Start periodic memory monitoring timer (every 15s) */
+  startMemoryTimer() {
+    this.memoryTimer = setInterval(() => {
+      this.memoryPollAndShed();
+    }, 15e3);
+    this.memoryPollAndShed();
+  }
+  /** Poll system memory, update per-session RSS/activity, shed if needed */
+  memoryPollAndShed() {
+    const sysMem = this.memory.getSystemMemory();
+    this.state.updateSystemMemory(sysMem);
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      if (!s || s.status !== "running" && s.status !== "degraded") {
+        if (s) this.state.updateSessionMetrics(session.name, null, null);
+        continue;
+      }
+      const pid = this.memory.getSessionPid(session.name);
+      if (pid === null) {
+        this.state.updateSessionMetrics(session.name, null, "stopped");
+        continue;
+      }
+      const { rss_mb } = this.memory.getProcessTreeRss(pid);
+      const activityState = this.activity.classifyTree(session.name, pid);
+      this.state.updateSessionMetrics(session.name, rss_mb, activityState);
+    }
+    if (sysMem.pressure !== "normal") {
+      this.log.warn(`Memory pressure: ${sysMem.pressure} (${sysMem.available_mb}MB available)`, {
+        available_mb: sysMem.available_mb,
+        total_mb: sysMem.total_mb,
+        pressure: sysMem.pressure
+      });
+    }
+    if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
+      this.shedIdleSessions(sysMem.pressure);
+    }
+    this.pushSseState();
+  }
+  /** Push current state snapshot to all SSE clients */
+  pushSseState() {
+    if (!this.dashboard || this.dashboard.sseClientCount === 0) return;
+    const statusResp = this.cmdStatus();
+    if (statusResp.ok) {
+      this.dashboard.pushEvent("state", statusResp.data);
+    }
+  }
+  /**
+   * Shed sessions to reduce memory pressure.
+   * Priority: stop idle sessions first (lowest priority number = most important),
+   * then active sessions if still in emergency.
+   */
+  async shedIdleSessions(pressure) {
+    const candidates = [];
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      if (!s || s.status !== "running") continue;
+      candidates.push({
+        name: session.name,
+        priority: session.priority,
+        activity: s.activity
+      });
+    }
+    candidates.sort((a, b) => {
+      const aIdle = a.activity === "idle" ? 0 : 1;
+      const bIdle = b.activity === "idle" ? 0 : 1;
+      if (aIdle !== bIdle) return aIdle - bIdle;
+      return b.priority - a.priority;
+    });
+    const maxShed = pressure === "emergency" ? 2 : 1;
+    let shedCount = 0;
+    for (const candidate of candidates) {
+      if (shedCount >= maxShed) break;
+      const sessionConfig = this.config.sessions.find((s) => s.name === candidate.name);
+      if (!sessionConfig) continue;
+      if (pressure === "critical" && candidate.activity !== "idle") continue;
+      if (pressure === "emergency" && candidate.activity !== "idle" && shedCount === 0) {
+        const hasIdle = candidates.some((c) => c.activity === "idle");
+        if (hasIdle) continue;
+      }
+      this.log.warn(`Shedding session '${candidate.name}' due to ${pressure} memory pressure`, {
+        session: candidate.name,
+        activity: candidate.activity,
+        priority: candidate.priority
+      });
+      notify("tmx memory", `Shedding '${candidate.name}' \u2014 ${pressure} memory pressure`);
+      await this.stopSessionByName(candidate.name);
+      shedCount++;
+    }
+    if (shedCount === 0) {
+      this.log.warn("No sessions available to shed");
+      notify("tmx memory", `${pressure} memory pressure \u2014 no sessions to shed`);
+    }
+  }
+  // -- Dashboard HTTP server ---------------------------------------------------
+  /** Start HTTP dashboard server if port > 0 */
+  async startDashboard() {
+    const port = this.config.orchestrator.dashboard_port;
+    if (port <= 0) {
+      this.log.debug("Dashboard disabled (port=0)");
+      return;
+    }
+    const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
+    const staticDir = (0, import_node_path3.join)(scriptDir, "..", "dashboard", "dist");
+    this.dashboard = new DashboardServer(
+      port,
+      staticDir,
+      (method, path, body) => this.handleDashboardApi(method, path, body),
+      this.log
+    );
+    try {
+      await this.dashboard.start();
+    } catch (err) {
+      this.log.warn(`Dashboard server failed to start: ${err}`);
+      this.dashboard = null;
+    }
+  }
+  /** Map REST API paths to IPC command handlers */
+  async handleDashboardApi(method, path, body) {
+    const segments = path.replace(/^\/api\//, "").split("/");
+    const command2 = segments[0];
+    const name = segments[1] ? decodeURIComponent(segments[1]) : void 0;
+    try {
+      let resp;
+      switch (command2) {
+        case "status":
+          resp = this.cmdStatus(name);
+          break;
+        case "memory":
+          resp = this.cmdMemory();
+          break;
+        case "health":
+          resp = this.cmdHealth();
+          break;
+        case "start":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdStart(name);
+          break;
+        case "stop":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdStop(name);
+          break;
+        case "restart":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdRestart(name);
+          break;
+        case "go":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = await this.cmdGo(name);
+          break;
+        case "send":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body);
+            resp = this.cmdSend(name, parsed.text ?? "");
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+          break;
+        case "bridge": {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3e3);
+            const bridgeResp = await fetch("http://127.0.0.1:18963/health", {
+              signal: controller.signal
+            });
+            clearTimeout(timeout);
+            const bridgeData = await bridgeResp.json();
+            return { status: 200, data: bridgeData };
+          } catch {
+            return { status: 200, data: { status: "offline", error: "Bridge not reachable" } };
+          }
+        }
+        case "logs": {
+          const sessionFilter = name ?? void 0;
+          const log = new Logger(this.config.orchestrator.log_dir);
+          const entries = log.readTail(100, sessionFilter);
+          return { status: 200, data: entries };
+        }
+        default:
+          return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
+      }
+      return { status: resp.ok ? 200 : 400, data: resp.ok ? resp.data : { error: resp.error } };
+    } catch (err) {
+      return { status: 500, data: { error: String(err) } };
+    }
+  }
   // -- Cron -------------------------------------------------------------------
   /** Start crond if not already running */
   startCron() {
     try {
-      const result = (0, import_node_child_process5.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
+      const result = (0, import_node_child_process6.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
       if (result.status !== 0) {
-        (0, import_node_child_process5.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
+        (0, import_node_child_process6.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
         this.log.info("Started crond");
       }
     } catch {
@@ -1783,6 +2510,11 @@ var Daemon = class {
         this.config = loadConfig();
         this.state.initFromConfig(this.config.sessions);
         this.budget.setBudget(this.config.orchestrator.process_budget);
+        this.memory.setThresholds(
+          this.config.orchestrator.memory_warning_mb,
+          this.config.orchestrator.memory_critical_mb,
+          this.config.orchestrator.memory_emergency_mb
+        );
         this.log.info("Config reloaded successfully");
       } catch (err) {
         this.log.error(`Config reload failed: ${err}`);
@@ -1817,6 +2549,8 @@ var Daemon = class {
         return this.cmdTabs(cmd.names);
       case "config":
         return { ok: true, data: this.config };
+      case "memory":
+        return this.cmdMemory();
       default:
         return { ok: false, error: `Unknown command: ${cmd.cmd}` };
     }
@@ -1839,6 +2573,7 @@ var Daemon = class {
         adb_fixed: state.adb_fixed,
         budget: this.budget.check(),
         wake_lock: this.wake.isHeld(),
+        memory: state.memory ?? null,
         sessions: Object.values(state.sessions).map((s) => ({
           ...s,
           uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
@@ -1889,6 +2624,26 @@ var Daemon = class {
   cmdHealth() {
     const results = runHealthSweep(this.config, this.state, this.log);
     return { ok: true, data: results };
+  }
+  /** Memory command — return system memory + per-session RSS + pressure */
+  cmdMemory() {
+    const sysMem = this.memory.getSystemMemory();
+    const sessions = [];
+    for (const session of this.config.sessions) {
+      const s = this.state.getSession(session.name);
+      sessions.push({
+        name: session.name,
+        rss_mb: s?.rss_mb ?? null,
+        activity: s?.activity ?? null
+      });
+    }
+    return {
+      ok: true,
+      data: {
+        system: sysMem,
+        sessions
+      }
+    };
   }
   /** Go command — send "go" to a Claude session */
   async cmdGo(name) {
@@ -1947,13 +2702,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_import_meta_shim12 = __toESM(require_import_meta_shim());
-var import_node_fs5 = require("node:fs");
+var import_node_fs8 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs5.existsSync)(filePath)) {
+  if (!(0, import_node_fs8.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs5.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs8.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -2046,7 +2800,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs5.existsSync) ?? null;
+  return candidates.find(import_node_fs8.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -2099,6 +2853,7 @@ async function main() {
     case "stop":
     case "restart":
     case "health":
+    case "memory":
     case "shutdown":
     case "go":
     case "send":
@@ -2121,7 +2876,7 @@ async function runBoot() {
     console.log(`${CYAN}Starting daemon...${RESET2}`);
     const daemonArgs = ["daemon"];
     if (configPath) daemonArgs.push("--config", configPath);
-    const child = (0, import_node_child_process6.spawn)(process.argv[0], [process.argv[1], ...daemonArgs], {
+    const child = (0, import_node_child_process7.spawn)(process.argv[0], [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: "ignore"
     });
@@ -2171,6 +2926,8 @@ function runConfig() {
   console.log(`  health_interval:  ${config.orchestrator.health_interval_s}s`);
   console.log(`  process_budget:   ${config.orchestrator.process_budget}`);
   console.log(`  wake_lock_policy: ${config.orchestrator.wake_lock_policy}`);
+  console.log(`  dashboard_port:   ${config.orchestrator.dashboard_port}`);
+  console.log(`  memory_warn/crit: ${config.orchestrator.memory_warning_mb}/${config.orchestrator.memory_critical_mb}/${config.orchestrator.memory_emergency_mb} MB`);
   console.log();
   console.log(`${BOLD}ADB${RESET2}`);
   console.log(`  enabled:     ${config.adb.enabled}`);
@@ -2200,15 +2957,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs6.existsSync)(outDir)) {
-    (0, import_node_fs6.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs9.existsSync)(outDir)) {
+    (0, import_node_fs9.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs6.existsSync)(outPath)) {
+  if ((0, import_node_fs9.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs6.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs9.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs6.writeFileSync)(outPath, toml);
+    (0, import_node_fs9.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -2269,6 +3026,9 @@ async function runIpcCommand() {
     case "shutdown":
       cmd = { cmd: "shutdown" };
       break;
+    case "memory":
+      cmd = { cmd: "memory" };
+      break;
     case "go":
       if (!subArgs[0]) {
         console.error(`Usage: tmx go <session-name>`);
@@ -2327,6 +3087,10 @@ function formatOutput(cmd, data) {
       console.log(`${GREEN}Restored: ${t.restored}${RESET2}  ${DIM2}Skipped: ${t.skipped}${RESET2}`);
       break;
     }
+    case "memory": {
+      formatMemory(data);
+      break;
+    }
     default:
       if (typeof data === "string") {
         console.log(data);
@@ -2345,17 +3109,53 @@ function formatDaemonStatus(data) {
   const b = data.budget;
   const budgetColor = b.mode === "critical" ? RED : b.mode === "warning" ? YELLOW : GREEN;
   console.log(`  procs: ${budgetColor}${b.total_procs}/${b.budget}${RESET2} (${b.usage_pct}%)`);
+  if (data.memory) {
+    const m = data.memory;
+    const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED : m.pressure === "warning" ? YELLOW : GREEN;
+    console.log(`  mem:   ${pressureColor}${m.available_mb}MB free${RESET2} / ${m.total_mb}MB (${m.pressure})`);
+  }
   console.log();
   if (data.sessions?.length > 0) {
-    const header = `${"NAME".padEnd(22)} ${"STATUS".padEnd(18)} ${"UPTIME".padEnd(10)} ${"RESTARTS".padEnd(10)} HEALTH`;
+    const header = `${"NAME".padEnd(22)} ${"STATUS".padEnd(18)} ${"ACT".padEnd(8)} ${"RSS".padEnd(8)} ${"UPTIME".padEnd(10)} HEALTH`;
     console.log(`${DIM2}${header}${RESET2}`);
     for (const s of data.sessions) {
       const status = STATUS_COLORS[s.status] ?? s.status;
       const uptime2 = s.uptime ?? "-";
-      const restarts = s.restart_count > 0 ? `${YELLOW}${s.restart_count}${RESET2}` : `${DIM2}0${RESET2}`;
+      const actIcon = s.activity === "active" ? `${GREEN}run${RESET2}` : s.activity === "idle" ? `${YELLOW}idle${RESET2}` : s.activity === "stopped" ? `${DIM2}stop${RESET2}` : `${DIM2}-${RESET2}`;
+      const rss = s.rss_mb != null ? `${s.rss_mb}MB` : "-";
       const health = s.last_health_check ? s.consecutive_failures > 0 ? `${RED}${s.consecutive_failures} fail${RESET2}` : `${GREEN}ok${RESET2}` : `${DIM2}-${RESET2}`;
-      console.log(`${s.name.padEnd(22)} ${status.padEnd(27)} ${uptime2.padEnd(10)} ${restarts.padEnd(19)} ${health}`);
+      console.log(`${s.name.padEnd(22)} ${status.padEnd(27)} ${actIcon.padEnd(17)} ${rss.padEnd(8)} ${uptime2.padEnd(10)} ${health}`);
     }
+  }
+}
+function formatMemory(data) {
+  const m = data.system;
+  const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED : m.pressure === "warning" ? YELLOW : GREEN;
+  console.log(`${BOLD}System Memory${RESET2}`);
+  console.log(`  total:     ${m.total_mb} MB`);
+  console.log(`  available: ${pressureColor}${m.available_mb} MB${RESET2}`);
+  console.log(`  used:      ${m.used_pct}%`);
+  console.log(`  pressure:  ${pressureColor}${m.pressure}${RESET2}`);
+  if (m.swap_total_mb > 0) {
+    console.log(`  swap:      ${m.swap_free_mb}/${m.swap_total_mb} MB free`);
+  }
+  console.log();
+  const sessionsWithRss = data.sessions.filter((s) => s.rss_mb !== null);
+  if (sessionsWithRss.length > 0) {
+    console.log(`${BOLD}Session Memory${RESET2}`);
+    const header = `${"NAME".padEnd(22)} ${"RSS".padEnd(10)} ACTIVITY`;
+    console.log(`${DIM2}${header}${RESET2}`);
+    sessionsWithRss.sort((a, b) => (b.rss_mb ?? 0) - (a.rss_mb ?? 0));
+    let totalRss = 0;
+    for (const s of sessionsWithRss) {
+      const rss = `${s.rss_mb}MB`;
+      const actIcon = s.activity === "active" ? `${GREEN}active${RESET2}` : s.activity === "idle" ? `${YELLOW}idle${RESET2}` : s.activity === "stopped" ? `${DIM2}stopped${RESET2}` : `${DIM2}unknown${RESET2}`;
+      console.log(`  ${s.name.padEnd(20)} ${rss.padEnd(10)} ${actIcon}`);
+      totalRss += s.rss_mb ?? 0;
+    }
+    console.log(`${DIM2}${"".padEnd(22)} ${(totalRss + "MB").padEnd(10)} total${RESET2}`);
+  } else {
+    console.log(`${DIM2}No session memory data available${RESET2}`);
   }
 }
 function formatSingleSession(session, config) {
@@ -2436,6 +3236,7 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}restart${RESET2} [name]        Stop then start
   ${CYAN}boot${RESET2}                  Full sequence: daemon + ADB fix + start all + cron
   ${CYAN}health${RESET2}                Run health sweep now
+  ${CYAN}memory${RESET2}                System memory + per-session RSS + pressure level
   ${CYAN}logs${RESET2} [name]           Tail structured logs
   ${CYAN}tabs${RESET2} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET2}                Validate and print resolved config
@@ -2461,7 +3262,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs6.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs9.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");
