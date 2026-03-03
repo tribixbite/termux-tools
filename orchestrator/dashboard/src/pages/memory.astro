@@ -1,0 +1,72 @@
+---
+import Layout from "../layouts/Layout.astro";
+import MemoryGauge from "../components/MemoryGauge.svelte";
+---
+
+<Layout title="Memory | tmx dashboard" active="memory">
+  <div class="mb-4">
+    <MemoryGauge client:load />
+  </div>
+
+  <!-- Per-session RSS table -->
+  <div class="card" id="session-memory">
+    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Session Memory</h2>
+    <div id="rss-table">
+      <p class="text-xs text-[var(--text-muted)]">Loading...</p>
+    </div>
+  </div>
+</Layout>
+
+<script>
+  import { SseClient, fetchMemory } from "../lib/api";
+  import type { DaemonStatus } from "../lib/types";
+
+  const tableEl = document.getElementById("rss-table")!;
+
+  async function renderTable() {
+    try {
+      const data = await fetchMemory();
+      const sessions = data.sessions
+        .filter((s) => s.rss_mb !== null)
+        .sort((a, b) => (b.rss_mb ?? 0) - (a.rss_mb ?? 0));
+
+      if (sessions.length === 0) {
+        tableEl.innerHTML = `<p class="text-xs" style="color: var(--text-muted)">No session memory data</p>`;
+        return;
+      }
+
+      let totalRss = 0;
+      let html = `<table class="w-full text-sm"><thead><tr class="text-left text-xs" style="color: var(--text-muted)">
+        <th class="pb-2 pr-4">Session</th><th class="pb-2 pr-4">RSS</th><th class="pb-2">Activity</th>
+      </tr></thead><tbody>`;
+
+      for (const s of sessions) {
+        const actColor = s.activity === "active" ? "var(--accent-green)"
+          : s.activity === "idle" ? "var(--accent-yellow)"
+          : "var(--text-muted)";
+        html += `<tr style="border-top: 1px solid var(--border)">
+          <td class="py-1.5 pr-4">${s.name}</td>
+          <td class="py-1.5 pr-4" style="color: var(--text-secondary)">${s.rss_mb}MB</td>
+          <td class="py-1.5" style="color: ${actColor}">${s.activity ?? "-"}</td>
+        </tr>`;
+        totalRss += s.rss_mb ?? 0;
+      }
+
+      html += `<tr style="border-top: 1px solid var(--border)">
+        <td class="py-1.5 pr-4 font-medium" style="color: var(--text-muted)">Total</td>
+        <td class="py-1.5 pr-4 font-medium" style="color: var(--text-secondary)">${totalRss}MB</td>
+        <td></td>
+      </tr></tbody></table>`;
+
+      tableEl.innerHTML = html;
+    } catch (e) {
+      tableEl.innerHTML = `<p class="text-xs" style="color: var(--accent-red)">Error: ${(e as Error).message}</p>`;
+    }
+  }
+
+  renderTable();
+
+  // SSE updates
+  const sse = new SseClient();
+  sse.on<DaemonStatus>("state", () => renderTable());
+</script>

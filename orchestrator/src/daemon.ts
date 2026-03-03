@@ -10,6 +10,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
+import { join } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
 import { Logger } from "./log.js";
@@ -21,6 +22,7 @@ import { computeStartupOrder, computeShutdownOrder } from "./deps.js";
 import { runHealthSweep } from "./health.js";
 import { MemoryMonitor } from "./memory.js";
 import { ActivityDetector } from "./activity.js";
+import { DashboardServer } from "./http.js";
 import {
   createSession,
   sessionExists,
@@ -58,6 +60,7 @@ export class Daemon {
   private wake: WakeLockManager;
   private memory: MemoryMonitor;
   private activity: ActivityDetector;
+  private dashboard: DashboardServer | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
@@ -112,6 +115,9 @@ export class Daemon {
 
     // Start memory monitoring timer (every 15s)
     this.startMemoryTimer();
+
+    // Start HTTP dashboard if configured
+    await this.startDashboard();
 
     notify("tmx daemon", "Orchestrator started");
 
@@ -190,6 +196,12 @@ export class Daemon {
 
     // Release wake lock
     this.wake.forceRelease();
+
+    // Stop dashboard server
+    if (this.dashboard) {
+      this.dashboard.stop();
+      this.dashboard = null;
+    }
 
     // Stop IPC server
     this.ipc.stop();
@@ -564,6 +576,19 @@ export class Daemon {
     if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
       this.shedIdleSessions(sysMem.pressure);
     }
+
+    // Push SSE update with combined state+memory
+    this.pushSseState();
+  }
+
+  /** Push current state snapshot to all SSE clients */
+  private pushSseState(): void {
+    if (!this.dashboard || this.dashboard.sseClientCount === 0) return;
+
+    const statusResp = this.cmdStatus();
+    if (statusResp.ok) {
+      this.dashboard.pushEvent("state", statusResp.data);
+    }
   }
 
   /**
@@ -625,6 +650,119 @@ export class Daemon {
     if (shedCount === 0) {
       this.log.warn("No sessions available to shed");
       notify("tmx memory", `${pressure} memory pressure — no sessions to shed`);
+    }
+  }
+
+  // -- Dashboard HTTP server ---------------------------------------------------
+
+  /** Start HTTP dashboard server if port > 0 */
+  private async startDashboard(): Promise<void> {
+    const port = this.config.orchestrator.dashboard_port;
+    if (port <= 0) {
+      this.log.debug("Dashboard disabled (port=0)");
+      return;
+    }
+
+    // Resolve static dir relative to the bundle location
+    // In production: dist/tmx.js → dashboard should be at ../dashboard/dist/
+    const scriptDir = typeof import.meta.url === "string"
+      ? new URL(".", import.meta.url).pathname
+      : __dirname ?? process.cwd();
+    const staticDir = join(scriptDir, "..", "dashboard", "dist");
+
+    this.dashboard = new DashboardServer(
+      port,
+      staticDir,
+      (method, path, body) => this.handleDashboardApi(method, path, body),
+      this.log,
+    );
+
+    try {
+      await this.dashboard.start();
+    } catch (err) {
+      this.log.warn(`Dashboard server failed to start: ${err}`);
+      this.dashboard = null;
+    }
+  }
+
+  /** Map REST API paths to IPC command handlers */
+  private async handleDashboardApi(
+    method: string,
+    path: string,
+    body: string,
+  ): Promise<{ status: number; data: unknown }> {
+    // Extract path segments: /api/command/name
+    const segments = path.replace(/^\/api\//, "").split("/");
+    const command = segments[0];
+    const name = segments[1] ? decodeURIComponent(segments[1]) : undefined;
+
+    try {
+      let resp;
+      switch (command) {
+        case "status":
+          resp = this.cmdStatus(name);
+          break;
+        case "memory":
+          resp = this.cmdMemory();
+          break;
+        case "health":
+          resp = this.cmdHealth();
+          break;
+        case "start":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdStart(name);
+          break;
+        case "stop":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdStop(name);
+          break;
+        case "restart":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = await this.cmdRestart(name);
+          break;
+        case "go":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = await this.cmdGo(name);
+          break;
+        case "send":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body) as { text: string };
+            resp = this.cmdSend(name, parsed.text ?? "");
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+          break;
+        case "bridge": {
+          // Proxy to CFC bridge health endpoint
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 3000);
+            const bridgeResp = await fetch("http://127.0.0.1:18963/health", {
+              signal: controller.signal,
+            });
+            clearTimeout(timeout);
+            const bridgeData = await bridgeResp.json();
+            return { status: 200, data: bridgeData };
+          } catch {
+            return { status: 200, data: { status: "offline", error: "Bridge not reachable" } };
+          }
+        }
+        case "logs": {
+          const sessionFilter = name ?? undefined;
+          const log = new Logger(this.config.orchestrator.log_dir);
+          const entries = log.readTail(100, sessionFilter);
+          return { status: 200, data: entries };
+        }
+        default:
+          return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
+      }
+
+      return { status: resp.ok ? 200 : 400, data: resp.ok ? resp.data : { error: resp.error } };
+    } catch (err) {
+      return { status: 500, data: { error: String(err) } };
     }
   }
 

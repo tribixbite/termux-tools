@@ -1,0 +1,49 @@
+---
+interface Props {
+  title?: string;
+  active?: string;
+}
+
+const { title = "tmx dashboard", active = "overview" } = Astro.props;
+
+const navItems = [
+  { href: "/", label: "Overview", id: "overview" },
+  { href: "/memory", label: "Memory", id: "memory" },
+  { href: "/logs", label: "Logs", id: "logs" },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>{title}</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  </head>
+  <body>
+    <header class="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--bg-primary)]/95 backdrop-blur-sm">
+      <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-[var(--accent-blue)] font-bold text-sm">tmx</span>
+          <span class="text-[var(--text-muted)] text-xs">dashboard</span>
+        </div>
+        <nav class="flex gap-1">
+          {navItems.map((item) => (
+            <a href={item.href} class:list={[active === item.id && "active"]}>
+              {item.label}
+            </a>
+          ))}
+        </nav>
+      </div>
+    </header>
+    <main class="max-w-5xl mx-auto px-4 py-4">
+      <slot />
+    </main>
+  </body>
+</html>
+
+<style is:global>
+  @import "../styles/global.css";
+</style>

@@ -1,0 +1,11 @@
+---
+import Layout from "../layouts/Layout.astro";
+import LogViewer from "../components/LogViewer.svelte";
+---
+
+<Layout title="Logs | tmx dashboard" active="logs">
+  <div class="card">
+    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Daemon Logs</h2>
+    <LogViewer client:load />
+  </div>
+</Layout>

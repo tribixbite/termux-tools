@@ -1,0 +1,22 @@
+---
+import Layout from "../layouts/Layout.astro";
+import SessionTable from "../components/SessionTable.svelte";
+import MemoryGauge from "../components/MemoryGauge.svelte";
+import BudgetGauge from "../components/BudgetGauge.svelte";
+import BridgeStatus from "../components/BridgeStatus.svelte";
+---
+
+<Layout title="tmx dashboard" active="overview">
+  <!-- Status gauges row -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+    <MemoryGauge client:load />
+    <BudgetGauge client:load />
+    <BridgeStatus client:load />
+  </div>
+
+  <!-- Session table -->
+  <div class="card">
+    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Sessions</h2>
+    <SessionTable client:load />
+  </div>
+</Layout>
