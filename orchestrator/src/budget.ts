@@ -26,24 +26,26 @@ export class BudgetTracker {
     this.log = log;
   }
 
-  /** Get current process count for the Termux UID */
+  /** Get current process count for the Termux UID (our app sandbox) */
   getProcessCount(): number {
     try {
-      // Count processes owned by our UID
-      // Use `ps -e -o pid=` to get all PIDs, then wc -l
-      // This is more reliable than filtering by UID on Termux
-      const output = execSync("ps -e -o pid= 2>/dev/null | wc -l", {
+      // Count processes owned by our UID only — not all system processes.
+      // Android assigns each app a unique UID (u0_aXXX). The phantom
+      // process killer counts per-UID, so we must filter to our UID.
+      const uid = String(process.getuid());
+      const output = execSync(`ps -e -o uid=,pid= 2>/dev/null | awk '$1 == ${uid}' | wc -l`, {
         encoding: "utf-8",
         timeout: 5000,
       }).trim();
       return parseInt(output, 10) || 0;
     } catch {
-      // If ps fails, try /proc enumeration
+      // Fallback: count /proc entries owned by us
       try {
-        const output = execSync("ls -1 /proc | grep -c '^[0-9]'", {
-          encoding: "utf-8",
-          timeout: 5000,
-        }).trim();
+        const uid = String(process.getuid());
+        const output = execSync(
+          `ls -ldn /proc/[0-9]* 2>/dev/null | awk '$3 == ${uid}' | wc -l`,
+          { encoding: "utf-8", timeout: 5000 }
+        ).trim();
         return parseInt(output, 10) || 0;
       } catch {
         this.log.warn("Failed to count processes, assuming 0");

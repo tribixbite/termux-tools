@@ -140,7 +140,10 @@ export class Daemon {
   }
 
   /** Graceful shutdown — reverse-order stop, release wake lock, exit */
+  private shutdownInProgress = false;
   async shutdown(): Promise<void> {
+    if (this.shutdownInProgress) return;
+    this.shutdownInProgress = true;
     this.log.info("Shutdown sequence starting");
 
     // Stop health checks
