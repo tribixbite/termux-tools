@@ -1,0 +1,116 @@
+# tmx.toml — Tmux orchestrator configuration
+# Copy to ~/.config/tmx/tmx.toml and customize.
+# Environment variables ($HOME, $PREFIX) are expanded at load time.
+
+[orchestrator]
+socket = "$PREFIX/tmp/tmx.sock"         # Unix socket for CLI ↔ daemon IPC
+state_file = "$HOME/.local/share/tmx/state.json"
+log_dir = "$HOME/.local/share/tmx/logs"
+health_interval_s = 120                 # Seconds between health check sweeps
+boot_timeout_s = 300                    # Max seconds for full boot sequence
+process_budget = 32                     # Android 12+ phantom process limit
+wake_lock_policy = "active_sessions"    # always | active_sessions | boot_only | never
+
+[adb]
+enabled = true
+connect_script = "$HOME/git/termux-tools/tools/adb-wireless-connect.sh"
+connect_timeout_s = 45
+retry_interval_s = 300                  # Seconds between ADB reconnect attempts
+phantom_fix = true                      # Apply phantom process killer fix on connect
+
+# Default health check settings per session type.
+# Sessions inherit these unless they override with [session.health].
+[health_defaults.claude]
+check = "tmux_alive"
+unhealthy_threshold = 2
+
+[health_defaults.daemon]
+check = "tmux_alive"
+unhealthy_threshold = 3
+
+[health_defaults.service]
+check = "tmux_alive"
+unhealthy_threshold = 2
+
+# ─── Sessions ────────────────────────────────────────────────────────────────
+# Each [[session]] block defines a tmux session to manage.
+# Fields:
+#   name           — unique identifier [a-z0-9-]+ (required)
+#   type           — "claude" | "daemon" | "service" (default: "claude")
+#   path           — working directory (required for claude/daemon)
+#   command        — shell command to run (required for service/daemon)
+#   auto_go        — send "go" after Claude Code starts (claude only, default: false)
+#   priority       — lower starts first, tie-breaks topological sort (default: 10)
+#   depends_on     — session names that must be running first (default: [])
+#   headless       — no Termux UI tab needed (default: false)
+#   enabled        — start on boot (default: true)
+#   max_restarts   — restart attempts before entering failed state (default: 3)
+#   restart_backoff_s — base backoff between restarts in seconds (default: 5)
+
+[[session]]
+name = "cleverkeys"
+type = "claude"
+path = "$HOME/git/swype/cleverkeys"
+auto_go = true
+priority = 1
+depends_on = []
+
+[[session]]
+name = "customcamera"
+type = "claude"
+path = "$HOME/git/swype/CustomCamera"
+priority = 2
+
+[[session]]
+name = "unexpected-keyboard"
+type = "claude"
+path = "$HOME/git/swype/Unexpected-Keyboard"
+priority = 3
+
+[[session]]
+name = "popcorn-mobile"
+type = "claude"
+path = "$HOME/git/pop/popcorn-mobile"
+priority = 4
+
+[[session]]
+name = "illustrate"
+type = "claude"
+path = "$HOME/git/illustrate"
+priority = 5
+
+[[session]]
+name = "discord-bot"
+type = "daemon"
+path = "$HOME/git/dirc"
+command = "NODE_ENV=development bun ../discord-irc/dist/lib/cli.js 2>&1 | tee -a $HOME/.local/share/termux-boot/logs/discord-bot.log"
+priority = 10
+headless = false
+
+[[session]]
+name = "termux-x11"
+type = "service"
+command = "termux-x11 :1 -legacy-drawing -xstartup 'xfce4-session'"
+priority = 1
+headless = true
+
+[[session]]
+name = "playwright"
+type = "service"
+command = "DISPLAY=:1 mcp-server-playwright --port 8989 --browser chromium --executable-path /data/data/com.termux/files/usr/bin/chromium-browser"
+depends_on = ["termux-x11"]
+priority = 2
+headless = true
+
+[session.env]
+DISPLAY = ":1"
+
+# Per-session health check override example:
+# [[session]]
+# name = "api-server"
+# type = "service"
+# command = "node server.js"
+# [session.health]
+# check = "http"
+# url = "http://localhost:3000/health"
+# unhealthy_threshold = 3
