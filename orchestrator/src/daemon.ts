@@ -487,7 +487,7 @@ export class Daemon {
     // Check process budget
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
-      this.log.error("Process budget critical", budgetStatus);
+      this.log.error("Process budget critical", budgetStatus as unknown as Record<string, unknown>);
       notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`);
     }
   }

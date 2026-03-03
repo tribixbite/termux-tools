@@ -5,12 +5,15 @@
  * See `tmx --help` for available commands.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { IpcClient } from "./ipc.js";
 import { Daemon } from "./daemon.js";
 import { loadConfig, findConfigPath, validateConfigFile } from "./config.js";
 import { Logger } from "./log.js";
 import { parseReposConf, generateToml, findReposConf } from "./migrate.js";
+import type { IpcCommand, HealthResult } from "./types.js";
+import type { DaemonStatusData, SessionDetailData, ConfigSessionRow } from "./display-types.js";
 
 // -- ANSI helpers -------------------------------------------------------------
 
@@ -108,7 +111,6 @@ async function runBoot(): Promise<void> {
   if (!running) {
     // Start daemon in background (fork)
     console.log(`${CYAN}Starting daemon...${RESET}`);
-    const { spawn } = require("node:child_process");
     const daemonArgs = ["daemon"];
     if (configPath) daemonArgs.push("--config", configPath);
 
@@ -274,7 +276,7 @@ async function runIpcCommand(): Promise<void> {
     process.exit(1);
   }
 
-  let cmd: any;
+  let cmd: IpcCommand;
 
   switch (command) {
     case "status":
@@ -331,24 +333,26 @@ async function runIpcCommand(): Promise<void> {
 
 // -- Output formatting --------------------------------------------------------
 
-function formatOutput(cmd: string, data: any): void {
+function formatOutput(cmd: string, data: unknown): void {
   if (!data) return;
 
   switch (cmd) {
     case "status": {
-      if (data.session) {
-        // Single session
-        formatSingleSession(data.session, data.config);
+      const d = data as Record<string, unknown>;
+      if (d.session) {
+        // Single session detail
+        const detail = data as SessionDetailData;
+        formatSingleSession(detail.session, detail.config);
       } else {
-        // All sessions
-        formatDaemonStatus(data);
+        // All sessions overview
+        formatDaemonStatus(data as DaemonStatusData);
       }
       break;
     }
 
     case "health": {
       if (Array.isArray(data)) {
-        for (const r of data) {
+        for (const r of data as HealthResult[]) {
           const icon = r.healthy ? `${GREEN}ok${RESET}` : `${RED}fail${RESET}`;
           console.log(`  ${icon}  ${r.session.padEnd(20)} ${r.message} ${DIM}(${r.duration_ms}ms)${RESET}`);
         }
@@ -360,7 +364,8 @@ function formatOutput(cmd: string, data: any): void {
     }
 
     case "tabs": {
-      console.log(`${GREEN}Restored: ${data.restored}${RESET}  ${DIM}Skipped: ${data.skipped}${RESET}`);
+      const t = data as { restored: number; skipped: number };
+      console.log(`${GREEN}Restored: ${t.restored}${RESET}  ${DIM}Skipped: ${t.skipped}${RESET}`);
       break;
     }
 
@@ -373,7 +378,7 @@ function formatOutput(cmd: string, data: any): void {
   }
 }
 
-function formatDaemonStatus(data: any): void {
+function formatDaemonStatus(data: DaemonStatusData): void {
   const uptimeMs = Date.now() - new Date(data.daemon_start).getTime();
   const uptime = formatDuration(uptimeMs);
 
@@ -406,7 +411,7 @@ function formatDaemonStatus(data: any): void {
   }
 }
 
-function formatSingleSession(session: any, config: any): void {
+function formatSingleSession(session: SessionDetailData["session"], config: SessionDetailData["config"]): void {
   console.log(`${BOLD}${session.name}${RESET}`);
   console.log(`  status:     ${STATUS_COLORS[session.status] ?? session.status}`);
   console.log(`  type:       ${config?.type ?? "-"}`);
@@ -419,7 +424,7 @@ function formatSingleSession(session: any, config: any): void {
   if (session.last_error) {
     console.log(`  last error: ${RED}${session.last_error}${RESET}`);
   }
-  if (config?.depends_on?.length > 0) {
+  if (config?.depends_on && config.depends_on.length > 0) {
     console.log(`  depends_on: ${config.depends_on.join(", ")}`);
   }
   if (config?.path) {
@@ -428,7 +433,7 @@ function formatSingleSession(session: any, config: any): void {
 }
 
 /** Print a table of sessions (for config command) */
-function printSessionTable(sessions: any[]): void {
+function printSessionTable(sessions: ConfigSessionRow[]): void {
   const header = `${"NAME".padEnd(22)} ${"TYPE".padEnd(10)} ${"PRI".padEnd(5)} ${"FLAGS".padEnd(20)} DEPS`;
   console.log(`${DIM}${header}${RESET}`);
 
@@ -523,7 +528,8 @@ ${BOLD}EXAMPLES${RESET}
 
 function printVersion(): void {
   try {
-    const pkg = require("../package.json");
+    const pkgPath = new URL("../package.json", import.meta.url).pathname;
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

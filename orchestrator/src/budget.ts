@@ -32,7 +32,7 @@ export class BudgetTracker {
       // Count processes owned by our UID only — not all system processes.
       // Android assigns each app a unique UID (u0_aXXX). The phantom
       // process killer counts per-UID, so we must filter to our UID.
-      const uid = String(process.getuid());
+      const uid = String(process.getuid!());
       const output = execSync(`ps -e -o uid=,pid= 2>/dev/null | awk '$1 == ${uid}' | wc -l`, {
         encoding: "utf-8",
         timeout: 5000,
@@ -41,7 +41,7 @@ export class BudgetTracker {
     } catch {
       // Fallback: count /proc entries owned by us
       try {
-        const uid = String(process.getuid());
+        const uid = String(process.getuid!());
         const output = execSync(
           `ls -ldn /proc/[0-9]* 2>/dev/null | awk '$3 == ${uid}' | wc -l`,
           { encoding: "utf-8", timeout: 5000 }

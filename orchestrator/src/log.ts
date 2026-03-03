@@ -5,7 +5,7 @@
  * human-readable colored output to stderr for interactive use.
  */
 
-import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import type { LogEntry } from "./types.js";
 
 /** Maximum log file size before rotation (5 MB) */
@@ -141,7 +141,6 @@ export class Logger {
   readTail(lines: number, sessionFilter?: string): LogEntry[] {
     try {
       if (!existsSync(this.logFile)) return [];
-      const { readFileSync } = require("node:fs");
       const content = readFileSync(this.logFile, "utf-8");
       const allLines = content.trim().split("\n").filter(Boolean);
 

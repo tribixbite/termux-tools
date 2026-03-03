@@ -13,7 +13,7 @@
     "declaration": false,
     "sourceMap": false,
     "resolveJsonModule": true,
-    "types": ["node", "bun-types"]
+    "types": ["node"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]

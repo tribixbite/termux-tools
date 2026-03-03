@@ -5,7 +5,7 @@
  * For actual running status, always trust `tmux list-sessions` over persisted state.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SessionState, SessionStatus, TmxState, SessionConfig } from "./types.js";
 import { VALID_TRANSITIONS } from "./types.js";
@@ -208,7 +208,6 @@ export class StateManager {
     try {
       const tmp = `${this.statePath}.tmp`;
       writeFileSync(tmp, JSON.stringify(this.state, null, 2) + "\n");
-      const { renameSync } = require("node:fs");
       renameSync(tmp, this.statePath);
     } catch (err) {
       this.log.error(`Failed to persist state: ${err}`);

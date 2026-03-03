@@ -48,13 +48,18 @@ function expandDeep(obj: unknown): unknown {
   return obj;
 }
 
-/** Parse TOML string — uses Bun's built-in TOML or a simple parser */
+/** Parse TOML string — uses Bun's built-in TOML or our minimal parser */
 function parseTOML(content: string): Record<string, unknown> {
-  // Bun has built-in TOML support via Bun.TOML
-  if (typeof globalThis.Bun !== "undefined" && Bun.TOML) {
-    return Bun.TOML.parse(content) as Record<string, unknown>;
+  // Try Bun's built-in TOML support if available (untyped access avoids bun-types dep)
+  const g = globalThis as Record<string, unknown>;
+  if (g.Bun != null) {
+    const bun = g.Bun as Record<string, unknown>;
+    if (typeof bun.TOML === "object" && bun.TOML !== null) {
+      const toml = bun.TOML as { parse: (s: string) => Record<string, unknown> };
+      return toml.parse(content);
+    }
   }
-  // Fallback: use a minimal TOML parser for Node.js
+  // Fallback: use our minimal TOML parser (works in Node.js and Bun)
   return parseTomlMinimal(content);
 }
 

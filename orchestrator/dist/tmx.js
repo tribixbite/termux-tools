@@ -30,47 +30,15 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var require_import_meta_shim = __commonJS({
   "src/import-meta-shim.js"(exports2, module2) {
     "use strict";
-    var import_meta_url = require("url").pathToFileURL(__filename).href;
-    module2.exports = { import_meta_url };
-  }
-});
-
-// package.json
-var require_package = __commonJS({
-  "package.json"(exports2, module2) {
-    module2.exports = {
-      name: "@termux-tools/orchestrator",
-      version: "0.1.0",
-      private: true,
-      description: "Tmux session orchestrator for Termux \u2014 dependency-ordered startup, health monitoring, process budget tracking",
-      author: "willstone",
-      license: "MIT",
-      bin: {
-        tmx: "./dist/tmx.js"
-      },
-      files: [
-        "dist/"
-      ],
-      scripts: {
-        build: "node build.cjs",
-        typecheck: "tsc --noEmit"
-      },
-      devDependencies: {
-        esbuild: "^0.24.0",
-        "@esbuild/android-arm64": "^0.24.0",
-        typescript: "^5.7.0",
-        "@types/node": "^22.0.0"
-      },
-      engines: {
-        node: ">=18.0.0"
-      }
-    };
+    var import_meta_url2 = require("url").pathToFileURL(__filename).href;
+    module2.exports = { import_meta_url: import_meta_url2 };
   }
 });
 
 // src/tmx.ts
 var import_import_meta_shim13 = __toESM(require_import_meta_shim());
 var import_node_fs6 = require("node:fs");
+var import_node_child_process6 = require("node:child_process");
 
 // src/ipc.ts
 var import_import_meta_shim = __toESM(require_import_meta_shim());
@@ -262,8 +230,13 @@ function expandDeep(obj) {
   return obj;
 }
 function parseTOML(content) {
-  if (typeof globalThis.Bun !== "undefined" && Bun.TOML) {
-    return Bun.TOML.parse(content);
+  const g = globalThis;
+  if (g.Bun != null) {
+    const bun = g.Bun;
+    if (typeof bun.TOML === "object" && bun.TOML !== null) {
+      const toml = bun.TOML;
+      return toml.parse(content);
+    }
   }
   return parseTomlMinimal(content);
 }
@@ -662,8 +635,7 @@ var Logger = class {
   readTail(lines, sessionFilter) {
     try {
       if (!(0, import_node_fs3.existsSync)(this.logFile)) return [];
-      const { readFileSync: readFileSync4 } = require("node:fs");
-      const content = readFileSync4(this.logFile, "utf-8");
+      const content = (0, import_node_fs3.readFileSync)(this.logFile, "utf-8");
       const allLines = content.trim().split("\n").filter(Boolean);
       let entries = allLines.map((line) => {
         try {
@@ -864,8 +836,7 @@ var StateManager = class {
     try {
       const tmp = `${this.statePath}.tmp`;
       (0, import_node_fs4.writeFileSync)(tmp, JSON.stringify(this.state, null, 2) + "\n");
-      const { renameSync: renameSync2 } = require("node:fs");
-      renameSync2(tmp, this.statePath);
+      (0, import_node_fs4.renameSync)(tmp, this.statePath);
     } catch (err) {
       this.log.error(`Failed to persist state: ${err}`);
     }
@@ -2148,10 +2119,9 @@ async function runBoot() {
   const running = await client.isRunning();
   if (!running) {
     console.log(`${CYAN}Starting daemon...${RESET2}`);
-    const { spawn } = require("node:child_process");
     const daemonArgs = ["daemon"];
     if (configPath) daemonArgs.push("--config", configPath);
-    const child = spawn(process.argv[0], [process.argv[1], ...daemonArgs], {
+    const child = (0, import_node_child_process6.spawn)(process.argv[0], [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: "ignore"
     });
@@ -2331,8 +2301,10 @@ function formatOutput(cmd, data) {
   if (!data) return;
   switch (cmd) {
     case "status": {
-      if (data.session) {
-        formatSingleSession(data.session, data.config);
+      const d = data;
+      if (d.session) {
+        const detail = data;
+        formatSingleSession(detail.session, detail.config);
       } else {
         formatDaemonStatus(data);
       }
@@ -2351,7 +2323,8 @@ function formatOutput(cmd, data) {
       break;
     }
     case "tabs": {
-      console.log(`${GREEN}Restored: ${data.restored}${RESET2}  ${DIM2}Skipped: ${data.skipped}${RESET2}`);
+      const t = data;
+      console.log(`${GREEN}Restored: ${t.restored}${RESET2}  ${DIM2}Skipped: ${t.skipped}${RESET2}`);
       break;
     }
     default:
@@ -2398,7 +2371,7 @@ function formatSingleSession(session, config) {
   if (session.last_error) {
     console.log(`  last error: ${RED}${session.last_error}${RESET2}`);
   }
-  if (config?.depends_on?.length > 0) {
+  if (config?.depends_on && config.depends_on.length > 0) {
     console.log(`  depends_on: ${config.depends_on.join(", ")}`);
   }
   if (config?.path) {
@@ -2487,7 +2460,8 @@ ${BOLD}EXAMPLES${RESET2}
 }
 function printVersion() {
   try {
-    const pkg = require_package();
+    const pkgPath = new URL("../package.json", import_meta_url).pathname;
+    const pkg = JSON.parse((0, import_node_fs6.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");
