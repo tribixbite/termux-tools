@@ -17,6 +17,8 @@ build({
   banner: { js: "#!/usr/bin/env node" },
   // Bundle everything including ws — zero runtime deps
   external: [],
+  // Resolve deps from bridge/node_modules even when entry imports ../compat.ts
+  nodePaths: [resolve(__dirname, "node_modules")],
   // Replace import.meta references with CJS equivalents
   define: {
     "import.meta.url": "import_meta_url",

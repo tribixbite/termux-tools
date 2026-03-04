@@ -252,8 +252,10 @@ class CdpManager {
   private targetsLastFetched = 0;
   /** Cached CDP targets */
   private cachedTargets: Array<{ targetId: string; url: string; title: string; type: string }> = [];
-  /** PID recheck interval handle */
+  /** PID recheck interval handle (active when connected) */
   private pidCheckTimer: ReturnType<typeof setInterval> | null = null;
+  /** Reconnect interval handle (active when disconnected) */
+  private reconnectTimer: ReturnType<typeof setInterval> | null = null;
   /** Sessions where Network domain has been enabled */
   private networkEnabledSessions = new Set<string>();
   /** Network request events per sessionId */
@@ -266,17 +268,10 @@ class CdpManager {
 
     this.state = "connecting";
     try {
-      // Step 1: find Edge PID
-      const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
-      const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0]; // take first PID if multiple
-      if (!pidStr || pidResult.exitCode !== 0) {
-        log("debug", `CDP: Edge not running or ADB unavailable (exit=${pidResult.exitCode}, stderr=${pidResult.stderr?.toString().trim()}, serial=${ADB_SERIAL || "default"})`);
-        this.state = "disconnected";
-        return false;
-      }
-      this.edgePid = parseInt(pidStr, 10);
+      // Step 1: find Edge PID (local pidof first, then ADB fallback)
+      this.edgePid = this.getEdgePid();
       if (isNaN(this.edgePid)) {
-        log("warn", `CDP: invalid PID "${pidStr}"`);
+        log("debug", "CDP: Edge not running or ADB unavailable");
         this.state = "disconnected";
         return false;
       }
@@ -317,7 +312,8 @@ class CdpManager {
 
       await this.connectWebSocket(wsUrl);
 
-      // Start periodic PID recheck
+      // Connection succeeded — stop reconnect timer, start PID recheck
+      this.stopReconnectTimer();
       if (!this.pidCheckTimer) {
         this.pidCheckTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
       }
@@ -815,33 +811,77 @@ class CdpManager {
     };
   }
 
-  /** Re-check Edge PID — reconnect if changed (Edge restarted) */
-  private async recheckPid(): Promise<void> {
+  /**
+   * Get Edge PID — tries local `pidof` first (works on-device without ADB),
+   * falls back to `adb shell pidof` if local fails.
+   * Returns NaN if Edge is not running or both methods fail.
+   */
+  private getEdgePid(): number {
+    // Try local pidof first (faster, no ADB dependency)
     try {
-      const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
-      const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
-      const newPid = parseInt(pidStr, 10);
+      const local = runSync(["pidof", "com.microsoft.emmx.canary"]);
+      const pid = parseInt(local.stdout.toString().trim().split(/\s+/)[0], 10);
+      if (!isNaN(pid)) return pid;
+    } catch { /* local pidof not available or failed */ }
 
-      if (isNaN(newPid)) {
-        // Edge not running
-        if (this.state === "connected") {
-          log("info", "CDP: Edge no longer running, disconnecting");
-          this.cleanup();
-        }
-        return;
-      }
+    // Fall back to ADB
+    try {
+      const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
+      const pid = parseInt(remote.stdout.toString().trim().split(/\s+/)[0], 10);
+      if (!isNaN(pid)) return pid;
+    } catch { /* ADB not available */ }
 
-      if (newPid !== this.edgePid && this.state === "connected") {
-        log("info", `CDP: Edge PID changed ${this.edgePid} → ${newPid}, reconnecting`);
+    return NaN;
+  }
+
+  /** Re-check Edge PID — reconnect if changed, or attempt connect if disconnected */
+  private async recheckPid(): Promise<void> {
+    const newPid = this.getEdgePid();
+
+    if (isNaN(newPid)) {
+      // Edge not running
+      if (this.state === "connected") {
+        log("info", "CDP: Edge no longer running, disconnecting");
         this.cleanup();
-        await this.connect();
       }
-    } catch {
-      // ADB not available — ignore
+      return;
+    }
+
+    if (this.state === "disconnected") {
+      // CDP disconnected but Edge is running — attempt reconnect
+      log("info", `CDP: Edge running (PID ${newPid}), attempting reconnect`);
+      await this.connect();
+      return;
+    }
+
+    if (newPid !== this.edgePid && this.state === "connected") {
+      log("info", `CDP: Edge PID changed ${this.edgePid} → ${newPid}, reconnecting`);
+      this.cleanup();
+      await this.connect();
     }
   }
 
-  /** Clean up CDP connection and ADB forward */
+  /** Start periodic reconnect timer (runs when disconnected) */
+  startReconnectTimer(): void {
+    if (this.reconnectTimer) return; // already running
+    this.reconnectTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
+    log("debug", `CDP: reconnect timer started (every ${CDP_PID_CHECK_INTERVAL_MS / 1000}s)`);
+  }
+
+  /** Stop the reconnect timer (called when connection succeeds) */
+  private stopReconnectTimer(): void {
+    if (this.reconnectTimer) {
+      clearInterval(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  /** Stop reconnect timer for final shutdown (cleanup restarts it, but shutdown shouldn't) */
+  stopReconnectForShutdown(): void {
+    this.stopReconnectTimer();
+  }
+
+  /** Clean up CDP connection and ADB forward, restart reconnect timer */
   cleanup(): void {
     if (this.pidCheckTimer) {
       clearInterval(this.pidCheckTimer);
@@ -865,6 +905,9 @@ class CdpManager {
     // Remove ADB forward
     runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
     log("info", "CDP: cleaned up");
+
+    // Restart reconnect timer so CDP can self-heal after Edge restart or ADB reconnect
+    this.startReconnectTimer();
   }
 }
 
@@ -1888,8 +1931,9 @@ function shutdown(): void {
     nativeHost = null;
   }
 
-  // Clean up CDP connection and ADB forward
+  // Clean up CDP connection and ADB forward (cleanup starts reconnect timer — stop it for shutdown)
   cdpManager.cleanup();
+  cdpManager.stopReconnectForShutdown();
 
   // Post a "stopped" notification (replaces the running one via same tag)
   adbNotify("cfc-bridge", "CFC Bridge stopped", "Bridge is no longer running");
@@ -1908,23 +1952,16 @@ log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:
 log("info", `CLI path: ${CLI_PATH}`);
 log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
 
-// Attempt CDP connection on startup with retries (non-blocking — CDP is optional)
-(async () => {
-  const CDP_RETRY_ATTEMPTS = 5;
-  const CDP_RETRY_DELAY_MS = 10_000;
-  for (let attempt = 1; attempt <= CDP_RETRY_ATTEMPTS; attempt++) {
-    const ok = await cdpManager.connect();
-    if (ok) {
-      log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
-      return;
-    }
-    if (attempt < CDP_RETRY_ATTEMPTS) {
-      log("info", `CDP: attempt ${attempt}/${CDP_RETRY_ATTEMPTS} failed — retrying in ${CDP_RETRY_DELAY_MS / 1000}s`);
-      await new Promise(r => setTimeout(r, CDP_RETRY_DELAY_MS));
-    }
+// Attempt CDP connection on startup (non-blocking — CDP is optional).
+// If it fails, a persistent reconnect timer retries every 60s until Edge/ADB is available.
+cdpManager.connect().then((ok) => {
+  if (ok) {
+    log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
+  } else {
+    log("info", "CDP: not available at startup — reconnect timer will retry periodically");
+    cdpManager.startReconnectTimer();
   }
-  log("info", "CDP: not available after retries (ADB/Edge not running — will use extension fallback)");
-})();
+});
 
 log("info", "Waiting for WebSocket connections...");
 

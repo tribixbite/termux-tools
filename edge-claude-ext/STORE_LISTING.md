@@ -12,7 +12,7 @@ Claude Code Browser Bridge connects the Claude Code command-line AI assistant to
 **How it works:**
 - A lightweight WebSocket bridge runs in Termux on your Android device
 - This extension connects to the bridge and exposes browser capabilities to Claude Code
-- Claude Code's MCP (Model Context Protocol) tools can then control the browser
+- Claude Code's MCP (Model Context Protocol) tools (namespace: `cfc-bridge`) can then control the browser
 
 **Features:**
 - Read page accessibility trees and full text content
@@ -46,7 +46,7 @@ https://github.com/tribixbite/termux-tools/blob/main/edge-claude-ext/PRIVACY.md
 https://github.com/tribixbite/termux-tools/issues
 
 ## Website
-https://github.com/tribixbite/termux-tools
+https://termux.party
 
 ## Search Terms (7 max)
 1. claude code

@@ -28,17 +28,17 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// bridge/src/import-meta-shim.js
+// src/import-meta-shim.js
 var import_meta_url;
 var init_import_meta_shim = __esm({
-  "bridge/src/import-meta-shim.js"() {
+  "src/import-meta-shim.js"() {
     import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "";
   }
 });
 
-// ../../node_modules/ws/lib/constants.js
+// node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "../../node_modules/ws/lib/constants.js"(exports2, module2) {
+  "node_modules/ws/lib/constants.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -50,235 +50,19 @@ var require_constants = __commonJS({
       EMPTY_BUFFER: Buffer.alloc(0),
       GUID: "258EAFA5-E914-47DA-95CA-C5AB0DC85B11",
       hasBlob,
-      kForOnEventAttribute: /* @__PURE__ */ Symbol("kIsForOnEventAttribute"),
-      kListener: /* @__PURE__ */ Symbol("kListener"),
-      kStatusCode: /* @__PURE__ */ Symbol("status-code"),
-      kWebSocket: /* @__PURE__ */ Symbol("websocket"),
+      kForOnEventAttribute: Symbol("kIsForOnEventAttribute"),
+      kListener: Symbol("kListener"),
+      kStatusCode: Symbol("status-code"),
+      kWebSocket: Symbol("websocket"),
       NOOP: () => {
       }
     };
   }
 });
 
-// ../../node_modules/node-gyp-build/node-gyp-build.js
-var require_node_gyp_build = __commonJS({
-  "../../node_modules/node-gyp-build/node-gyp-build.js"(exports2, module2) {
-    init_import_meta_shim();
-    var fs = require("fs");
-    var path = require("path");
-    var os = require("os");
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
-    var vars = process.config && process.config.variables || {};
-    var prebuildsOnly = !!process.env.PREBUILDS_ONLY;
-    var abi = process.versions.modules;
-    var runtime = isElectron() ? "electron" : isNwjs() ? "node-webkit" : "node";
-    var arch = process.env.npm_config_arch || os.arch();
-    var platform = process.env.npm_config_platform || os.platform();
-    var libc = process.env.LIBC || (isAlpine(platform) ? "musl" : "glibc");
-    var armv = process.env.ARM_VERSION || (arch === "arm64" ? "8" : vars.arm_version) || "";
-    var uv = (process.versions.uv || "").split(".")[0];
-    module2.exports = load;
-    function load(dir) {
-      return runtimeRequire(load.resolve(dir));
-    }
-    load.resolve = load.path = function(dir) {
-      dir = path.resolve(dir || ".");
-      try {
-        var name = runtimeRequire(path.join(dir, "package.json")).name.toUpperCase().replace(/-/g, "_");
-        if (process.env[name + "_PREBUILD"]) dir = process.env[name + "_PREBUILD"];
-      } catch (err) {
-      }
-      if (!prebuildsOnly) {
-        var release = getFirst(path.join(dir, "build/Release"), matchBuild);
-        if (release) return release;
-        var debug = getFirst(path.join(dir, "build/Debug"), matchBuild);
-        if (debug) return debug;
-      }
-      var prebuild = resolve3(dir);
-      if (prebuild) return prebuild;
-      var nearby = resolve3(path.dirname(process.execPath));
-      if (nearby) return nearby;
-      var target = [
-        "platform=" + platform,
-        "arch=" + arch,
-        "runtime=" + runtime,
-        "abi=" + abi,
-        "uv=" + uv,
-        armv ? "armv=" + armv : "",
-        "libc=" + libc,
-        "node=" + process.versions.node,
-        process.versions.electron ? "electron=" + process.versions.electron : "",
-        typeof __webpack_require__ === "function" ? "webpack=true" : ""
-        // eslint-disable-line
-      ].filter(Boolean).join(" ");
-      throw new Error("No native build was found for " + target + "\n    loaded from: " + dir + "\n");
-      function resolve3(dir2) {
-        var tuples = readdirSync(path.join(dir2, "prebuilds")).map(parseTuple);
-        var tuple = tuples.filter(matchTuple(platform, arch)).sort(compareTuples)[0];
-        if (!tuple) return;
-        var prebuilds = path.join(dir2, "prebuilds", tuple.name);
-        var parsed = readdirSync(prebuilds).map(parseTags);
-        var candidates = parsed.filter(matchTags(runtime, abi));
-        var winner = candidates.sort(compareTags(runtime))[0];
-        if (winner) return path.join(prebuilds, winner.file);
-      }
-    };
-    function readdirSync(dir) {
-      try {
-        return fs.readdirSync(dir);
-      } catch (err) {
-        return [];
-      }
-    }
-    function getFirst(dir, filter) {
-      var files = readdirSync(dir).filter(filter);
-      return files[0] && path.join(dir, files[0]);
-    }
-    function matchBuild(name) {
-      return /\.node$/.test(name);
-    }
-    function parseTuple(name) {
-      var arr = name.split("-");
-      if (arr.length !== 2) return;
-      var platform2 = arr[0];
-      var architectures = arr[1].split("+");
-      if (!platform2) return;
-      if (!architectures.length) return;
-      if (!architectures.every(Boolean)) return;
-      return { name, platform: platform2, architectures };
-    }
-    function matchTuple(platform2, arch2) {
-      return function(tuple) {
-        if (tuple == null) return false;
-        if (tuple.platform !== platform2) return false;
-        return tuple.architectures.includes(arch2);
-      };
-    }
-    function compareTuples(a, b) {
-      return a.architectures.length - b.architectures.length;
-    }
-    function parseTags(file) {
-      var arr = file.split(".");
-      var extension = arr.pop();
-      var tags = { file, specificity: 0 };
-      if (extension !== "node") return;
-      for (var i = 0; i < arr.length; i++) {
-        var tag = arr[i];
-        if (tag === "node" || tag === "electron" || tag === "node-webkit") {
-          tags.runtime = tag;
-        } else if (tag === "napi") {
-          tags.napi = true;
-        } else if (tag.slice(0, 3) === "abi") {
-          tags.abi = tag.slice(3);
-        } else if (tag.slice(0, 2) === "uv") {
-          tags.uv = tag.slice(2);
-        } else if (tag.slice(0, 4) === "armv") {
-          tags.armv = tag.slice(4);
-        } else if (tag === "glibc" || tag === "musl") {
-          tags.libc = tag;
-        } else {
-          continue;
-        }
-        tags.specificity++;
-      }
-      return tags;
-    }
-    function matchTags(runtime2, abi2) {
-      return function(tags) {
-        if (tags == null) return false;
-        if (tags.runtime && tags.runtime !== runtime2 && !runtimeAgnostic(tags)) return false;
-        if (tags.abi && tags.abi !== abi2 && !tags.napi) return false;
-        if (tags.uv && tags.uv !== uv) return false;
-        if (tags.armv && tags.armv !== armv) return false;
-        if (tags.libc && tags.libc !== libc) return false;
-        return true;
-      };
-    }
-    function runtimeAgnostic(tags) {
-      return tags.runtime === "node" && tags.napi;
-    }
-    function compareTags(runtime2) {
-      return function(a, b) {
-        if (a.runtime !== b.runtime) {
-          return a.runtime === runtime2 ? -1 : 1;
-        } else if (a.abi !== b.abi) {
-          return a.abi ? -1 : 1;
-        } else if (a.specificity !== b.specificity) {
-          return a.specificity > b.specificity ? -1 : 1;
-        } else {
-          return 0;
-        }
-      };
-    }
-    function isNwjs() {
-      return !!(process.versions && process.versions.nw);
-    }
-    function isElectron() {
-      if (process.versions && process.versions.electron) return true;
-      if (process.env.ELECTRON_RUN_AS_NODE) return true;
-      return typeof window !== "undefined" && window.process && window.process.type === "renderer";
-    }
-    function isAlpine(platform2) {
-      return platform2 === "linux" && fs.existsSync("/etc/alpine-release");
-    }
-    load.parseTags = parseTags;
-    load.matchTags = matchTags;
-    load.compareTags = compareTags;
-    load.parseTuple = parseTuple;
-    load.matchTuple = matchTuple;
-    load.compareTuples = compareTuples;
-  }
-});
-
-// ../../node_modules/node-gyp-build/index.js
-var require_node_gyp_build2 = __commonJS({
-  "../../node_modules/node-gyp-build/index.js"(exports2, module2) {
-    init_import_meta_shim();
-    var runtimeRequire = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
-    if (typeof runtimeRequire.addon === "function") {
-      module2.exports = runtimeRequire.addon.bind(runtimeRequire);
-    } else {
-      module2.exports = require_node_gyp_build();
-    }
-  }
-});
-
-// ../../node_modules/bufferutil/fallback.js
-var require_fallback = __commonJS({
-  "../../node_modules/bufferutil/fallback.js"(exports2, module2) {
-    "use strict";
-    init_import_meta_shim();
-    var mask = (source, mask2, output, offset, length) => {
-      for (var i = 0; i < length; i++) {
-        output[offset + i] = source[i] ^ mask2[i & 3];
-      }
-    };
-    var unmask = (buffer, mask2) => {
-      const length = buffer.length;
-      for (var i = 0; i < length; i++) {
-        buffer[i] ^= mask2[i & 3];
-      }
-    };
-    module2.exports = { mask, unmask };
-  }
-});
-
-// ../../node_modules/bufferutil/index.js
-var require_bufferutil = __commonJS({
-  "../../node_modules/bufferutil/index.js"(exports2, module2) {
-    "use strict";
-    init_import_meta_shim();
-    try {
-      module2.exports = require_node_gyp_build2()(__dirname);
-    } catch (e) {
-      module2.exports = require_fallback();
-    }
-  }
-});
-
-// ../../node_modules/ws/lib/buffer-util.js
+// node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "../../node_modules/ws/lib/buffer-util.js"(exports2, module2) {
+  "node_modules/ws/lib/buffer-util.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { EMPTY_BUFFER } = require_constants();
@@ -337,7 +121,7 @@ var require_buffer_util = __commonJS({
     };
     if (!process.env.WS_NO_BUFFER_UTIL) {
       try {
-        const bufferUtil = require_bufferutil();
+        const bufferUtil = require("bufferutil");
         module2.exports.mask = function(source, mask, output, offset, length) {
           if (length < 48) _mask(source, mask, output, offset, length);
           else bufferUtil.mask(source, mask, output, offset, length);
@@ -352,13 +136,13 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/limiter.js
+// node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "../../node_modules/ws/lib/limiter.js"(exports2, module2) {
+  "node_modules/ws/lib/limiter.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
-    var kDone = /* @__PURE__ */ Symbol("kDone");
-    var kRun = /* @__PURE__ */ Symbol("kRun");
+    var kDone = Symbol("kDone");
+    var kRun = Symbol("kRun");
     var Limiter = class {
       /**
        * Creates a new `Limiter`.
@@ -403,9 +187,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/permessage-deflate.js
+// node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "../../node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
+  "node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var zlib = require("zlib");
@@ -414,11 +198,11 @@ var require_permessage_deflate = __commonJS({
     var { kStatusCode } = require_constants();
     var FastBuffer = Buffer[Symbol.species];
     var TRAILER = Buffer.from([0, 0, 255, 255]);
-    var kPerMessageDeflate = /* @__PURE__ */ Symbol("permessage-deflate");
-    var kTotalLength = /* @__PURE__ */ Symbol("total-length");
-    var kCallback = /* @__PURE__ */ Symbol("callback");
-    var kBuffers = /* @__PURE__ */ Symbol("buffers");
-    var kError = /* @__PURE__ */ Symbol("error");
+    var kPerMessageDeflate = Symbol("permessage-deflate");
+    var kTotalLength = Symbol("total-length");
+    var kCallback = Symbol("callback");
+    var kBuffers = Symbol("buffers");
+    var kError = Symbol("error");
     var zlibLimiter;
     var PerMessageDeflate = class {
       /**
@@ -787,60 +571,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// ../../node_modules/utf-8-validate/fallback.js
-var require_fallback2 = __commonJS({
-  "../../node_modules/utf-8-validate/fallback.js"(exports2, module2) {
-    "use strict";
-    init_import_meta_shim();
-    function isValidUTF8(buf) {
-      const len = buf.length;
-      let i = 0;
-      while (i < len) {
-        if ((buf[i] & 128) === 0) {
-          i++;
-        } else if ((buf[i] & 224) === 192) {
-          if (i + 1 === len || (buf[i + 1] & 192) !== 128 || (buf[i] & 254) === 192) {
-            return false;
-          }
-          i += 2;
-        } else if ((buf[i] & 240) === 224) {
-          if (i + 2 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || buf[i] === 224 && (buf[i + 1] & 224) === 128 || // overlong
-          buf[i] === 237 && (buf[i + 1] & 224) === 160) {
-            return false;
-          }
-          i += 3;
-        } else if ((buf[i] & 248) === 240) {
-          if (i + 3 >= len || (buf[i + 1] & 192) !== 128 || (buf[i + 2] & 192) !== 128 || (buf[i + 3] & 192) !== 128 || buf[i] === 240 && (buf[i + 1] & 240) === 128 || // overlong
-          buf[i] === 244 && buf[i + 1] > 143 || buf[i] > 244) {
-            return false;
-          }
-          i += 4;
-        } else {
-          return false;
-        }
-      }
-      return true;
-    }
-    module2.exports = isValidUTF8;
-  }
-});
-
-// ../../node_modules/utf-8-validate/index.js
-var require_utf_8_validate = __commonJS({
-  "../../node_modules/utf-8-validate/index.js"(exports2, module2) {
-    "use strict";
-    init_import_meta_shim();
-    try {
-      module2.exports = require_node_gyp_build2()(__dirname);
-    } catch (e) {
-      module2.exports = require_fallback2();
-    }
-  }
-});
-
-// ../../node_modules/ws/lib/validation.js
+// node_modules/ws/lib/validation.js
 var require_validation = __commonJS({
-  "../../node_modules/ws/lib/validation.js"(exports2, module2) {
+  "node_modules/ws/lib/validation.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { isUtf8 } = require("buffer");
@@ -1030,7 +763,7 @@ var require_validation = __commonJS({
       };
     } else if (!process.env.WS_NO_UTF_8_VALIDATE) {
       try {
-        const isValidUTF8 = require_utf_8_validate();
+        const isValidUTF8 = require("utf-8-validate");
         module2.exports.isValidUTF8 = function(buf) {
           return buf.length < 32 ? _isValidUTF8(buf) : isValidUTF8(buf);
         };
@@ -1040,9 +773,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/receiver.js
+// node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "../../node_modules/ws/lib/receiver.js"(exports2, module2) {
+  "node_modules/ws/lib/receiver.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Writable } = require("stream");
@@ -1633,9 +1366,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/sender.js
+// node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "../../node_modules/ws/lib/sender.js"(exports2, module2) {
+  "node_modules/ws/lib/sender.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Duplex } = require("stream");
@@ -1644,7 +1377,7 @@ var require_sender = __commonJS({
     var { EMPTY_BUFFER, kWebSocket, NOOP } = require_constants();
     var { isBlob, isValidStatusCode } = require_validation();
     var { mask: applyMask, toBuffer } = require_buffer_util();
-    var kByteLength = /* @__PURE__ */ Symbol("kByteLength");
+    var kByteLength = Symbol("kByteLength");
     var maskBuffer = Buffer.alloc(4);
     var RANDOM_POOL_SIZE = 8 * 1024;
     var randomPool;
@@ -2122,20 +1855,20 @@ var require_sender = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/event-target.js
+// node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "../../node_modules/ws/lib/event-target.js"(exports2, module2) {
+  "node_modules/ws/lib/event-target.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { kForOnEventAttribute, kListener } = require_constants();
-    var kCode = /* @__PURE__ */ Symbol("kCode");
-    var kData = /* @__PURE__ */ Symbol("kData");
-    var kError = /* @__PURE__ */ Symbol("kError");
-    var kMessage = /* @__PURE__ */ Symbol("kMessage");
-    var kReason = /* @__PURE__ */ Symbol("kReason");
-    var kTarget = /* @__PURE__ */ Symbol("kTarget");
-    var kType = /* @__PURE__ */ Symbol("kType");
-    var kWasClean = /* @__PURE__ */ Symbol("kWasClean");
+    var kCode = Symbol("kCode");
+    var kData = Symbol("kData");
+    var kError = Symbol("kError");
+    var kMessage = Symbol("kMessage");
+    var kReason = Symbol("kReason");
+    var kTarget = Symbol("kTarget");
+    var kType = Symbol("kType");
+    var kWasClean = Symbol("kWasClean");
     var Event = class {
       /**
        * Create a new `Event`.
@@ -2352,9 +2085,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/extension.js
+// node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "../../node_modules/ws/lib/extension.js"(exports2, module2) {
+  "node_modules/ws/lib/extension.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -2506,9 +2239,9 @@ var require_extension = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/websocket.js
+// node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "../../node_modules/ws/lib/websocket.js"(exports2, module2) {
+  "node_modules/ws/lib/websocket.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -2539,7 +2272,7 @@ var require_websocket = __commonJS({
     } = require_event_target();
     var { format, parse } = require_extension();
     var { toBuffer } = require_buffer_util();
-    var kAborted = /* @__PURE__ */ Symbol("kAborted");
+    var kAborted = Symbol("kAborted");
     var protocolVersions = [8, 13];
     var readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
     var subprotocolRegex = /^[!#$%&'*+\-.0-9A-Z^_`|a-z~]+$/;
@@ -3393,9 +3126,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/stream.js
+// node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "../../node_modules/ws/lib/stream.js"(exports2, module2) {
+  "node_modules/ws/lib/stream.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var WebSocket3 = require_websocket();
@@ -3492,9 +3225,9 @@ var require_stream = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/subprotocol.js
+// node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "../../node_modules/ws/lib/subprotocol.js"(exports2, module2) {
+  "node_modules/ws/lib/subprotocol.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -3538,9 +3271,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// ../../node_modules/ws/lib/websocket-server.js
+// node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "../../node_modules/ws/lib/websocket-server.js"(exports2, module2) {
+  "node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3932,10 +3665,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// ../../node_modules/ws/wrapper.mjs
+// node_modules/ws/wrapper.mjs
 var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "../../node_modules/ws/wrapper.mjs"() {
+  "node_modules/ws/wrapper.mjs"() {
     init_import_meta_shim();
     import_stream = __toESM(require_stream(), 1);
     import_receiver = __toESM(require_receiver(), 1);
@@ -3945,7 +3678,7 @@ var init_wrapper = __esm({
   }
 });
 
-// compat.ts
+// ../compat.ts
 async function fileExists(path) {
   if (IS_BUN) {
     return Bun.file(path).exists();
@@ -4200,7 +3933,7 @@ function createNodeServer(config) {
 }
 var import_promises, import_node_fs, import_node_stream, cp, http, IS_BUN;
 var init_compat = __esm({
-  "compat.ts"() {
+  "../compat.ts"() {
     init_import_meta_shim();
     import_promises = require("node:fs/promises");
     import_node_fs = require("node:fs");
@@ -4212,7 +3945,7 @@ var init_compat = __esm({
   }
 });
 
-// claude-chrome-bridge.ts
+// ../claude-chrome-bridge.ts
 var claude_chrome_bridge_exports = {};
 function adb(...args2) {
   return ADB_SERIAL ? [ADB_PATH, "-s", ADB_SERIAL, ...args2] : [ADB_PATH, ...args2];
@@ -4858,6 +4591,7 @@ function shutdown() {
     nativeHost = null;
   }
   cdpManager.cleanup();
+  cdpManager.stopReconnectForShutdown();
   adbNotify("cfc-bridge", "CFC Bridge stopped", "Bridge is no longer running");
   server.stop();
   log("info", "Bridge stopped");
@@ -4865,7 +4599,7 @@ function shutdown() {
 }
 var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, ADB_SERIAL, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, pendingToolQueue, HTTP_TOOL_TIMEOUT_MS, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
-  "claude-chrome-bridge.ts"() {
+  "../claude-chrome-bridge.ts"() {
     init_import_meta_shim();
     import_path = require("path");
     import_node_zlib = require("node:zlib");
@@ -4974,8 +4708,10 @@ var init_claude_chrome_bridge = __esm({
       targetsLastFetched = 0;
       /** Cached CDP targets */
       cachedTargets = [];
-      /** PID recheck interval handle */
+      /** PID recheck interval handle (active when connected) */
       pidCheckTimer = null;
+      /** Reconnect interval handle (active when disconnected) */
+      reconnectTimer = null;
       /** Sessions where Network domain has been enabled */
       networkEnabledSessions = /* @__PURE__ */ new Set();
       /** Network request events per sessionId */
@@ -4986,16 +4722,9 @@ var init_claude_chrome_bridge = __esm({
         if (this.state === "connecting") return false;
         this.state = "connecting";
         try {
-          const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
-          const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
-          if (!pidStr || pidResult.exitCode !== 0) {
-            log("debug", `CDP: Edge not running or ADB unavailable (exit=${pidResult.exitCode}, stderr=${pidResult.stderr?.toString().trim()}, serial=${ADB_SERIAL || "default"})`);
-            this.state = "disconnected";
-            return false;
-          }
-          this.edgePid = parseInt(pidStr, 10);
+          this.edgePid = this.getEdgePid();
           if (isNaN(this.edgePid)) {
-            log("warn", `CDP: invalid PID "${pidStr}"`);
+            log("debug", "CDP: Edge not running or ADB unavailable");
             this.state = "disconnected";
             return false;
           }
@@ -5027,6 +4756,7 @@ var init_claude_chrome_bridge = __esm({
           }
           const wsUrl = versionData.webSocketDebuggerUrl?.replace(/^ws:\/\/[^/]+/, `ws://127.0.0.1:${CDP_PORT}`) ?? `ws://127.0.0.1:${CDP_PORT}/devtools/browser`;
           await this.connectWebSocket(wsUrl);
+          this.stopReconnectTimer();
           if (!this.pidCheckTimer) {
             this.pidCheckTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
           }
@@ -5502,28 +5232,65 @@ var init_claude_chrome_bridge = __esm({
           targets: this.cachedTargets.filter((t) => t.type === "page").length
         };
       }
-      /** Re-check Edge PID — reconnect if changed (Edge restarted) */
-      async recheckPid() {
+      /**
+       * Get Edge PID — tries local `pidof` first (works on-device without ADB),
+       * falls back to `adb shell pidof` if local fails.
+       * Returns NaN if Edge is not running or both methods fail.
+       */
+      getEdgePid() {
         try {
-          const pidResult = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
-          const pidStr = pidResult.stdout.toString().trim().split(/\s+/)[0];
-          const newPid = parseInt(pidStr, 10);
-          if (isNaN(newPid)) {
-            if (this.state === "connected") {
-              log("info", "CDP: Edge no longer running, disconnecting");
-              this.cleanup();
-            }
-            return;
-          }
-          if (newPid !== this.edgePid && this.state === "connected") {
-            log("info", `CDP: Edge PID changed ${this.edgePid} \u2192 ${newPid}, reconnecting`);
-            this.cleanup();
-            await this.connect();
-          }
+          const local = runSync(["pidof", "com.microsoft.emmx.canary"]);
+          const pid = parseInt(local.stdout.toString().trim().split(/\s+/)[0], 10);
+          if (!isNaN(pid)) return pid;
         } catch {
         }
+        try {
+          const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
+          const pid = parseInt(remote.stdout.toString().trim().split(/\s+/)[0], 10);
+          if (!isNaN(pid)) return pid;
+        } catch {
+        }
+        return NaN;
       }
-      /** Clean up CDP connection and ADB forward */
+      /** Re-check Edge PID — reconnect if changed, or attempt connect if disconnected */
+      async recheckPid() {
+        const newPid = this.getEdgePid();
+        if (isNaN(newPid)) {
+          if (this.state === "connected") {
+            log("info", "CDP: Edge no longer running, disconnecting");
+            this.cleanup();
+          }
+          return;
+        }
+        if (this.state === "disconnected") {
+          log("info", `CDP: Edge running (PID ${newPid}), attempting reconnect`);
+          await this.connect();
+          return;
+        }
+        if (newPid !== this.edgePid && this.state === "connected") {
+          log("info", `CDP: Edge PID changed ${this.edgePid} \u2192 ${newPid}, reconnecting`);
+          this.cleanup();
+          await this.connect();
+        }
+      }
+      /** Start periodic reconnect timer (runs when disconnected) */
+      startReconnectTimer() {
+        if (this.reconnectTimer) return;
+        this.reconnectTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
+        log("debug", `CDP: reconnect timer started (every ${CDP_PID_CHECK_INTERVAL_MS / 1e3}s)`);
+      }
+      /** Stop the reconnect timer (called when connection succeeds) */
+      stopReconnectTimer() {
+        if (this.reconnectTimer) {
+          clearInterval(this.reconnectTimer);
+          this.reconnectTimer = null;
+        }
+      }
+      /** Stop reconnect timer for final shutdown (cleanup restarts it, but shutdown shouldn't) */
+      stopReconnectForShutdown() {
+        this.stopReconnectTimer();
+      }
+      /** Clean up CDP connection and ADB forward, restart reconnect timer */
       cleanup() {
         if (this.pidCheckTimer) {
           clearInterval(this.pidCheckTimer);
@@ -5548,6 +5315,7 @@ var init_claude_chrome_bridge = __esm({
         this.pending.clear();
         runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
         log("info", "CDP: cleaned up");
+        this.startReconnectTimer();
       }
     };
     cdpManager = new CdpManager();
@@ -5858,22 +5626,14 @@ var init_claude_chrome_bridge = __esm({
     log("info", `Claude Chrome Bridge v${BRIDGE_VERSION} started on ws://${WS_HOST}:${WS_PORT}`);
     log("info", `CLI path: ${CLI_PATH}`);
     log("info", `Auth: ${BRIDGE_TOKEN ? "token required" : "open (localhost only)"}`);
-    (async () => {
-      const CDP_RETRY_ATTEMPTS = 5;
-      const CDP_RETRY_DELAY_MS = 1e4;
-      for (let attempt = 1; attempt <= CDP_RETRY_ATTEMPTS; attempt++) {
-        const ok = await cdpManager.connect();
-        if (ok) {
-          log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
-          return;
-        }
-        if (attempt < CDP_RETRY_ATTEMPTS) {
-          log("info", `CDP: attempt ${attempt}/${CDP_RETRY_ATTEMPTS} failed \u2014 retrying in ${CDP_RETRY_DELAY_MS / 1e3}s`);
-          await new Promise((r) => setTimeout(r, CDP_RETRY_DELAY_MS));
-        }
+    cdpManager.connect().then((ok) => {
+      if (ok) {
+        log("info", `CDP: ready (${JSON.stringify(cdpManager.getStatus())})`);
+      } else {
+        log("info", "CDP: not available at startup \u2014 reconnect timer will retry periodically");
+        cdpManager.startReconnectTimer();
       }
-      log("info", "CDP: not available after retries (ADB/Edge not running \u2014 will use extension fallback)");
-    })();
+    });
     log("info", "Waiting for WebSocket connections...");
     adbNotify("cfc-bridge", `CFC Bridge v${BRIDGE_VERSION}`, `Running on :${WS_PORT} (PID ${process.pid})`);
     TEST_PAGE_HTML = `<!DOCTYPE html>
@@ -5988,7 +5748,7 @@ var init_claude_chrome_bridge = __esm({
   }
 });
 
-// bridge/src/cli.ts
+// src/cli.ts
 init_import_meta_shim();
 var import_path2 = require("path");
 var import_fs = require("fs");
