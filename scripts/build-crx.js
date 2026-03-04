@@ -43,6 +43,11 @@ async function main() {
     require("fs").unlinkSync(pemPath);
   }
 
+  // Also update the "latest" alias for bridge /ext/crx fallback
+  const latestPath = join(DIST_DIR, "claude-code-bridge-latest.crx");
+  const { copyFileSync } = require("fs");
+  copyFileSync(outPath, latestPath);
+
   console.log(`Built ${OUT_NAME} (v${VERSION}) → ${outPath}`);
 }
 
