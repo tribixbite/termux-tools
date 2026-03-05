@@ -56,62 +56,68 @@
   {:else if apps.length === 0}
     <p class="text-xs text-[var(--text-muted)]">No apps found (ADB offline?)</p>
   {:else}
-    <div class="app-list">
-      {#each apps as app (app.pkg)}
-        <div class="app-row" class:system={app.system}>
-          <div class="app-info">
-            <span class="app-label">{app.label}</span>
-            <span class="app-rss">{app.rss_mb}MB</span>
-          </div>
-          {#if !app.system}
-            <button
-              class="btn btn-sm btn-danger"
-              onclick={() => handleStop(app.pkg)}
-              disabled={stopping.has(app.pkg)}
-            >
-              {stopping.has(app.pkg) ? "..." : "Stop"}
-            </button>
-          {:else}
-            <span class="text-xs text-[var(--text-muted)]">system</span>
-          {/if}
-        </div>
-      {/each}
-    </div>
+    <table class="app-table">
+      <tbody>
+        {#each apps as app (app.pkg)}
+          <tr class="app-row" class:system={app.system}>
+            <td class="td-label">{app.label}</td>
+            <td class="td-rss">{app.rss_mb}<span class="unit">MB</span></td>
+            <td class="td-action">
+              {#if !app.system}
+                <button
+                  class="btn btn-sm btn-danger"
+                  onclick={() => handleStop(app.pkg)}
+                  disabled={stopping.has(app.pkg)}
+                >
+                  {stopping.has(app.pkg) ? "..." : "Stop"}
+                </button>
+              {:else}
+                <span class="sys-label">system</span>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
   {/if}
 </div>
 
 <style>
-  .app-list {
-    display: flex;
-    flex-direction: column;
-  }
-  .app-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-    border-top: 1px solid var(--border);
-  }
-  .app-row:first-child { border-top: none; }
-  .app-row.system { opacity: 0.5; }
-  .app-info {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    min-width: 0;
-    flex: 1;
-  }
-  .app-label {
+  .app-table {
+    width: 100%;
+    border-collapse: collapse;
     font-size: 0.8125rem;
+  }
+  .app-row td {
+    padding: 0.5rem 0.375rem;
+    border-top: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .app-row:first-child td { border-top: none; }
+  .app-row.system { opacity: 0.5; }
+  .td-label {
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    max-width: 0;
+    width: 100%;
   }
-  .app-rss {
+  .td-rss {
+    text-align: right;
+    color: var(--text-secondary);
     font-size: 0.75rem;
+    white-space: nowrap;
+    padding-right: 0.75rem !important;
+  }
+  .unit { color: var(--text-muted); margin-left: 1px; }
+  .td-action {
+    text-align: right;
+    white-space: nowrap;
+    width: 4rem;
+  }
+  .sys-label {
+    font-size: 0.6875rem;
     color: var(--text-muted);
-    flex-shrink: 0;
   }
 </style>

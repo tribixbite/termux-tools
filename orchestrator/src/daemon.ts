@@ -39,6 +39,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Resolve full ADB path — bun's spawnSync can't find it via PATH symlinks */
+function resolveAdbPath(): string {
+  try {
+    const result = spawnSync("which", ["adb"], { encoding: "utf-8", timeout: 3000 });
+    if (result.stdout?.trim()) return result.stdout.trim();
+  } catch { /* fall through */ }
+  // Fallback to common Termux locations
+  const candidates = [
+    join(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    join(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb"),
+  ];
+  for (const p of candidates) {
+    try { if (require("fs").existsSync(p)) return p; } catch { /* skip */ }
+  }
+  return "adb"; // Last resort — hope PATH works
+}
+
+const ADB_BIN = resolveAdbPath();
+
 /** Send a Termux notification */
 function notify(title: string, content: string): void {
   try {
@@ -64,6 +83,8 @@ export class Daemon {
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
+  private adbSerial: string | null = null;
+  private adbSerialExpiry = 0;
   private running = false;
 
   constructor(configPath?: string) {
@@ -367,6 +388,54 @@ export class Daemon {
     }
   }
 
+  // -- ADB helpers ------------------------------------------------------------
+
+  /** ADB serial cache TTL — re-resolve every 30s to handle reconnects */
+  private static readonly ADB_SERIAL_TTL_MS = 30_000;
+
+  /**
+   * Resolve the active ADB device serial (needed when multiple devices are listed).
+   * Caches with a short TTL so reconnects with new ports are picked up.
+   */
+  private resolveAdbSerial(): string | null {
+    const now = Date.now();
+    if (this.adbSerial && now < this.adbSerialExpiry) return this.adbSerial;
+    try {
+      const result = spawnSync(ADB_BIN, ["devices"], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0 || !result.stdout) return null;
+      // Parse lines like "10.0.0.131:40267\tdevice"
+      const devices = result.stdout
+        .split("\n")
+        .filter((l) => l.endsWith("\tdevice"))
+        .map((l) => l.split("\t")[0]);
+      if (devices.length === 0) {
+        this.adbSerial = null;
+        return null;
+      }
+      if (devices.length > 1) {
+        this.log.debug(`Multiple ADB devices, using ${devices[0]}`);
+      }
+      this.adbSerial = devices[0];
+      this.adbSerialExpiry = now + Daemon.ADB_SERIAL_TTL_MS;
+      return this.adbSerial;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Build ADB shell args with serial selection for multi-device environments */
+  private adbShellArgs(...shellArgs: string[]): string[] {
+    const serial = this.resolveAdbSerial();
+    const args: string[] = [];
+    if (serial) args.push("-s", serial);
+    args.push("shell", ...shellArgs);
+    return args;
+  }
+
   // -- ADB fix ----------------------------------------------------------------
 
   /** Attempt ADB connection and apply phantom process killer fix */
@@ -393,6 +462,9 @@ export class Daemon {
       }
 
       this.log.info("ADB connected");
+      // Clear cached serial so it's re-resolved with the new connection
+      this.adbSerial = null;
+      this.adbSerialExpiry = 0;
 
       if (phantom_fix) {
         this.applyPhantomFix();
@@ -410,9 +482,9 @@ export class Daemon {
 
   /** Apply Android 12+ phantom process killer fix via ADB */
   private applyPhantomFix(): void {
-    const commands = [
-      'adb shell "/system/bin/device_config put activity_manager max_phantom_processes 2147483647"',
-      'adb shell "settings put global settings_enable_monitor_phantom_procs false"',
+    const shellCmds = [
+      ["/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"],
+      ["settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"],
     ];
 
     // Also re-enable Samsung sensor packages
@@ -422,17 +494,17 @@ export class Daemon {
       "com.samsung.android.camerasdkservice",
     ];
 
-    for (const cmd of commands) {
+    for (const cmd of shellCmds) {
       try {
-        execSync(cmd, { timeout: 10_000, stdio: "ignore" });
+        spawnSync(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 10_000, stdio: "ignore" });
       } catch (err) {
-        this.log.warn(`Phantom fix command failed: ${cmd}`, { error: String(err) });
+        this.log.warn(`Phantom fix command failed: ${cmd.join(" ")}`, { error: String(err) });
       }
     }
 
     for (const pkg of samsungPkgs) {
       try {
-        execSync(`adb shell "pm enable ${pkg}"`, { timeout: 10_000, stdio: "ignore" });
+        spawnSync(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 10_000, stdio: "ignore" });
       } catch {
         // Non-critical
       }
@@ -789,7 +861,11 @@ export class Daemon {
     "system_server", "com.android.systemui", "com.google.android.gms.persistent",
     "com.termux", "com.termux.api", "com.sec.android.app.launcher",
     "com.android.phone", "com.android.providers.media",
-    "com.samsung.android.providers.media",
+    "com.samsung.android.providers.media", "com.google.android.gms",
+    "com.android.bluetooth", "com.google.android.ext.services",
+    "com.google.android.providers.media.module", "android.process.acore",
+    "com.samsung.android.scs", "com.samsung.android.sead",
+    "com.samsung.android.scpm", "com.sec.android.sdhms",
   ]);
 
   /** Friendly display names for known packages */
@@ -828,6 +904,31 @@ export class Daemon {
     "com.termux": "Termux",
     "com.termux.api": "Termux:API",
     "tribixbite.cleverkeys": "CleverKeys",
+    "com.microsoft.appmanager": "Link to Windows",
+    "com.google.android.apps.nbu.files": "Files by Google",
+    "com.reddit.frontpage": "Reddit",
+    "io.homeassistant.companion.android": "Home Assistant",
+    "com.adguard.android.contentblocker": "AdGuard",
+    "com.samsung.android.app.smartcapture": "Smart Select",
+    "com.samsung.android.app.routines": "Routines",
+    "com.samsung.android.rubin.app": "Customization",
+    "com.samsung.android.app.moments": "Memories",
+    "com.samsung.android.ce": "Samsung Cloud",
+    "com.samsung.android.mdx": "Link to Windows",
+    "com.samsung.euicc": "SIM Manager",
+    "com.sec.imsservice": "IMS Service",
+    "com.sec.android.app.clockpackage": "Clock",
+    "com.samsung.cmh": "Connected Home",
+    "com.samsung.android.kmxservice": "Knox",
+    "com.samsung.android.stplatform": "SmartThings",
+    "com.samsung.android.service.stplatform": "SmartThings",
+    "com.google.android.gms.unstable": "Play Services",
+    "com.google.android.as.oss": "Private Compute",
+    "com.google.android.cellbroadcastreceiver": "Emergency Alerts",
+    "com.sec.android.app.chromecustomizations": "Chrome Custom",
+    "org.mopria.printplugin": "Print Service",
+    "com.samsung.android.samsungpositioning": "Location",
+    "com.google.android.providers.media.module": "Media Storage",
   };
 
   /**
@@ -836,12 +937,20 @@ export class Daemon {
    */
   private getAndroidApps(): { pkg: string; label: string; rss_mb: number; system: boolean }[] {
     try {
-      const result = spawnSync("adb", ["shell", "ps", "-A", "-o", "PID,RSS,NAME"], {
+      const result = spawnSync(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
         encoding: "utf-8",
         timeout: 8000,
         stdio: ["ignore", "pipe", "pipe"],
       });
-      if (result.status !== 0 || !result.stdout) return [];
+      if (result.status !== 0 || !result.stdout) {
+        this.log.warn("adb ps failed", {
+          status: result.status,
+          stderr: result.stderr?.trim().slice(0, 200),
+          hasStdout: !!result.stdout,
+          args: this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME").join(" "),
+        });
+        return [];
+      }
 
       // Aggregate RSS by base package name (strip :sandboxed_process*, :privileged_process*, etc.)
       const pkgMap = new Map<string, number>();
@@ -854,8 +963,9 @@ export class Daemon {
 
         // Extract base package: "com.foo.bar:sandboxed_process0:..." → "com.foo.bar"
         const basePkg = rawName.split(":")[0];
-        // Only include things that look like package names (contain a dot)
-        if (!basePkg.includes(".") && !Daemon.APP_LABELS[basePkg]) continue;
+        // Only include Android package names (at least 2 dots, e.g. com.foo.bar)
+        const dotCount = (basePkg.match(/\./g) || []).length;
+        if (dotCount < 2 && !Daemon.APP_LABELS[basePkg]) continue;
         // Skip zygote/isolated processes — they're OS-level, not user apps
         if (basePkg.endsWith("_zygote") || basePkg.startsWith("com.android.isolated")) continue;
 
@@ -874,7 +984,8 @@ export class Daemon {
 
       apps.sort((a, b) => b.rss_mb - a.rss_mb);
       return apps;
-    } catch {
+    } catch (err) {
+      this.log.warn("getAndroidApps exception", { error: String(err) });
       return [];
     }
   }
@@ -900,7 +1011,7 @@ export class Daemon {
     }
 
     try {
-      const result = spawnSync("adb", ["shell", "am", "force-stop", pkg], {
+      const result = spawnSync(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
         encoding: "utf-8",
         timeout: 5000,
         stdio: ["ignore", "pipe", "pipe"],
