@@ -1,6 +1,7 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import MemoryGauge from "../components/MemoryGauge.svelte";
+import ProcessManager from "../components/ProcessManager.svelte";
 ---
 
 <Layout title="Memory | tmx dashboard" active="memory">
@@ -9,12 +10,15 @@ import MemoryGauge from "../components/MemoryGauge.svelte";
   </div>
 
   <!-- Per-session RSS table -->
-  <div class="card" id="session-memory">
+  <div class="card mb-4" id="session-memory">
     <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Session Memory</h2>
     <div id="rss-table">
       <p class="text-xs text-[var(--text-muted)]">Loading...</p>
     </div>
   </div>
+
+  <!-- Android app process manager -->
+  <ProcessManager client:load />
 </Layout>
 
 <script>

@@ -79,7 +79,7 @@
         </div>
 
         <!-- Actions row -->
-        <div class="flex gap-1 flex-wrap mt-1.5" onclick={(e) => e.stopPropagation()}>
+        <div class="action-row" onclick={(e) => e.stopPropagation()}>
           {#if session.status === "running" || session.status === "degraded"}
             <button class="btn btn-sm btn-danger" onclick={(e) => handleAction(e, "stop", session.name)}>Stop</button>
             <button class="btn btn-sm" onclick={(e) => handleAction(e, "restart", session.name)}>Restart</button>
@@ -126,4 +126,10 @@
   }
   .session-name:hover { text-decoration: underline; }
   .session-name:active { color: var(--accent-purple); }
+  .action-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.375rem;
+  }
 </style>

@@ -201,11 +201,22 @@ export class DashboardServer {
     // Security: prevent directory traversal
     filePath = filePath.replace(/\.\./g, "");
 
-    const fullPath = join(this.staticDir, filePath);
+    let fullPath = join(this.staticDir, filePath);
+
+    // If path is a directory (or ends with /), look for index.html inside it
+    if (existsSync(fullPath) && statSync(fullPath).isDirectory()) {
+      fullPath = join(fullPath, "index.html");
+    } else if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+      // Try appending /index.html for clean URLs (e.g. /memory → /memory/index.html)
+      const dirIndex = join(this.staticDir, filePath, "index.html");
+      if (existsSync(dirIndex) && statSync(dirIndex).isFile()) {
+        fullPath = dirIndex;
+      }
+    }
 
     // Check if file exists
     if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
-      // SPA fallback: serve index.html for non-file routes
+      // Fallback: serve root index.html for unknown routes
       const indexPath = join(this.staticDir, "index.html");
       if (existsSync(indexPath)) {
         const content = readFileSync(indexPath);

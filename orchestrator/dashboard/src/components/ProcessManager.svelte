@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { fetchProcesses, killProcess, type ProcessInfo } from "../lib/api";
+  import { fetchApps, forceStopApp, type AppInfo } from "../lib/api";
 
-  let processes: ProcessInfo[] = $state([]);
+  let apps: AppInfo[] = $state([]);
   let loading = $state(true);
   let error: string | null = $state(null);
-  let killing = $state(new Set<number>());
+  let stopping = $state(new Set<string>());
 
   async function refresh() {
     try {
-      processes = await fetchProcesses();
+      apps = await fetchApps();
       error = null;
     } catch (e) {
       error = (e as Error).message;
@@ -17,23 +17,16 @@
     }
   }
 
-  async function handleKill(pid: number) {
-    killing = new Set([...killing, pid]);
+  async function handleStop(pkg: string) {
+    stopping = new Set([...stopping, pkg]);
     try {
-      await killProcess(pid);
-      // Brief delay then refresh
-      setTimeout(refresh, 500);
+      await forceStopApp(pkg);
+      setTimeout(refresh, 800);
     } catch (e) {
-      error = `Failed to kill PID ${pid}: ${(e as Error).message}`;
+      error = `Failed to stop ${pkg}: ${(e as Error).message}`;
     } finally {
-      killing = new Set([...killing].filter((p) => p !== pid));
+      stopping = new Set([...stopping].filter((p) => p !== pkg));
     }
-  }
-
-  // Truncate long command strings
-  function truncateCmd(cmd: string, maxLen = 60): string {
-    if (cmd.length <= maxLen) return cmd;
-    return cmd.slice(0, maxLen - 1) + "\u2026";
   }
 
   // Initial load
@@ -41,16 +34,16 @@
     refresh();
   }
 
-  // Total RSS
-  let totalRss = $derived(processes.reduce((sum, p) => sum + p.rss_mb, 0));
+  let totalRss = $derived(apps.reduce((sum, a) => sum + a.rss_mb, 0));
+  let killableApps = $derived(apps.filter((a) => !a.system));
 </script>
 
 <div class="card">
   <div class="flex items-center justify-between mb-3">
-    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">Processes</h2>
+    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">Android Apps</h2>
     <div class="flex items-center gap-2">
       {#if totalRss > 0}
-        <span class="text-xs text-[var(--text-muted)]">{totalRss}MB total</span>
+        <span class="text-xs text-[var(--text-muted)]">{totalRss}MB</span>
       {/if}
       <button class="btn btn-sm" onclick={refresh}>Refresh</button>
     </div>
@@ -60,24 +53,27 @@
     <p class="text-xs text-[var(--text-muted)]">Loading...</p>
   {:else if error}
     <p class="text-xs text-[var(--accent-red)]">{error}</p>
-  {:else if processes.length === 0}
-    <p class="text-xs text-[var(--text-muted)]">No processes found</p>
+  {:else if apps.length === 0}
+    <p class="text-xs text-[var(--text-muted)]">No apps found (ADB offline?)</p>
   {:else}
-    <div class="space-y-0.5">
-      {#each processes as proc (proc.pid)}
-        <div class="proc-row">
-          <div class="flex items-center gap-2 min-w-0 flex-1">
-            <span class="text-xs text-[var(--text-muted)] w-6 text-right flex-shrink-0">{proc.rss_mb}</span>
-            <span class="text-xs text-[var(--text-secondary)] font-medium flex-shrink-0">{proc.name}</span>
-            <span class="text-xs text-[var(--text-muted)] truncate min-w-0">{truncateCmd(proc.cmd)}</span>
+    <div class="app-list">
+      {#each apps as app (app.pkg)}
+        <div class="app-row" class:system={app.system}>
+          <div class="app-info">
+            <span class="app-label">{app.label}</span>
+            <span class="app-rss">{app.rss_mb}MB</span>
           </div>
-          <button
-            class="btn btn-sm btn-danger flex-shrink-0"
-            onclick={() => handleKill(proc.pid)}
-            disabled={killing.has(proc.pid)}
-          >
-            {killing.has(proc.pid) ? "..." : "Kill"}
-          </button>
+          {#if !app.system}
+            <button
+              class="btn btn-sm btn-danger"
+              onclick={() => handleStop(app.pkg)}
+              disabled={stopping.has(app.pkg)}
+            >
+              {stopping.has(app.pkg) ? "..." : "Stop"}
+            </button>
+          {:else}
+            <span class="text-xs text-[var(--text-muted)]">system</span>
+          {/if}
         </div>
       {/each}
     </div>
@@ -85,17 +81,37 @@
 </div>
 
 <style>
-  .proc-row {
+  .app-list {
+    display: flex;
+    flex-direction: column;
+  }
+  .app-row {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.375rem 0;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
     border-top: 1px solid var(--border);
   }
-  .proc-row:first-child { border-top: none; }
-  .truncate {
+  .app-row:first-child { border-top: none; }
+  .app-row.system { opacity: 0.5; }
+  .app-info {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    min-width: 0;
+    flex: 1;
+  }
+  .app-label {
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .app-rss {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    flex-shrink: 0;
   }
 </style>

@@ -24,7 +24,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // src/import-meta-shim.js
-var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : void 0;
+var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
 var import_node_fs9 = require("node:fs");
@@ -1873,7 +1873,15 @@ data: ${JSON.stringify({ id: clientId })}
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
     filePath = filePath.replace(/\.\./g, "");
-    const fullPath = (0, import_node_path2.join)(this.staticDir, filePath);
+    let fullPath = (0, import_node_path2.join)(this.staticDir, filePath);
+    if ((0, import_node_fs7.existsSync)(fullPath) && (0, import_node_fs7.statSync)(fullPath).isDirectory()) {
+      fullPath = (0, import_node_path2.join)(fullPath, "index.html");
+    } else if (!(0, import_node_fs7.existsSync)(fullPath) || !(0, import_node_fs7.statSync)(fullPath).isFile()) {
+      const dirIndex = (0, import_node_path2.join)(this.staticDir, filePath, "index.html");
+      if ((0, import_node_fs7.existsSync)(dirIndex) && (0, import_node_fs7.statSync)(dirIndex).isFile()) {
+        fullPath = dirIndex;
+      }
+    }
     if (!(0, import_node_fs7.existsSync)(fullPath) || !(0, import_node_fs7.statSync)(fullPath).isFile()) {
       const indexPath = (0, import_node_path2.join)(this.staticDir, "index.html");
       if ((0, import_node_fs7.existsSync)(indexPath)) {
@@ -1967,7 +1975,7 @@ function notify(title, content) {
   } catch {
   }
 }
-var Daemon = class {
+var Daemon = class _Daemon {
   config;
   log;
   state;
@@ -2507,11 +2515,11 @@ var Daemon = class {
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
         case "processes":
-          return { status: 200, data: this.getProcessList() };
+          return { status: 200, data: this.getAndroidApps() };
         case "kill":
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
-          if (!name) return { status: 400, data: { error: "PID required" } };
-          return this.killProcess(parseInt(name, 10));
+          if (!name) return { status: 400, data: { error: "Package name required" } };
+          return this.forceStopApp(name);
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -2520,47 +2528,94 @@ var Daemon = class {
       return { status: 500, data: { error: String(err) } };
     }
   }
-  // -- Process management -----------------------------------------------------
-  /** List user processes with RSS, excluding tmx daemon itself */
-  getProcessList() {
+  // -- Android app management -------------------------------------------------
+  /** Well-known system packages that should not be force-stopped */
+  static SYSTEM_PACKAGES = /* @__PURE__ */ new Set([
+    "system_server",
+    "com.android.systemui",
+    "com.google.android.gms.persistent",
+    "com.termux",
+    "com.sec.android.app.launcher"
+  ]);
+  /** Friendly display names for known packages */
+  static APP_LABELS = {
+    "com.microsoft.emmx.canary": "Edge Canary",
+    "com.microsoft.emmx": "Edge",
+    "com.discord": "Discord",
+    "com.Slack": "Slack",
+    "com.google.android.gm": "Gmail",
+    "com.google.android.apps.photos": "Photos",
+    "com.google.android.calendar": "Calendar",
+    "com.google.android.googlequicksearchbox": "Google",
+    "com.google.android.gms": "Play Services",
+    "com.google.android.gms.persistent": "Play Services",
+    "com.ubercab.eats": "Uber Eats",
+    "com.samsung.android.app.spage": "Samsung Free",
+    "com.samsung.android.smartsuggestions": "Smart Suggestions",
+    "com.sec.android.daemonapp": "Weather",
+    "net.slickdeals.android": "Slickdeals",
+    "dev.imranr.obtainium": "Obtainium",
+    "com.teslacoilsw.launcher": "Nova Launcher",
+    "com.sec.android.app.launcher": "One UI Home",
+    "com.android.systemui": "System UI",
+    "com.termux": "Termux"
+  };
+  /**
+   * List Android apps via `adb shell ps`, grouped by base package.
+   * Merges sandboxed/privileged child processes into the parent total.
+   */
+  getAndroidApps() {
     try {
-      const result = (0, import_node_child_process6.execSync)("ps -e -o pid=,rss=,comm=,args=", {
+      const result = (0, import_node_child_process6.spawnSync)("adb", ["shell", "ps", "-A", "-o", "PID,RSS,NAME"], {
         encoding: "utf-8",
-        timeout: 5e3
+        timeout: 8e3,
+        stdio: ["ignore", "pipe", "pipe"]
       });
-      const myPid = process.pid;
-      const lines = result.trim().split("\n");
-      const procs = [];
-      for (const line of lines) {
-        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+      if (result.status !== 0 || !result.stdout) return [];
+      const pkgMap = /* @__PURE__ */ new Map();
+      for (const line of result.stdout.trim().split("\n")) {
+        const match = line.trim().match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
         if (!match) continue;
-        const pid = parseInt(match[1], 10);
         const rssKb = parseInt(match[2], 10);
-        const name = match[3];
-        const cmd = match[4].trim();
-        if (pid === myPid || rssKb < 1024) continue;
-        procs.push({ pid, name, rss_mb: Math.round(rssKb / 1024), cmd });
+        const rawName = match[3].trim();
+        if (rssKb < 5120) continue;
+        const basePkg = rawName.split(":")[0];
+        if (!basePkg.includes(".") && !_Daemon.APP_LABELS[basePkg]) continue;
+        pkgMap.set(basePkg, (pkgMap.get(basePkg) ?? 0) + rssKb);
       }
-      procs.sort((a, b) => b.rss_mb - a.rss_mb);
-      return procs;
+      const apps = [];
+      for (const [pkg, rssKb] of pkgMap) {
+        const system = _Daemon.SYSTEM_PACKAGES.has(pkg);
+        const label = _Daemon.APP_LABELS[pkg] ?? pkg.split(".").pop() ?? pkg;
+        apps.push({ pkg, label, rss_mb: Math.round(rssKb / 1024), system });
+      }
+      apps.sort((a, b) => b.rss_mb - a.rss_mb);
+      return apps;
     } catch {
       return [];
     }
   }
-  /** Kill a process by PID (with safety checks) */
-  killProcess(pid) {
-    if (isNaN(pid) || pid <= 1) {
-      return { status: 400, data: { error: "Invalid PID" } };
+  /** Force-stop an Android app via ADB */
+  forceStopApp(pkg) {
+    if (!pkg || !pkg.includes(".")) {
+      return { status: 400, data: { error: "Invalid package name" } };
     }
-    if (pid === process.pid) {
-      return { status: 403, data: { error: "Cannot kill the daemon process" } };
+    if (_Daemon.SYSTEM_PACKAGES.has(pkg)) {
+      return { status: 403, data: { error: `Cannot stop system package: ${pkg}` } };
     }
     try {
-      process.kill(pid, "SIGTERM");
-      this.log.info(`Killed process ${pid} via dashboard`);
-      return { status: 200, data: { ok: true, pid, signal: "SIGTERM" } };
+      const result = (0, import_node_child_process6.spawnSync)("adb", ["shell", "am", "force-stop", pkg], {
+        encoding: "utf-8",
+        timeout: 5e3,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      if (result.status !== 0) {
+        return { status: 500, data: { error: result.stderr?.trim() || "force-stop failed" } };
+      }
+      this.log.info(`Force-stopped ${pkg} via dashboard`);
+      return { status: 200, data: { ok: true, pkg } };
     } catch (err) {
-      return { status: 500, data: { error: `Failed to kill PID ${pid}: ${err.message}` } };
+      return { status: 500, data: { error: `Failed to stop ${pkg}: ${err.message}` } };
     }
   }
   // -- Cron -------------------------------------------------------------------

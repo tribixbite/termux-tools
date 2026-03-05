@@ -168,21 +168,21 @@ export async function openTab(name: string): Promise<void> {
   await fetch(`/api/tab/${encodeURIComponent(name)}`, { method: "POST" });
 }
 
-/** Process info from the daemon */
-export interface ProcessInfo {
-  pid: number;
-  name: string;
+/** Android app info from the daemon */
+export interface AppInfo {
+  pkg: string;
+  label: string;
   rss_mb: number;
-  cmd: string;
+  system: boolean;
 }
 
-/** Fetch list of user processes sorted by RSS */
-export async function fetchProcesses(): Promise<ProcessInfo[]> {
+/** Fetch list of running Android apps sorted by RSS */
+export async function fetchApps(): Promise<AppInfo[]> {
   const res = await fetch("/api/processes");
   return res.json();
 }
 
-/** Kill a process by PID */
-export async function killProcess(pid: number): Promise<void> {
-  await fetch(`/api/kill/${pid}`, { method: "POST" });
+/** Force-stop an Android app by package name */
+export async function forceStopApp(pkg: string): Promise<void> {
+  await fetch(`/api/kill/${encodeURIComponent(pkg)}`, { method: "POST" });
 }

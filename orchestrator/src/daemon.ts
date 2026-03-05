@@ -765,13 +765,13 @@ export class Daemon {
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
         case "processes":
-          // List non-tmx user processes sorted by RSS
-          return { status: 200, data: this.getProcessList() };
+          // List Android apps sorted by RSS (via ADB)
+          return { status: 200, data: this.getAndroidApps() };
         case "kill":
-          // Kill a process by PID
+          // Force-stop an Android app by package name
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
-          if (!name) return { status: 400, data: { error: "PID required" } };
-          return this.killProcess(parseInt(name, 10));
+          if (!name) return { status: 400, data: { error: "Package name required" } };
+          return this.forceStopApp(name);
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
       }
@@ -782,60 +782,104 @@ export class Daemon {
     }
   }
 
-  // -- Process management -----------------------------------------------------
+  // -- Android app management -------------------------------------------------
 
-  /** List user processes with RSS, excluding tmx daemon itself */
-  private getProcessList(): { pid: number; name: string; rss_mb: number; cmd: string }[] {
+  /** Well-known system packages that should not be force-stopped */
+  private static readonly SYSTEM_PACKAGES = new Set([
+    "system_server", "com.android.systemui", "com.google.android.gms.persistent",
+    "com.termux", "com.sec.android.app.launcher",
+  ]);
+
+  /** Friendly display names for known packages */
+  private static readonly APP_LABELS: Record<string, string> = {
+    "com.microsoft.emmx.canary": "Edge Canary",
+    "com.microsoft.emmx": "Edge",
+    "com.discord": "Discord",
+    "com.Slack": "Slack",
+    "com.google.android.gm": "Gmail",
+    "com.google.android.apps.photos": "Photos",
+    "com.google.android.calendar": "Calendar",
+    "com.google.android.googlequicksearchbox": "Google",
+    "com.google.android.gms": "Play Services",
+    "com.google.android.gms.persistent": "Play Services",
+    "com.ubercab.eats": "Uber Eats",
+    "com.samsung.android.app.spage": "Samsung Free",
+    "com.samsung.android.smartsuggestions": "Smart Suggestions",
+    "com.sec.android.daemonapp": "Weather",
+    "net.slickdeals.android": "Slickdeals",
+    "dev.imranr.obtainium": "Obtainium",
+    "com.teslacoilsw.launcher": "Nova Launcher",
+    "com.sec.android.app.launcher": "One UI Home",
+    "com.android.systemui": "System UI",
+    "com.termux": "Termux",
+  };
+
+  /**
+   * List Android apps via `adb shell ps`, grouped by base package.
+   * Merges sandboxed/privileged child processes into the parent total.
+   */
+  private getAndroidApps(): { pkg: string; label: string; rss_mb: number; system: boolean }[] {
     try {
-      const result = execSync("ps -e -o pid=,rss=,comm=,args=", {
+      const result = spawnSync("adb", ["shell", "ps", "-A", "-o", "PID,RSS,NAME"], {
         encoding: "utf-8",
-        timeout: 5000,
+        timeout: 8000,
+        stdio: ["ignore", "pipe", "pipe"],
       });
+      if (result.status !== 0 || !result.stdout) return [];
 
-      const myPid = process.pid;
-      const lines = result.trim().split("\n");
-      const procs: { pid: number; name: string; rss_mb: number; cmd: string }[] = [];
-
-      for (const line of lines) {
-        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+      // Aggregate RSS by base package name (strip :sandboxed_process*, :privileged_process*, etc.)
+      const pkgMap = new Map<string, number>();
+      for (const line of result.stdout.trim().split("\n")) {
+        const match = line.trim().match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
         if (!match) continue;
-
-        const pid = parseInt(match[1], 10);
         const rssKb = parseInt(match[2], 10);
-        const name = match[3];
-        const cmd = match[4].trim();
+        const rawName = match[3].trim();
+        if (rssKb < 5120) continue; // Skip < 5MB
 
-        // Skip self, kernel threads, and trivial processes
-        if (pid === myPid || rssKb < 1024) continue;
+        // Extract base package: "com.foo.bar:sandboxed_process0:..." → "com.foo.bar"
+        const basePkg = rawName.split(":")[0];
+        // Only include things that look like package names (contain a dot)
+        if (!basePkg.includes(".") && !Daemon.APP_LABELS[basePkg]) continue;
 
-        procs.push({ pid, name, rss_mb: Math.round(rssKb / 1024), cmd });
+        pkgMap.set(basePkg, (pkgMap.get(basePkg) ?? 0) + rssKb);
       }
 
-      // Sort by RSS descending
-      procs.sort((a, b) => b.rss_mb - a.rss_mb);
-      return procs;
+      const apps: { pkg: string; label: string; rss_mb: number; system: boolean }[] = [];
+      for (const [pkg, rssKb] of pkgMap) {
+        const system = Daemon.SYSTEM_PACKAGES.has(pkg);
+        const label = Daemon.APP_LABELS[pkg] ?? pkg.split(".").pop() ?? pkg;
+        apps.push({ pkg, label, rss_mb: Math.round(rssKb / 1024), system });
+      }
+
+      apps.sort((a, b) => b.rss_mb - a.rss_mb);
+      return apps;
     } catch {
       return [];
     }
   }
 
-  /** Kill a process by PID (with safety checks) */
-  private killProcess(pid: number): { status: number; data: unknown } {
-    if (isNaN(pid) || pid <= 1) {
-      return { status: 400, data: { error: "Invalid PID" } };
+  /** Force-stop an Android app via ADB */
+  private forceStopApp(pkg: string): { status: number; data: unknown } {
+    if (!pkg || !pkg.includes(".")) {
+      return { status: 400, data: { error: "Invalid package name" } };
     }
-
-    // Don't allow killing the daemon itself
-    if (pid === process.pid) {
-      return { status: 403, data: { error: "Cannot kill the daemon process" } };
+    if (Daemon.SYSTEM_PACKAGES.has(pkg)) {
+      return { status: 403, data: { error: `Cannot stop system package: ${pkg}` } };
     }
 
     try {
-      process.kill(pid, "SIGTERM");
-      this.log.info(`Killed process ${pid} via dashboard`);
-      return { status: 200, data: { ok: true, pid, signal: "SIGTERM" } };
+      const result = spawnSync("adb", ["shell", "am", "force-stop", pkg], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        return { status: 500, data: { error: result.stderr?.trim() || "force-stop failed" } };
+      }
+      this.log.info(`Force-stopped ${pkg} via dashboard`);
+      return { status: 200, data: { ok: true, pkg } };
     } catch (err) {
-      return { status: 500, data: { error: `Failed to kill PID ${pid}: ${(err as Error).message}` } };
+      return { status: 500, data: { error: `Failed to stop ${pkg}: ${(err as Error).message}` } };
     }
   }
 
