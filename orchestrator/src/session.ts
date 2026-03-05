@@ -6,7 +6,7 @@
  * instead of hardcoded sleep delays.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { SessionConfig, SessionType } from "./types.js";
 import type { Logger } from "./log.js";
 
@@ -23,14 +23,50 @@ const CLAUDE_READY_PATTERNS = [
 /** Delay before sending "go" after readiness detection (ms) */
 const GO_SEND_DELAY = 500;
 
-/** Run a tmux command and return stdout, or null on failure */
+/**
+ * Build a clean environment for tmux child processes.
+ * Strips CLAUDECODE and CLAUDE_CODE_* vars to prevent nested-session
+ * detection when launching Claude Code inside tmux panes.
+ */
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.CLAUDECODE;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("CLAUDE_CODE_") || key.startsWith("CLAUDE_TMPDIR")) {
+      delete env[key];
+    }
+  }
+  // Also strip ENABLE_CLAUDE_CODE_* variants
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("ENABLE_CLAUDE_CODE_")) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
+/** Cached clean env — recomputed once per process */
+let _cleanEnv: NodeJS.ProcessEnv | null = null;
+function getCleanEnv(): NodeJS.ProcessEnv {
+  if (!_cleanEnv) _cleanEnv = cleanEnv();
+  return _cleanEnv;
+}
+
+/**
+ * Run a tmux command and return stdout, or null on failure.
+ * Uses spawnSync with proper argument array to handle spaces in args.
+ * Passes clean env to prevent Claude nesting detection.
+ */
 function tmux(...args: string[]): string | null {
   try {
-    return execSync(`tmux ${args.join(" ")}`, {
+    const result = spawnSync("tmux", args, {
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
+      env: getCleanEnv(),
+    });
+    if (result.status !== 0) return null;
+    return (result.stdout ?? "").trim();
   } catch {
     return null;
   }
@@ -41,17 +77,18 @@ export function isTmuxServerAlive(): boolean {
   const result = spawnSync("tmux", ["start-server"], {
     timeout: 5000,
     stdio: "ignore",
+    env: getCleanEnv(),
   });
   return result.status === 0;
 }
 
 /** List all existing tmux session names */
 export function listTmuxSessions(): string[] {
-  const output = tmux("list-sessions", "-F", "'#{session_name}'");
+  const output = tmux("list-sessions", "-F", "#{session_name}");
   if (!output) return [];
   return output
     .split("\n")
-    .map((s) => s.replace(/'/g, "").trim())
+    .map((s) => s.trim())
     .filter(Boolean);
 }
 
@@ -60,13 +97,15 @@ export function sessionExists(name: string): boolean {
   const result = spawnSync("tmux", ["has-session", "-t", name], {
     timeout: 5000,
     stdio: "ignore",
+    env: getCleanEnv(),
   });
   return result.status === 0;
 }
 
 /** Capture the current pane content for a session */
-export function capturePane(sessionName: string, lines = 5): string {
-  const output = tmux("capture-pane", "-t", sessionName, "-p", "-l", String(lines));
+export function capturePane(sessionName: string, _lines = 5): string {
+  // Note: tmux 3.5a doesn't support -l flag for capture-pane
+  const output = tmux("capture-pane", "-t", sessionName, "-p");
   return output ?? "";
 }
 
@@ -101,6 +140,7 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   const result = spawnSync("tmux", createArgs, {
     timeout: 10_000,
     stdio: "ignore",
+    env: getCleanEnv(),
   });
 
   if (result.status !== 0) {
@@ -113,8 +153,9 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   // Start the appropriate process inside the session
   switch (type) {
     case "claude":
-      // Start Claude Code
-      sendKeys(name, "cc", true);
+      // Start Claude Code directly — don't rely on shell aliases.
+      // No --continue: starts fresh if no prior conversation (avoids exit on first run).
+      sendKeys(name, "claude --dangerously-skip-permissions", true);
       break;
 
     case "daemon":
@@ -195,7 +236,7 @@ export async function stopSession(name: string, log: Logger, timeoutMs = 10_000)
   }
 
   // Try sending Ctrl-C first for a graceful exit
-  tmux("send-keys", "-t", name, "C-c", "");
+  tmux("send-keys", "-t", name, "C-c");
   await sleep(1000);
 
   // Send "exit" command
