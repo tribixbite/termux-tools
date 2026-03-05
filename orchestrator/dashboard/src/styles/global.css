@@ -123,12 +123,14 @@ body {
 
 /* Gauge bar */
 .gauge-bar {
+  display: block;
   height: 8px;
   border-radius: 4px;
   background: var(--bg-tertiary);
   overflow: hidden;
 }
 .gauge-fill {
+  display: block;
   height: 100%;
   border-radius: 4px;
   transition: width 0.5s ease, background-color 0.3s;
