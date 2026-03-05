@@ -1,16 +1,9 @@
 <script lang="ts">
-  import { SseClient, fetchStatus } from "../lib/api";
-  import type { SystemMemory, DaemonStatus } from "../lib/types";
+  import { store } from "../lib/store.svelte";
+  import type { SystemMemory } from "../lib/types";
 
-  let memory: SystemMemory | null = $state(null);
   let expanded = $state(false);
-
-  if (typeof window !== "undefined") {
-    fetchStatus().then((d) => { memory = d.memory; });
-  }
-
-  const sse = typeof window !== "undefined" ? new SseClient() : null;
-  sse?.on<DaemonStatus>("state", (data) => { memory = data.memory; });
+  const memory = $derived<SystemMemory | null>(store.daemon?.memory ?? null);
 
   function pressureColor(pressure: string): string {
     switch (pressure) {
@@ -68,7 +61,6 @@
 
 <style>
   .compact-card { padding: 0; overflow: hidden; }
-  .compact-card.expanded { padding: 0; }
   .card-header {
     display: flex;
     align-items: center;

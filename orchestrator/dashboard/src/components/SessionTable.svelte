@@ -1,23 +1,14 @@
 <script lang="ts">
-  import { SseClient, fetchStatus, startSession, stopSession, restartSession, goSession, openTab } from "../lib/api";
+  import { startSession, stopSession, restartSession, goSession, openTab } from "../lib/api";
+  import { store, refreshStatus } from "../lib/store.svelte";
   import type { DaemonStatus, SessionState } from "../lib/types";
   import SessionCard from "./SessionCard.svelte";
 
-  let status: DaemonStatus | null = $state(null);
   let expandedSession: string | null = $state(null);
-  let error: string | null = $state(null);
 
-  // Initial fetch (browser only — SSR has no API)
-  if (typeof window !== "undefined") {
-    fetchStatus().then((d) => (status = d)).catch((e) => (error = e.message));
-  }
-
-  // SSE for real-time updates (browser only)
-  const sse = typeof window !== "undefined" ? new SseClient() : null;
-  sse?.on<DaemonStatus>("state", (data) => {
-    status = data;
-    error = null;
-  });
+  /** Derived from shared store — no own SSE/fetch needed */
+  const status = $derived<DaemonStatus | null>(store.daemon);
+  const error = $derived<string | null>(store.error);
 
   /** Status dot color class */
   function dotCls(st: string): string {
@@ -42,7 +33,7 @@
       case "restart": await restartSession(name); break;
       case "go": await goSession(name); break;
     }
-    status = await fetchStatus();
+    await refreshStatus();
   }
 
   async function handleOpenTab(e: Event, name: string) {

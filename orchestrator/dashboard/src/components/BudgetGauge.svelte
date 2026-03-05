@@ -1,16 +1,9 @@
 <script lang="ts">
-  import { SseClient, fetchStatus } from "../lib/api";
-  import type { BudgetStatus, DaemonStatus } from "../lib/types";
+  import { store } from "../lib/store.svelte";
+  import type { BudgetStatus } from "../lib/types";
 
-  let budget: BudgetStatus | null = $state(null);
   let expanded = $state(false);
-
-  if (typeof window !== "undefined") {
-    fetchStatus().then((d) => { budget = d.budget; });
-  }
-
-  const sse = typeof window !== "undefined" ? new SseClient() : null;
-  sse?.on<DaemonStatus>("state", (data) => { budget = data.budget; });
+  const budget = $derived<BudgetStatus | null>(store.daemon?.budget ?? null);
 
   function modeColor(mode: string): string {
     switch (mode) {
@@ -64,7 +57,6 @@
 
 <style>
   .compact-card { padding: 0; overflow: hidden; }
-  .compact-card.expanded { padding: 0; }
   .card-header {
     display: flex;
     align-items: center;
