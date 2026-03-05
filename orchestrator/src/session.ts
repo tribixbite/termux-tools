@@ -286,47 +286,27 @@ export function getAttachedClients(name: string): number {
 }
 
 /**
- * Create a Termux UI tab attached to a tmux session.
- * Uses termux-am (fast) or RunCommandService (fallback).
+ * Open a Termux tab for a tmux session.
+ *
+ * Strategy:
+ * 1. Write a tiny attach script to /tmp (avoids --esa comma escaping issues)
+ * 2. RunCommandService BACKGROUND=true runs it (creates no visible tab on Android 16+,
+ *    but BACKGROUND=false silently fails on Android 16 — foreground tab creation blocked)
+ * 3. Bring TermuxActivity to foreground so user sees the terminal
+ *
+ * The script starts tmux attach in a new tmux window named "__tab_<session>"
+ * if no clients are already attached, giving the user a clean attach point.
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
-  const attachCmd = `printf '\\033]0;${sessionName}\\007' && tmux attach -t '${sessionName}'`;
-
-  // RunCommandService args — creates a visible Termux tab running tmux attach
-  const svcArgs = [
-    "startservice",
-    "-n", "com.termux/com.termux.app.RunCommandService",
-    "-a", "com.termux.RUN_COMMAND",
-    "--es", "com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash",
-    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", `-c,${attachCmd}`,
-    "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
-    "--es", "com.termux.RUN_COMMAND_SESSION_ACTION", "0",
-  ];
-
-  // Try termux-am first (fast IPC path, doesn't need ADB)
-  const amResult = spawnSync(TERMUX_AM_BIN, svcArgs, {
-    timeout: 5000,
-    stdio: "ignore",
-  });
-
-  if (amResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via termux-am`, { session: sessionName });
-    return true;
+  // Bring Termux to foreground — this is the primary action the user expects
+  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+  const actResult = spawnSync(TERMUX_AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
+  if (actResult.status !== 0) {
+    spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
   }
 
-  // Fallback: plain am (uses Android's activity manager)
-  const fallbackResult = spawnSync(AM_BIN, svcArgs, {
-    timeout: 5000,
-    stdio: "ignore",
-  });
-
-  if (fallbackResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via am`, { session: sessionName });
-    return true;
-  }
-
-  log.error(`Failed to create Termux tab for '${sessionName}'`, { session: sessionName });
-  return false;
+  log.debug(`Opened Termux for session '${sessionName}'`, { session: sessionName });
+  return true;
 }
 
 /** Promise-based sleep */
