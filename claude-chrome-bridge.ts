@@ -1249,6 +1249,10 @@ const pendingToolQueue: Array<{
 /** Tool call timeout for HTTP /tool endpoint (ms) */
 const HTTP_TOOL_TIMEOUT_MS = 30_000;
 
+/** Last tool called via HTTP /tool — exposed in /health for dashboard */
+let lastToolName: string | null = null;
+let lastToolTime: string | null = null;
+
 /** Send the next queued tool request to the extension (if any) */
 function drainToolQueue(): void {
   if (pendingToolQueue.length === 0) return;
@@ -1555,6 +1559,8 @@ const server: BridgeServer = createBridgeServer({
           clients: wsClients.size,
           uptime: process.uptime(),
           cdp: cdpManager.getStatus(),
+          lastTool: lastToolName,
+          lastToolTime: lastToolTime,
         }),
         { headers: { "Content-Type": "application/json" } }
       );
@@ -1739,6 +1745,8 @@ const server: BridgeServer = createBridgeServer({
         });
 
         const queuePos = pendingToolQueue.length;
+        lastToolName = body.method;
+        lastToolTime = new Date().toISOString();
         log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
 
         // Enqueue and wait — resolved by WS message handler on tool_response
