@@ -191,3 +191,29 @@ export async function fetchApps(): Promise<AppInfo[]> {
 export async function forceStopApp(pkg: string): Promise<void> {
   await fetch(`/api/kill/${encodeURIComponent(pkg)}`, { method: "POST" });
 }
+
+/** Fetch ADB device list */
+export async function fetchAdbDevices(): Promise<import("./types").AdbDevice[]> {
+  try {
+    const res = await fetch("/api/adb");
+    const data = await res.json();
+    return data.devices ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Initiate ADB wireless connection */
+export async function adbConnect(): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch("/api/adb/connect", { method: "POST" });
+    return res.json();
+  } catch {
+    return { ok: false, message: "Request failed" };
+  }
+}
+
+/** Disconnect ADB */
+export async function adbDisconnect(): Promise<void> {
+  await fetch("/api/adb/disconnect", { method: "POST" });
+}

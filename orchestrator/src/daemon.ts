@@ -844,6 +844,21 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Package name required" } };
           return this.forceStopApp(name);
+        case "adb":
+          // ADB device management
+          if (!name) {
+            // GET /api/adb — list devices
+            return { status: 200, data: this.getAdbDevices() };
+          }
+          if (name === "connect") {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.adbWirelessConnect();
+          }
+          if (name === "disconnect") {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.adbDisconnectAll();
+          }
+          return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
       }
@@ -1023,6 +1038,74 @@ export class Daemon {
       return { status: 200, data: { ok: true, pkg } };
     } catch (err) {
       return { status: 500, data: { error: `Failed to stop ${pkg}: ${(err as Error).message}` } };
+    }
+  }
+
+  // -- ADB device management --------------------------------------------------
+
+  /** List connected ADB devices */
+  private getAdbDevices(): { devices: { serial: string; state: string }[] } {
+    try {
+      const result = spawnSync(ADB_BIN, ["devices"], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0 || !result.stdout) return { devices: [] };
+      const devices = result.stdout
+        .split("\n")
+        .slice(1) // skip "List of devices attached" header
+        .filter((l) => l.includes("\t"))
+        .map((l) => {
+          const [serial, state] = l.split("\t");
+          return { serial: serial.trim(), state: state.trim() };
+        });
+      return { devices };
+    } catch {
+      return { devices: [] };
+    }
+  }
+
+  /** Initiate ADB wireless connection using the adbc script */
+  private adbWirelessConnect(): { status: number; data: unknown } {
+    const script = join(
+      process.env.HOME ?? "/data/data/com.termux/files/home",
+      "git/termux-tools/tools/adb-wireless-connect.sh",
+    );
+    try {
+      // Run the connect script with a reasonable timeout (15s for port scanning)
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        timeout: 20_000,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, PATH: process.env.PATH },
+      });
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
+      if (output.includes("connected") || output.includes("Reconnected")) {
+        // Invalidate cached serial
+        this.adbSerial = null;
+        this.adbSerialExpiry = 0;
+        return { status: 200, data: { ok: true, message: output.trim().split("\n").pop() } };
+      }
+      return { status: 500, data: { ok: false, message: output.trim().split("\n").pop() || "Connection failed" } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: (err as Error).message } };
+    }
+  }
+
+  /** Disconnect all ADB devices */
+  private adbDisconnectAll(): { status: number; data: unknown } {
+    try {
+      spawnSync(ADB_BIN, ["disconnect", "-a"], {
+        timeout: 5000,
+        stdio: "ignore",
+      });
+      // Invalidate cached serial
+      this.adbSerial = null;
+      this.adbSerialExpiry = 0;
+      return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: (err as Error).message } };
     }
   }
 

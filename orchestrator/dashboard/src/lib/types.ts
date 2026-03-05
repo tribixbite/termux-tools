@@ -73,7 +73,23 @@ export interface BridgeHealth {
   uptime?: number;
   cdp?: {
     state: string;
+    edgePid?: number;
+    port?: number;
     targets?: number;
   };
+  lastTool?: string;
+  lastToolTime?: string;
   error?: string;
+}
+
+/** ADB device info */
+export interface AdbDevice {
+  serial: string;
+  state: string;
+}
+
+/** ADB status response from daemon */
+export interface AdbStatus {
+  devices: AdbDevice[];
+  connecting?: boolean;
 }

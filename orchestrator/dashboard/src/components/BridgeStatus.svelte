@@ -3,66 +3,197 @@
   import type { BridgeHealth } from "../lib/types";
 
   let health: BridgeHealth | null = $state(null);
+  let expanded = $state(false);
+  /** Snapshot of bridge uptime at last fetch (seconds) */
+  let fetchedUptime = $state(0);
+  /** Monotonic time (ms) when last fetch occurred */
+  let fetchedAt = $state(0);
+  /** Live-ticking uptime in seconds, updated every second */
+  let liveUptime = $state(0);
 
   async function refresh() {
     health = await fetchBridgeHealth();
+    if (health?.uptime != null) {
+      // process.uptime() returns seconds
+      fetchedUptime = health.uptime;
+      fetchedAt = Date.now();
+    }
   }
 
-  // Initial fetch + poll every 30s (browser only)
+  // Initial fetch + poll every 15s (browser only)
   if (typeof window !== "undefined") {
     refresh();
-    setInterval(refresh, 30_000);
+    setInterval(refresh, 15_000);
+    // Tick the uptime counter every second for a live feel
+    setInterval(() => {
+      if (fetchedAt > 0) {
+        const elapsed = (Date.now() - fetchedAt) / 1000;
+        liveUptime = Math.floor(fetchedUptime + elapsed);
+      }
+    }, 1000);
   }
 
   function formatUptime(seconds: number): string {
-    const h = Math.floor(seconds / 3600);
+    if (seconds <= 0) return "0m";
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
     if (h > 0) return `${h}h ${m}m`;
     return `${m}m`;
   }
+
+  /** Short tool name: strip common prefixes */
+  function shortTool(name: string): string {
+    return name.replace(/^(mcp__cfc-bridge__|browser_)/, "");
+  }
 </script>
 
-<div class="card">
-  <div class="flex items-center justify-between mb-2">
-    <h3 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">CFC Bridge</h3>
+<div class="card compact-card" class:expanded>
+  <button class="card-header" onclick={() => expanded = !expanded}>
+    <span class="header-left">
+      <span class="chevron">{expanded ? "▾" : "▸"}</span>
+      <span class="label">CFC</span>
+    </span>
     {#if health}
-      {#if health.status === "ok"}
-        <span class="badge badge-green">connected</span>
-      {:else}
-        <span class="badge badge-dim">offline</span>
+      {#if !expanded}
+        <span class="inline-info">
+          {#if liveUptime > 0}
+            <span class="uptime-text">{formatUptime(liveUptime)}</span>
+          {/if}
+          {#if health.lastTool}
+            <span class="last-tool" title="Last tool: {health.lastTool}">{shortTool(health.lastTool)}</span>
+          {/if}
+        </span>
       {/if}
-    {/if}
-  </div>
-
-  {#if health}
-    {#if health.status === "ok"}
-      <div class="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs">
-        {#if health.version}
-          <span class="text-[var(--text-muted)]">Version</span>
-          <span>{health.version}</span>
-        {/if}
-        {#if health.clients != null}
-          <span class="text-[var(--text-muted)]">Clients</span>
-          <span>{health.clients}</span>
-        {/if}
-        {#if health.uptime != null}
-          <span class="text-[var(--text-muted)]">Uptime</span>
-          <span>{formatUptime(Math.floor(health.uptime / 1000))}</span>
-        {/if}
+      <span class="badge-row">
         {#if health.cdp}
-          <span class="text-[var(--text-muted)]">CDP</span>
-          <span>
-            {health.cdp.state}
-            {#if health.cdp.targets != null}
-              <span class="text-[var(--text-muted)]">({health.cdp.targets} targets)</span>
-            {/if}
+          <span class="badge" class:badge-green={health.cdp.state === "connected"} class:badge-dim={health.cdp.state !== "connected"}>
+            CDP
           </span>
         {/if}
-      </div>
+        {#if health.status === "ok"}
+          <span class="badge badge-green">on</span>
+        {:else}
+          <span class="badge badge-dim">off</span>
+        {/if}
+      </span>
     {:else}
-      <p class="text-xs text-[var(--text-muted)]">{health.error ?? "Not running"}</p>
+      <span class="badge badge-dim">...</span>
     {/if}
-  {:else}
-    <p class="text-xs text-[var(--text-muted)]">Checking...</p>
+  </button>
+
+  {#if expanded && health}
+    <div class="card-body">
+      {#if health.status === "ok"}
+        <div class="detail-grid">
+          {#if health.version}
+            <span class="detail-label">Version</span>
+            <span>{health.version}</span>
+          {/if}
+          {#if health.clients != null}
+            <span class="detail-label">Clients</span>
+            <span>{health.clients}</span>
+          {/if}
+          <span class="detail-label">Uptime</span>
+          <span>{formatUptime(liveUptime)}</span>
+          {#if health.cdp}
+            <span class="detail-label">CDP</span>
+            <span>
+              {health.cdp.state}
+              {#if health.cdp.targets != null}
+                <span class="text-muted">({health.cdp.targets} targets)</span>
+              {/if}
+            </span>
+          {/if}
+          {#if health.lastTool}
+            <span class="detail-label">Last tool</span>
+            <span class="tool-name">{health.lastTool}</span>
+          {/if}
+          {#if health.lastToolTime}
+            <span class="detail-label">Tool time</span>
+            <span class="text-muted">{new Date(health.lastToolTime).toLocaleTimeString()}</span>
+          {/if}
+        </div>
+      {:else}
+        <p class="offline-msg">{health.error ?? "Not running"}</p>
+      {/if}
+    </div>
   {/if}
 </div>
+
+<style>
+  .compact-card { padding: 0; overflow: hidden; }
+  .compact-card.expanded { padding: 0; }
+  .card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .card-header:hover { background: var(--bg-tertiary); }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+  }
+  .chevron { font-size: 0.625rem; color: var(--text-muted); width: 0.75rem; }
+  .label {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .inline-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .uptime-text {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+  .last-tool {
+    font-size: 0.625rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .badge-row {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+  .card-body { padding: 0 0.75rem 0.75rem; }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.125rem 0.75rem;
+    font-size: 0.6875rem;
+  }
+  .detail-label { color: var(--text-muted); }
+  .text-muted { color: var(--text-muted); }
+  .tool-name {
+    word-break: break-all;
+    color: var(--accent-purple);
+  }
+  .offline-msg {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+</style>

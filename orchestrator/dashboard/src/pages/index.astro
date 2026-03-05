@@ -4,14 +4,16 @@ import SessionTable from "../components/SessionTable.svelte";
 import MemoryGauge from "../components/MemoryGauge.svelte";
 import BudgetGauge from "../components/BudgetGauge.svelte";
 import BridgeStatus from "../components/BridgeStatus.svelte";
+import AdbStatus from "../components/AdbStatus.svelte";
 ---
 
 <Layout title="tmx dashboard" active="overview">
-  <!-- Status gauges row -->
-  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+  <!-- Compact status cards -->
+  <div class="status-strip">
     <MemoryGauge client:load />
     <BudgetGauge client:load />
     <BridgeStatus client:load />
+    <AdbStatus client:load />
   </div>
 
   <!-- Session table -->
@@ -20,3 +22,12 @@ import BridgeStatus from "../components/BridgeStatus.svelte";
     <SessionTable client:load />
   </div>
 </Layout>
+
+<style>
+  .status-strip {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin-bottom: 0.75rem;
+  }
+</style>
