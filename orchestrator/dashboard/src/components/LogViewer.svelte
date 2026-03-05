@@ -86,17 +86,43 @@
   onscroll={handleScroll}
 >
   {#each filteredEntries() as entry}
-    <div class="flex gap-2 hover:bg-[var(--bg-tertiary)] px-1 rounded">
-      <span class="text-[var(--text-muted)] shrink-0 w-20">{entry.ts.slice(11, 23)}</span>
-      <span class="shrink-0 w-12 font-medium" style="color: {levelColor(entry.level)}">
-        {entry.level.toUpperCase()}
-      </span>
+    <div class="log-line">
+      <span class="log-ts">{entry.ts.slice(11, 23)}</span>
+      <span class="log-level" style="color: {levelColor(entry.level)}">{entry.level.toUpperCase().padEnd(5)}</span>
       {#if entry.session}
-        <span class="text-[var(--accent-purple)] shrink-0">[{entry.session}]</span>
+        <span class="log-session">[{entry.session}]</span>
       {/if}
-      <span class="break-all">{entry.msg}</span>
+      <span class="log-msg">{entry.msg}</span>
     </div>
   {:else}
     <p class="text-[var(--text-muted)] text-center py-4">No log entries</p>
   {/each}
 </div>
+
+<style>
+  .log-line {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.125rem 0.25rem;
+    border-radius: 3px;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  .log-line:hover { background: var(--bg-tertiary); }
+  .log-ts {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .log-level {
+    flex-shrink: 0;
+    font-weight: 600;
+  }
+  .log-session {
+    color: var(--accent-purple);
+    flex-shrink: 0;
+  }
+  .log-msg {
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+</style>
