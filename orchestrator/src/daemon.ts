@@ -756,6 +756,22 @@ export class Daemon {
           const entries = log.readTail(100, sessionFilter);
           return { status: 200, data: entries };
         }
+        case "tab":
+          // Open Termux tab attached to a session
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          if (createTermuxTab(name, this.log)) {
+            return { status: 200, data: { ok: true, session: name } };
+          }
+          return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
+        case "processes":
+          // List non-tmx user processes sorted by RSS
+          return { status: 200, data: this.getProcessList() };
+        case "kill":
+          // Kill a process by PID
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "PID required" } };
+          return this.killProcess(parseInt(name, 10));
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
       }
@@ -763,6 +779,63 @@ export class Daemon {
       return { status: resp.ok ? 200 : 400, data: resp.ok ? resp.data : { error: resp.error } };
     } catch (err) {
       return { status: 500, data: { error: String(err) } };
+    }
+  }
+
+  // -- Process management -----------------------------------------------------
+
+  /** List user processes with RSS, excluding tmx daemon itself */
+  private getProcessList(): { pid: number; name: string; rss_mb: number; cmd: string }[] {
+    try {
+      const result = execSync("ps -e -o pid=,rss=,comm=,args=", {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+
+      const myPid = process.pid;
+      const lines = result.trim().split("\n");
+      const procs: { pid: number; name: string; rss_mb: number; cmd: string }[] = [];
+
+      for (const line of lines) {
+        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+        if (!match) continue;
+
+        const pid = parseInt(match[1], 10);
+        const rssKb = parseInt(match[2], 10);
+        const name = match[3];
+        const cmd = match[4].trim();
+
+        // Skip self, kernel threads, and trivial processes
+        if (pid === myPid || rssKb < 1024) continue;
+
+        procs.push({ pid, name, rss_mb: Math.round(rssKb / 1024), cmd });
+      }
+
+      // Sort by RSS descending
+      procs.sort((a, b) => b.rss_mb - a.rss_mb);
+      return procs;
+    } catch {
+      return [];
+    }
+  }
+
+  /** Kill a process by PID (with safety checks) */
+  private killProcess(pid: number): { status: number; data: unknown } {
+    if (isNaN(pid) || pid <= 1) {
+      return { status: 400, data: { error: "Invalid PID" } };
+    }
+
+    // Don't allow killing the daemon itself
+    if (pid === process.pid) {
+      return { status: 403, data: { error: "Cannot kill the daemon process" } };
+    }
+
+    try {
+      process.kill(pid, "SIGTERM");
+      this.log.info(`Killed process ${pid} via dashboard`);
+      return { status: 200, data: { ok: true, pid, signal: "SIGTERM" } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to kill PID ${pid}: ${(err as Error).message}` } };
     }
   }
 

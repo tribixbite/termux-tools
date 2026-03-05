@@ -89,6 +89,7 @@ body {
 }
 .btn:hover { background: var(--border); }
 .btn:active { background: var(--text-muted); }
+.btn-sm { padding: 0.25rem 0.5rem; font-size: 0.7rem; }
 .btn-danger { border-color: var(--accent-red); color: var(--accent-red); }
 .btn-danger:hover { background: rgba(248, 81, 73, 0.15); }
 .btn-primary { border-color: var(--accent-blue); color: var(--accent-blue); }

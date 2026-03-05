@@ -4,6 +4,7 @@ import SessionTable from "../components/SessionTable.svelte";
 import MemoryGauge from "../components/MemoryGauge.svelte";
 import BudgetGauge from "../components/BudgetGauge.svelte";
 import BridgeStatus from "../components/BridgeStatus.svelte";
+import ProcessManager from "../components/ProcessManager.svelte";
 ---
 
 <Layout title="tmx dashboard" active="overview">
@@ -15,8 +16,11 @@ import BridgeStatus from "../components/BridgeStatus.svelte";
   </div>
 
   <!-- Session table -->
-  <div class="card">
+  <div class="card mb-4">
     <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Sessions</h2>
     <SessionTable client:load />
   </div>
+
+  <!-- Process manager -->
+  <ProcessManager client:load />
 </Layout>

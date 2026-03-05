@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SseClient, fetchStatus, startSession, stopSession, restartSession, goSession } from "../lib/api";
+  import { SseClient, fetchStatus, startSession, stopSession, restartSession, goSession, openTab } from "../lib/api";
   import type { DaemonStatus, SessionState } from "../lib/types";
   import SessionCard from "./SessionCard.svelte";
 
@@ -19,15 +19,6 @@
     error = null;
   });
 
-  function activityDot(activity: SessionState["activity"]): { cls: string; label: string } {
-    switch (activity) {
-      case "active": return { cls: "dot-green", label: "active" };
-      case "idle": return { cls: "dot-yellow", label: "idle" };
-      case "stopped": return { cls: "dot-dim", label: "stopped" };
-      default: return { cls: "dot-dim", label: "-" };
-    }
-  }
-
   function statusBadge(st: string): { cls: string; label: string } {
     switch (st) {
       case "running": return { cls: "badge-green", label: "running" };
@@ -43,15 +34,20 @@
     expandedSession = expandedSession === name ? null : name;
   }
 
-  async function handleAction(action: string, name: string) {
+  async function handleAction(e: Event, action: string, name: string) {
+    e.stopPropagation();
     switch (action) {
       case "start": await startSession(name); break;
       case "stop": await stopSession(name); break;
       case "restart": await restartSession(name); break;
       case "go": await goSession(name); break;
     }
-    // Refresh immediately
     status = await fetchStatus();
+  }
+
+  async function handleOpenTab(e: Event, name: string) {
+    e.stopPropagation();
+    await openTab(name);
   }
 </script>
 
@@ -62,65 +58,72 @@
 {/if}
 
 {#if status}
-  <div class="overflow-x-auto">
-    <table class="w-full text-sm">
-      <thead>
-        <tr class="text-left text-[var(--text-muted)] text-xs">
-          <th class="pb-2 pr-4">Session</th>
-          <th class="pb-2 pr-4">Status</th>
-          <th class="pb-2 pr-4 hidden sm:table-cell">Activity</th>
-          <th class="pb-2 pr-4 hidden sm:table-cell">RSS</th>
-          <th class="pb-2 pr-4 hidden md:table-cell">Uptime</th>
-          <th class="pb-2">Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each status.sessions as session (session.name)}
-          {@const sBadge = statusBadge(session.status)}
-          {@const aDot = activityDot(session.activity)}
-          <tr
-            class="border-t border-[var(--border)] hover:bg-[var(--bg-secondary)] cursor-pointer transition-colors"
-            onclick={() => toggleExpand(session.name)}
-          >
-            <td class="py-2 pr-4 font-medium">{session.name}</td>
-            <td class="py-2 pr-4">
-              <span class="badge {sBadge.cls}">{sBadge.label}</span>
-            </td>
-            <td class="py-2 pr-4 hidden sm:table-cell">
-              <span class="flex items-center gap-1.5">
-                <span class="dot {aDot.cls}"></span>
-                <span class="text-xs text-[var(--text-secondary)]">{aDot.label}</span>
-              </span>
-            </td>
-            <td class="py-2 pr-4 hidden sm:table-cell text-[var(--text-secondary)]">
-              {session.rss_mb != null ? `${session.rss_mb}MB` : "-"}
-            </td>
-            <td class="py-2 pr-4 hidden md:table-cell text-[var(--text-muted)]">
-              {session.uptime ?? "-"}
-            </td>
-            <td class="py-2">
-              <div class="flex gap-1" onclick={(e) => e.stopPropagation()}>
-                {#if session.status === "running" || session.status === "degraded"}
-                  <button class="btn btn-danger" onclick={() => handleAction("stop", session.name)}>Stop</button>
-                  <button class="btn" onclick={() => handleAction("restart", session.name)}>Restart</button>
-                  <button class="btn btn-primary" onclick={() => handleAction("go", session.name)}>Go</button>
-                {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
-                  <button class="btn btn-primary" onclick={() => handleAction("start", session.name)}>Start</button>
-                {/if}
-              </div>
-            </td>
-          </tr>
-          {#if expandedSession === session.name}
-            <tr>
-              <td colspan="6" class="p-0">
-                <SessionCard {session} />
-              </td>
-            </tr>
+  <div class="space-y-1">
+    {#each status.sessions as session (session.name)}
+      {@const sBadge = statusBadge(session.status)}
+      <div
+        class="session-row"
+        onclick={() => toggleExpand(session.name)}
+      >
+        <!-- Top line: name + status badge + RSS -->
+        <div class="flex items-center gap-2 min-w-0">
+          <button
+            class="session-name"
+            onclick={(e) => handleOpenTab(e, session.name)}
+            title="Open in Termux tab"
+          >{session.name}</button>
+          <span class="badge {sBadge.cls}">{sBadge.label}</span>
+          {#if session.rss_mb != null}
+            <span class="text-xs text-[var(--text-muted)] ml-auto flex-shrink-0">{session.rss_mb}MB</span>
           {/if}
-        {/each}
-      </tbody>
-    </table>
+        </div>
+
+        <!-- Actions row -->
+        <div class="flex gap-1 flex-wrap mt-1.5" onclick={(e) => e.stopPropagation()}>
+          {#if session.status === "running" || session.status === "degraded"}
+            <button class="btn btn-sm btn-danger" onclick={(e) => handleAction(e, "stop", session.name)}>Stop</button>
+            <button class="btn btn-sm" onclick={(e) => handleAction(e, "restart", session.name)}>Restart</button>
+            <button class="btn btn-sm btn-primary" onclick={(e) => handleAction(e, "go", session.name)}>Go</button>
+          {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
+            <button class="btn btn-sm btn-primary" onclick={(e) => handleAction(e, "start", session.name)}>Start</button>
+          {/if}
+        </div>
+      </div>
+
+      {#if expandedSession === session.name}
+        <div class="px-2">
+          <SessionCard {session} />
+        </div>
+      {/if}
+    {/each}
   </div>
 {:else if !error}
   <p class="text-[var(--text-muted)] text-sm">Loading...</p>
 {/if}
+
+<style>
+  .session-row {
+    padding: 0.5rem 0.625rem;
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .session-row:first-child { border-top: none; }
+  .session-row:hover { background: var(--bg-tertiary); }
+  .session-name {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--accent-blue);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    font-family: inherit;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .session-name:hover { text-decoration: underline; }
+  .session-name:active { color: var(--accent-purple); }
+</style>

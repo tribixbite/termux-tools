@@ -1075,13 +1075,36 @@ var CLAUDE_READY_PATTERNS = [
   // claude prompt
 ];
 var GO_SEND_DELAY = 500;
+function cleanEnv() {
+  const env = { ...process.env };
+  delete env.CLAUDECODE;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("CLAUDE_CODE_") || key.startsWith("CLAUDE_TMPDIR")) {
+      delete env[key];
+    }
+  }
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("ENABLE_CLAUDE_CODE_")) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+var _cleanEnv = null;
+function getCleanEnv() {
+  if (!_cleanEnv) _cleanEnv = cleanEnv();
+  return _cleanEnv;
+}
 function tmux(...args2) {
   try {
-    return (0, import_node_child_process3.execSync)(`tmux ${args2.join(" ")}`, {
+    const result = (0, import_node_child_process3.spawnSync)("tmux", args2, {
       encoding: "utf-8",
       timeout: 1e4,
-      stdio: ["ignore", "pipe", "pipe"]
-    }).trim();
+      stdio: ["ignore", "pipe", "pipe"],
+      env: getCleanEnv()
+    });
+    if (result.status !== 0) return null;
+    return (result.stdout ?? "").trim();
   } catch {
     return null;
   }
@@ -1089,24 +1112,26 @@ function tmux(...args2) {
 function isTmuxServerAlive() {
   const result = (0, import_node_child_process3.spawnSync)("tmux", ["start-server"], {
     timeout: 5e3,
-    stdio: "ignore"
+    stdio: "ignore",
+    env: getCleanEnv()
   });
   return result.status === 0;
 }
 function listTmuxSessions() {
-  const output = tmux("list-sessions", "-F", "'#{session_name}'");
+  const output = tmux("list-sessions", "-F", "#{session_name}");
   if (!output) return [];
-  return output.split("\n").map((s) => s.replace(/'/g, "").trim()).filter(Boolean);
+  return output.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function sessionExists(name) {
   const result = (0, import_node_child_process3.spawnSync)("tmux", ["has-session", "-t", name], {
     timeout: 5e3,
-    stdio: "ignore"
+    stdio: "ignore",
+    env: getCleanEnv()
   });
   return result.status === 0;
 }
-function capturePane(sessionName, lines = 5) {
-  const output = tmux("capture-pane", "-t", sessionName, "-p", "-l", String(lines));
+function capturePane(sessionName, _lines = 5) {
+  const output = tmux("capture-pane", "-t", sessionName, "-p");
   return output ?? "";
 }
 function sendKeys(sessionName, text, pressEnter = true) {
@@ -1127,7 +1152,8 @@ function createSession(config, log) {
   }
   const result = (0, import_node_child_process3.spawnSync)("tmux", createArgs, {
     timeout: 1e4,
-    stdio: "ignore"
+    stdio: "ignore",
+    env: getCleanEnv()
   });
   if (result.status !== 0) {
     log.error(`Failed to create tmux session '${name}'`, { session: name });
@@ -1136,7 +1162,7 @@ function createSession(config, log) {
   log.info(`Created tmux session '${name}'`, { session: name, type, path });
   switch (type) {
     case "claude":
-      sendKeys(name, "cc", true);
+      sendKeys(name, "claude --dangerously-skip-permissions", true);
       break;
     case "daemon":
       if (command2) {
@@ -1191,7 +1217,7 @@ async function stopSession(name, log, timeoutMs = 1e4) {
     log.debug(`Session '${name}' not running, nothing to stop`, { session: name });
     return true;
   }
-  tmux("send-keys", "-t", name, "C-c", "");
+  tmux("send-keys", "-t", name, "C-c");
   await sleep(1e3);
   sendKeys(name, "exit", true);
   await sleep(1e3);
@@ -2473,12 +2499,68 @@ var Daemon = class {
           const entries = log.readTail(100, sessionFilter);
           return { status: 200, data: entries };
         }
+        case "tab":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          if (createTermuxTab(name, this.log)) {
+            return { status: 200, data: { ok: true, session: name } };
+          }
+          return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
+        case "processes":
+          return { status: 200, data: this.getProcessList() };
+        case "kill":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "PID required" } };
+          return this.killProcess(parseInt(name, 10));
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
       return { status: resp.ok ? 200 : 400, data: resp.ok ? resp.data : { error: resp.error } };
     } catch (err) {
       return { status: 500, data: { error: String(err) } };
+    }
+  }
+  // -- Process management -----------------------------------------------------
+  /** List user processes with RSS, excluding tmx daemon itself */
+  getProcessList() {
+    try {
+      const result = (0, import_node_child_process6.execSync)("ps -e -o pid=,rss=,comm=,args=", {
+        encoding: "utf-8",
+        timeout: 5e3
+      });
+      const myPid = process.pid;
+      const lines = result.trim().split("\n");
+      const procs = [];
+      for (const line of lines) {
+        const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/);
+        if (!match) continue;
+        const pid = parseInt(match[1], 10);
+        const rssKb = parseInt(match[2], 10);
+        const name = match[3];
+        const cmd = match[4].trim();
+        if (pid === myPid || rssKb < 1024) continue;
+        procs.push({ pid, name, rss_mb: Math.round(rssKb / 1024), cmd });
+      }
+      procs.sort((a, b) => b.rss_mb - a.rss_mb);
+      return procs;
+    } catch {
+      return [];
+    }
+  }
+  /** Kill a process by PID (with safety checks) */
+  killProcess(pid) {
+    if (isNaN(pid) || pid <= 1) {
+      return { status: 400, data: { error: "Invalid PID" } };
+    }
+    if (pid === process.pid) {
+      return { status: 403, data: { error: "Cannot kill the daemon process" } };
+    }
+    try {
+      process.kill(pid, "SIGTERM");
+      this.log.info(`Killed process ${pid} via dashboard`);
+      return { status: 200, data: { ok: true, pid, signal: "SIGTERM" } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to kill PID ${pid}: ${err.message}` } };
     }
   }
   // -- Cron -------------------------------------------------------------------

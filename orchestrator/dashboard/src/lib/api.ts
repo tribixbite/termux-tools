@@ -162,3 +162,27 @@ export async function sendToSession(name: string, text: string): Promise<void> {
     body: JSON.stringify({ text }),
   });
 }
+
+/** Open a Termux tab attached to a session */
+export async function openTab(name: string): Promise<void> {
+  await fetch(`/api/tab/${encodeURIComponent(name)}`, { method: "POST" });
+}
+
+/** Process info from the daemon */
+export interface ProcessInfo {
+  pid: number;
+  name: string;
+  rss_mb: number;
+  cmd: string;
+}
+
+/** Fetch list of user processes sorted by RSS */
+export async function fetchProcesses(): Promise<ProcessInfo[]> {
+  const res = await fetch("/api/processes");
+  return res.json();
+}
+
+/** Kill a process by PID */
+export async function killProcess(pid: number): Promise<void> {
+  await fetch(`/api/kill/${pid}`, { method: "POST" });
+}
