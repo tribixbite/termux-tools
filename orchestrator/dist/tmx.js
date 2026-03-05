@@ -27,7 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs9 = require("node:fs");
+var import_node_fs10 = require("node:fs");
 var import_node_child_process7 = require("node:child_process");
 
 // src/ipc.ts
@@ -188,7 +188,7 @@ var IpcClient = class {
 
 // src/daemon.ts
 var import_node_child_process6 = require("node:child_process");
-var import_node_path3 = require("node:path");
+var import_node_path4 = require("node:path");
 
 // src/config.ts
 var import_node_fs2 = require("node:fs");
@@ -1064,6 +1064,19 @@ var import_node_child_process4 = require("node:child_process");
 
 // src/session.ts
 var import_node_child_process3 = require("node:child_process");
+var import_node_fs5 = require("node:fs");
+var import_node_path2 = require("node:path");
+function resolveTermuxBin(name) {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const candidate = (0, import_node_path2.join)(prefix, "bin", name);
+  try {
+    if ((0, import_node_fs5.existsSync)(candidate)) return candidate;
+  } catch {
+  }
+  return name;
+}
+var TERMUX_AM_BIN = resolveTermuxBin("termux-am");
+var AM_BIN = resolveTermuxBin("am");
 var CLAUDE_READY_TIMEOUT = 3e4;
 var CLAUDE_POLL_INTERVAL = 500;
 var CLAUDE_READY_PATTERNS = [
@@ -1236,25 +1249,7 @@ async function stopSession(name, log, timeoutMs = 1e4) {
 }
 function createTermuxTab(sessionName, log) {
   const attachCmd = `printf '\\033]0;${sessionName}\\007' && tmux attach -t '${sessionName}'`;
-  const amResult = (0, import_node_child_process3.spawnSync)("termux-am", [
-    "start",
-    "-n",
-    "com.termux/.app.TermuxActivity",
-    "--es",
-    "com.termux.execute.background",
-    "true",
-    "-e",
-    "com.termux.execute.command",
-    attachCmd
-  ], {
-    timeout: 5e3,
-    stdio: "ignore"
-  });
-  if (amResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via termux-am`, { session: sessionName });
-    return true;
-  }
-  const svcResult = (0, import_node_child_process3.spawnSync)("am", [
+  const svcArgs = [
     "startservice",
     "-n",
     "com.termux/com.termux.app.RunCommandService",
@@ -1272,12 +1267,21 @@ function createTermuxTab(sessionName, log) {
     "--es",
     "com.termux.RUN_COMMAND_SESSION_ACTION",
     "0"
-  ], {
+  ];
+  const amResult = (0, import_node_child_process3.spawnSync)(TERMUX_AM_BIN, svcArgs, {
     timeout: 5e3,
     stdio: "ignore"
   });
-  if (svcResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via RunCommandService`, { session: sessionName });
+  if (amResult.status === 0) {
+    log.debug(`Created Termux tab for '${sessionName}' via termux-am`, { session: sessionName });
+    return true;
+  }
+  const fallbackResult = (0, import_node_child_process3.spawnSync)(AM_BIN, svcArgs, {
+    timeout: 5e3,
+    stdio: "ignore"
+  });
+  if (fallbackResult.status === 0) {
+    log.debug(`Created Termux tab for '${sessionName}' via am`, { session: sessionName });
     return true;
   }
   log.error(`Failed to create Termux tab for '${sessionName}'`, { session: sessionName });
@@ -1436,7 +1440,7 @@ function runHealthSweep(config, state, log) {
 }
 
 // src/memory.ts
-var import_node_fs5 = require("node:fs");
+var import_node_fs6 = require("node:fs");
 var import_node_child_process5 = require("node:child_process");
 var MemoryMonitor = class {
   log;
@@ -1458,7 +1462,7 @@ var MemoryMonitor = class {
   /** Read system memory stats from /proc/meminfo */
   getSystemMemory() {
     try {
-      const content = (0, import_node_fs5.readFileSync)("/proc/meminfo", "utf-8");
+      const content = (0, import_node_fs6.readFileSync)("/proc/meminfo", "utf-8");
       const fields = /* @__PURE__ */ new Map();
       for (const line of content.split("\n")) {
         const match = line.match(/^(\w+):\s+(\d+)\s+kB/);
@@ -1590,7 +1594,7 @@ var MemoryMonitor = class {
 };
 
 // src/activity.ts
-var import_node_fs6 = require("node:fs");
+var import_node_fs7 = require("node:fs");
 var IDLE_THRESHOLD = 3;
 var ActivityDetector = class {
   log;
@@ -1671,7 +1675,7 @@ var ActivityDetector = class {
    */
   readCpuTicks(pid) {
     try {
-      const content = (0, import_node_fs6.readFileSync)(`/proc/${pid}/stat`, "utf-8");
+      const content = (0, import_node_fs7.readFileSync)(`/proc/${pid}/stat`, "utf-8");
       return this.parseCpuTicks(content);
     } catch {
       return null;
@@ -1696,7 +1700,7 @@ var ActivityDetector = class {
     if (rootTicks === null) return null;
     let total = rootTicks;
     try {
-      const procEntries = (0, import_node_fs6.readdirSync)("/proc").filter((e) => /^\d+$/.test(e));
+      const procEntries = (0, import_node_fs7.readdirSync)("/proc").filter((e) => /^\d+$/.test(e));
       const stack = [rootPid];
       const visited = /* @__PURE__ */ new Set([rootPid]);
       while (stack.length > 0) {
@@ -1705,7 +1709,7 @@ var ActivityDetector = class {
           const childPid = parseInt(entry, 10);
           if (visited.has(childPid)) continue;
           try {
-            const stat = (0, import_node_fs6.readFileSync)(`/proc/${childPid}/stat`, "utf-8");
+            const stat = (0, import_node_fs7.readFileSync)(`/proc/${childPid}/stat`, "utf-8");
             const closeParen = stat.lastIndexOf(")");
             if (closeParen === -1) continue;
             const fields = stat.slice(closeParen + 2).split(" ");
@@ -1731,8 +1735,8 @@ var ActivityDetector = class {
 
 // src/http.ts
 var http = __toESM(require("node:http"));
-var import_node_fs7 = require("node:fs");
-var import_node_path2 = require("node:path");
+var import_node_fs8 = require("node:fs");
+var import_node_path3 = require("node:path");
 var MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -1873,19 +1877,19 @@ data: ${JSON.stringify({ id: clientId })}
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
     filePath = filePath.replace(/\.\./g, "");
-    let fullPath = (0, import_node_path2.join)(this.staticDir, filePath);
-    if ((0, import_node_fs7.existsSync)(fullPath) && (0, import_node_fs7.statSync)(fullPath).isDirectory()) {
-      fullPath = (0, import_node_path2.join)(fullPath, "index.html");
-    } else if (!(0, import_node_fs7.existsSync)(fullPath) || !(0, import_node_fs7.statSync)(fullPath).isFile()) {
-      const dirIndex = (0, import_node_path2.join)(this.staticDir, filePath, "index.html");
-      if ((0, import_node_fs7.existsSync)(dirIndex) && (0, import_node_fs7.statSync)(dirIndex).isFile()) {
+    let fullPath = (0, import_node_path3.join)(this.staticDir, filePath);
+    if ((0, import_node_fs8.existsSync)(fullPath) && (0, import_node_fs8.statSync)(fullPath).isDirectory()) {
+      fullPath = (0, import_node_path3.join)(fullPath, "index.html");
+    } else if (!(0, import_node_fs8.existsSync)(fullPath) || !(0, import_node_fs8.statSync)(fullPath).isFile()) {
+      const dirIndex = (0, import_node_path3.join)(this.staticDir, filePath, "index.html");
+      if ((0, import_node_fs8.existsSync)(dirIndex) && (0, import_node_fs8.statSync)(dirIndex).isFile()) {
         fullPath = dirIndex;
       }
     }
-    if (!(0, import_node_fs7.existsSync)(fullPath) || !(0, import_node_fs7.statSync)(fullPath).isFile()) {
-      const indexPath = (0, import_node_path2.join)(this.staticDir, "index.html");
-      if ((0, import_node_fs7.existsSync)(indexPath)) {
-        const content2 = (0, import_node_fs7.readFileSync)(indexPath);
+    if (!(0, import_node_fs8.existsSync)(fullPath) || !(0, import_node_fs8.statSync)(fullPath).isFile()) {
+      const indexPath = (0, import_node_path3.join)(this.staticDir, "index.html");
+      if ((0, import_node_fs8.existsSync)(indexPath)) {
+        const content2 = (0, import_node_fs8.readFileSync)(indexPath);
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(content2);
         return;
@@ -1894,9 +1898,9 @@ data: ${JSON.stringify({ id: clientId })}
       res.end(this.getFallbackHtml());
       return;
     }
-    const ext = (0, import_node_path2.extname)(fullPath).toLowerCase();
+    const ext = (0, import_node_path3.extname)(fullPath).toLowerCase();
     const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-    const content = (0, import_node_fs7.readFileSync)(fullPath);
+    const content = (0, import_node_fs8.readFileSync)(fullPath);
     const cacheControl = ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
     res.writeHead(200, {
       "Content-Type": contentType,
@@ -1973,8 +1977,8 @@ function resolveAdbPath() {
   } catch {
   }
   const candidates = [
-    (0, import_node_path3.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
-    (0, import_node_path3.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
+    (0, import_node_path4.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    (0, import_node_path4.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
   ];
   for (const p of candidates) {
     try {
@@ -2492,7 +2496,7 @@ var Daemon = class _Daemon {
       return;
     }
     const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
-    const staticDir = (0, import_node_path3.join)(scriptDir, "..", "dashboard", "dist");
+    const staticDir = (0, import_node_path4.join)(scriptDir, "..", "dashboard", "dist");
     this.dashboard = new DashboardServer(
       port,
       staticDir,
@@ -2975,12 +2979,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs8 = require("node:fs");
+var import_node_fs9 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs8.existsSync)(filePath)) {
+  if (!(0, import_node_fs9.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs8.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs9.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -3073,7 +3077,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs8.existsSync) ?? null;
+  return candidates.find(import_node_fs9.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -3230,15 +3234,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs9.existsSync)(outDir)) {
-    (0, import_node_fs9.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs10.existsSync)(outDir)) {
+    (0, import_node_fs10.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs9.existsSync)(outPath)) {
+  if ((0, import_node_fs10.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs9.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs10.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs9.writeFileSync)(outPath, toml);
+    (0, import_node_fs10.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -3535,7 +3539,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs9.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs10.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

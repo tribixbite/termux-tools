@@ -7,8 +7,22 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
 import type { Logger } from "./log.js";
+
+/** Resolve full path for a Termux binary (bun's spawnSync can't find $PREFIX/bin via PATH) */
+function resolveTermuxBin(name: string): string {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const candidate = join(prefix, "bin", name);
+  try { if (existsSync(candidate)) return candidate; } catch { /* fall through */ }
+  return name;
+}
+
+/** Pre-resolved binary paths for termux-am and am */
+const TERMUX_AM_BIN = resolveTermuxBin("termux-am");
+const AM_BIN = resolveTermuxBin("am");
 
 /** Timeout for Claude Code readiness polling (ms) */
 const CLAUDE_READY_TIMEOUT = 30_000;
@@ -278,13 +292,19 @@ export function getAttachedClients(name: string): number {
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
   const attachCmd = `printf '\\033]0;${sessionName}\\007' && tmux attach -t '${sessionName}'`;
 
-  // Try termux-am first (fast path)
-  const amResult = spawnSync("termux-am", [
-    "start",
-    "-n", "com.termux/.app.TermuxActivity",
-    "--es", "com.termux.execute.background", "true",
-    "-e", "com.termux.execute.command", attachCmd,
-  ], {
+  // RunCommandService args — creates a visible Termux tab running tmux attach
+  const svcArgs = [
+    "startservice",
+    "-n", "com.termux/com.termux.app.RunCommandService",
+    "-a", "com.termux.RUN_COMMAND",
+    "--es", "com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash",
+    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", `-c,${attachCmd}`,
+    "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
+    "--es", "com.termux.RUN_COMMAND_SESSION_ACTION", "0",
+  ];
+
+  // Try termux-am first (fast IPC path, doesn't need ADB)
+  const amResult = spawnSync(TERMUX_AM_BIN, svcArgs, {
     timeout: 5000,
     stdio: "ignore",
   });
@@ -294,22 +314,14 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
     return true;
   }
 
-  // Fallback: RunCommandService
-  const svcResult = spawnSync("am", [
-    "startservice",
-    "-n", "com.termux/com.termux.app.RunCommandService",
-    "-a", "com.termux.RUN_COMMAND",
-    "--es", "com.termux.RUN_COMMAND_PATH", "/data/data/com.termux/files/usr/bin/bash",
-    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", `-c,${attachCmd}`,
-    "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
-    "--es", "com.termux.RUN_COMMAND_SESSION_ACTION", "0",
-  ], {
+  // Fallback: plain am (uses Android's activity manager)
+  const fallbackResult = spawnSync(AM_BIN, svcArgs, {
     timeout: 5000,
     stdio: "ignore",
   });
 
-  if (svcResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via RunCommandService`, { session: sessionName });
+  if (fallbackResult.status === 0) {
+    log.debug(`Created Termux tab for '${sessionName}' via am`, { session: sessionName });
     return true;
   }
 
