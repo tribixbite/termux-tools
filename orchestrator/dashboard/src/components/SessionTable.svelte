@@ -19,14 +19,14 @@
     error = null;
   });
 
-  function statusBadge(st: string): { cls: string; label: string } {
+  /** Status dot color class */
+  function dotCls(st: string): string {
     switch (st) {
-      case "running": return { cls: "badge-green", label: "running" };
-      case "degraded": return { cls: "badge-yellow", label: "degraded" };
-      case "starting": case "waiting": return { cls: "badge-blue", label: st };
-      case "failed": return { cls: "badge-red", label: "failed" };
-      case "stopping": return { cls: "badge-yellow", label: "stopping" };
-      default: return { cls: "badge-dim", label: st };
+      case "running": return "dot-green";
+      case "degraded": return "dot-yellow";
+      case "starting": case "waiting": return "dot-blue";
+      case "failed": return "dot-red";
+      default: return "dot-dim";
     }
   }
 
@@ -58,61 +58,103 @@
 {/if}
 
 {#if status}
-  <div class="space-y-1">
-    {#each status.sessions as session (session.name)}
-      {@const sBadge = statusBadge(session.status)}
-      <div
-        class="session-row"
-        onclick={() => toggleExpand(session.name)}
-      >
-        <!-- Top line: name + status badge + RSS -->
-        <div class="flex items-center gap-2 min-w-0">
-          <button
-            class="session-name"
-            onclick={(e) => handleOpenTab(e, session.name)}
-            title="Open in Termux tab"
-          >{session.name}</button>
-          <span class="badge {sBadge.cls}">{sBadge.label}</span>
-          {#if session.rss_mb != null}
-            <span class="text-xs text-[var(--text-muted)] ml-auto flex-shrink-0">{session.rss_mb}MB</span>
-          {/if}
-        </div>
-
-        <!-- Actions row -->
-        <div class="action-row" onclick={(e) => e.stopPropagation()}>
-          {#if session.status === "running" || session.status === "degraded"}
-            <button class="btn btn-sm btn-danger" onclick={(e) => handleAction(e, "stop", session.name)}>Stop</button>
-            <button class="btn btn-sm" onclick={(e) => handleAction(e, "restart", session.name)}>Restart</button>
-            <button class="btn btn-sm btn-primary" onclick={(e) => handleAction(e, "go", session.name)}>Go</button>
-          {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
-            <button class="btn btn-sm btn-primary" onclick={(e) => handleAction(e, "start", session.name)}>Start</button>
-          {/if}
-        </div>
-      </div>
-
-      {#if expandedSession === session.name}
-        <div class="px-2">
-          <SessionCard {session} />
-        </div>
-      {/if}
-    {/each}
-  </div>
+  <table class="session-table">
+    <thead>
+      <tr>
+        <th class="th-name">Session</th>
+        <th class="th-rss">RSS</th>
+        <th class="th-actions"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each status.sessions as session (session.name)}
+        <tr class="session-row" onclick={() => toggleExpand(session.name)}>
+          <td class="td-name">
+            <span class="dot {dotCls(session.status)}"></span>
+            <button
+              class="session-name"
+              onclick={(e) => handleOpenTab(e, session.name)}
+              title="Open in Termux tab"
+            >{session.name}</button>
+          </td>
+          <td class="td-rss">
+            {#if session.rss_mb != null}
+              {session.rss_mb}<span class="unit">MB</span>
+            {/if}
+          </td>
+          <td class="td-actions" onclick={(e) => e.stopPropagation()}>
+            {#if session.status === "running" || session.status === "degraded"}
+              <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
+              <button class="btn-icon" onclick={(e) => handleAction(e, "restart", session.name)} title="Restart">&#x21BB;</button>
+              <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
+            {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
+              <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
+            {/if}
+          </td>
+        </tr>
+        {#if expandedSession === session.name}
+          <tr><td colspan="3" class="td-expand"><SessionCard {session} /></td></tr>
+        {/if}
+      {/each}
+    </tbody>
+  </table>
 {:else if !error}
   <p class="text-[var(--text-muted)] text-sm">Loading...</p>
 {/if}
 
 <style>
+  .session-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+  thead th {
+    text-align: left;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 0 0.375rem 0.5rem;
+  }
+  .th-rss { text-align: right; }
+  .th-actions { text-align: right; width: 6.5rem; }
   .session-row {
-    padding: 0.5rem 0.625rem;
-    border-top: 1px solid var(--border);
     cursor: pointer;
     transition: background 0.15s;
   }
-  .session-row:first-child { border-top: none; }
   .session-row:hover { background: var(--bg-tertiary); }
+  .session-row td {
+    padding: 0.5rem 0.375rem;
+    border-top: 1px solid var(--border);
+    vertical-align: middle;
+  }
+  .td-name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .td-rss {
+    text-align: right;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+  .unit { color: var(--text-muted); margin-left: 1px; }
+  .td-actions {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .td-actions :global(.btn-icon) {
+    margin-left: 0.25rem;
+  }
+  .td-expand {
+    padding: 0.25rem 0.375rem 0.75rem;
+    border-top: none;
+  }
   .session-name {
     font-weight: 600;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
     color: var(--accent-blue);
     background: none;
     border: none;
@@ -126,10 +168,4 @@
   }
   .session-name:hover { text-decoration: underline; }
   .session-name:active { color: var(--accent-purple); }
-  .action-row {
-    display: flex;
-    gap: 0.5rem;
-    flex-wrap: wrap;
-    margin-top: 0.375rem;
-  }
 </style>

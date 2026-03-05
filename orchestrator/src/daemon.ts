@@ -787,31 +787,47 @@ export class Daemon {
   /** Well-known system packages that should not be force-stopped */
   private static readonly SYSTEM_PACKAGES = new Set([
     "system_server", "com.android.systemui", "com.google.android.gms.persistent",
-    "com.termux", "com.sec.android.app.launcher",
+    "com.termux", "com.termux.api", "com.sec.android.app.launcher",
+    "com.android.phone", "com.android.providers.media",
+    "com.samsung.android.providers.media",
   ]);
 
   /** Friendly display names for known packages */
   private static readonly APP_LABELS: Record<string, string> = {
     "com.microsoft.emmx.canary": "Edge Canary",
     "com.microsoft.emmx": "Edge",
+    "com.android.chrome": "Chrome",
     "com.discord": "Discord",
     "com.Slack": "Slack",
     "com.google.android.gm": "Gmail",
     "com.google.android.apps.photos": "Photos",
+    "com.google.android.apps.chromecast.app": "Google Home",
+    "com.google.android.apps.maps": "Maps",
+    "com.google.android.apps.docs": "Drive",
+    "com.google.android.apps.youtube": "YouTube",
+    "com.google.android.apps.messaging": "Messages",
     "com.google.android.calendar": "Calendar",
     "com.google.android.googlequicksearchbox": "Google",
     "com.google.android.gms": "Play Services",
     "com.google.android.gms.persistent": "Play Services",
     "com.ubercab.eats": "Uber Eats",
     "com.samsung.android.app.spage": "Samsung Free",
-    "com.samsung.android.smartsuggestions": "Smart Suggestions",
+    "com.samsung.android.smartsuggestions": "Smart Suggest",
+    "com.samsung.android.incallui": "Phone",
+    "com.samsung.android.messaging": "Samsung Messages",
+    "com.samsung.android.spay": "Samsung Pay",
     "com.sec.android.daemonapp": "Weather",
+    "com.sec.android.app.sbrowser": "Samsung Internet",
     "net.slickdeals.android": "Slickdeals",
     "dev.imranr.obtainium": "Obtainium",
     "com.teslacoilsw.launcher": "Nova Launcher",
     "com.sec.android.app.launcher": "One UI Home",
     "com.android.systemui": "System UI",
+    "com.android.settings": "Settings",
+    "com.android.vending": "Play Store",
     "com.termux": "Termux",
+    "com.termux.api": "Termux:API",
+    "tribixbite.cleverkeys": "CleverKeys",
   };
 
   /**
@@ -834,21 +850,26 @@ export class Daemon {
         if (!match) continue;
         const rssKb = parseInt(match[2], 10);
         const rawName = match[3].trim();
-        if (rssKb < 5120) continue; // Skip < 5MB
+        if (rssKb < 1024) continue; // Skip < 1MB (aggregate later)
 
         // Extract base package: "com.foo.bar:sandboxed_process0:..." → "com.foo.bar"
         const basePkg = rawName.split(":")[0];
         // Only include things that look like package names (contain a dot)
         if (!basePkg.includes(".") && !Daemon.APP_LABELS[basePkg]) continue;
+        // Skip zygote/isolated processes — they're OS-level, not user apps
+        if (basePkg.endsWith("_zygote") || basePkg.startsWith("com.android.isolated")) continue;
 
         pkgMap.set(basePkg, (pkgMap.get(basePkg) ?? 0) + rssKb);
       }
 
       const apps: { pkg: string; label: string; rss_mb: number; system: boolean }[] = [];
       for (const [pkg, rssKb] of pkgMap) {
+        const rssMb = Math.round(rssKb / 1024);
+        if (rssMb < 50) continue; // Skip apps using < 50MB after aggregation
         const system = Daemon.SYSTEM_PACKAGES.has(pkg);
-        const label = Daemon.APP_LABELS[pkg] ?? pkg.split(".").pop() ?? pkg;
-        apps.push({ pkg, label, rss_mb: Math.round(rssKb / 1024), system });
+        // Derive a readable label: known name > last meaningful segment > raw package
+        const label = Daemon.APP_LABELS[pkg] ?? Daemon.deriveLabel(pkg);
+        apps.push({ pkg, label, rss_mb: rssMb, system });
       }
 
       apps.sort((a, b) => b.rss_mb - a.rss_mb);
@@ -856,6 +877,17 @@ export class Daemon {
     } catch {
       return [];
     }
+  }
+
+  /** Derive a human-readable label from a package name */
+  private static deriveLabel(pkg: string): string {
+    const parts = pkg.split(".");
+    // Skip common prefixes: com, org, net, android, google, samsung, sec, app, apps
+    const skip = new Set(["com", "org", "net", "android", "google", "samsung", "sec", "app", "apps", "software"]);
+    const meaningful = parts.filter((p) => !skip.has(p) && p.length > 1);
+    // Capitalize the last meaningful segment
+    const name = meaningful.length > 0 ? meaningful[meaningful.length - 1] : parts[parts.length - 1];
+    return name.charAt(0).toUpperCase() + name.slice(1);
   }
 
   /** Force-stop an Android app via ADB */

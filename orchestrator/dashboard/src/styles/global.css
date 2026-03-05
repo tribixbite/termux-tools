@@ -90,6 +90,32 @@ body {
 .btn:hover { background: var(--border); }
 .btn:active { background: var(--text-muted); }
 .btn-sm { padding: 0.25rem 0.5rem; font-size: 0.7rem; }
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.btn-icon:hover { background: var(--border); color: var(--text-primary); }
+.btn-icon:active { background: var(--text-muted); }
+.btn-icon.danger { border-color: var(--accent-red); color: var(--accent-red); }
+.btn-icon.danger:hover { background: rgba(248, 81, 73, 0.15); }
+.btn-icon.primary { border-color: var(--accent-blue); color: var(--accent-blue); }
+.btn-icon.primary:hover { background: rgba(88, 166, 255, 0.15); }
+.btn-icon.success { border-color: var(--accent-green); color: var(--accent-green); }
+.btn-icon.success:hover { background: rgba(63, 185, 80, 0.15); }
 .btn-danger { border-color: var(--accent-red); color: var(--accent-red); }
 .btn-danger:hover { background: rgba(248, 81, 73, 0.15); }
 .btn-primary { border-color: var(--accent-blue); color: var(--accent-blue); }
