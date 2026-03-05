@@ -20,6 +20,11 @@ export class SseClient {
 
   constructor() {
     this.connect();
+    // Close SSE on page navigation to free the connection for the next page
+    if (typeof window !== "undefined") {
+      window.addEventListener("beforeunload", () => this.close());
+      window.addEventListener("pagehide", () => this.close());
+    }
   }
 
   /** Register a callback for an event type */
