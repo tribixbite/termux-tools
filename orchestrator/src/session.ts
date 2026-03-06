@@ -20,9 +20,10 @@ function resolveTermuxBin(name: string): string {
   return name;
 }
 
-/** Pre-resolved binary paths for termux-am and am */
+/** Pre-resolved binary paths for termux-am, am, and tmux */
 const TERMUX_AM_BIN = resolveTermuxBin("termux-am");
 const AM_BIN = resolveTermuxBin("am");
+const TMUX_BIN = resolveTermuxBin("tmux");
 
 /** Timeout for Claude Code readiness polling (ms) */
 const CLAUDE_READY_TIMEOUT = 30_000;
@@ -286,26 +287,34 @@ export function getAttachedClients(name: string): number {
 }
 
 /**
- * Open a Termux tab for a tmux session.
+ * Open a Termux tab attached to a tmux session.
  *
- * Strategy:
- * 1. Write a tiny attach script to /tmp (avoids --esa comma escaping issues)
- * 2. RunCommandService BACKGROUND=true runs it (creates no visible tab on Android 16+,
- *    but BACKGROUND=false silently fails on Android 16 — foreground tab creation blocked)
- * 3. Bring TermuxActivity to foreground so user sees the terminal
- *
- * The script starts tmux attach in a new tmux window named "__tab_<session>"
- * if no clients are already attached, giving the user a clean attach point.
+ * Uses $PREFIX/bin/am (app_process wrapper) to call RunCommandService with
+ * BACKGROUND=false, which creates a visible foreground Termux tab.
+ * Note: ADB's `am` lacks the RUN_COMMAND permission, and `termux-am` socket
+ * IPC is often unavailable — only $PREFIX/bin/am works reliably.
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
-  // Bring Termux to foreground — this is the primary action the user expects
-  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
-  const actResult = spawnSync(TERMUX_AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
-  if (actResult.status !== 0) {
+  // RunCommandService BACKGROUND=false creates a visible tab running tmux attach
+  const svcArgs = [
+    "startservice", "--user", "0",
+    "-n", "com.termux/com.termux.app.RunCommandService",
+    "-a", "com.termux.RUN_COMMAND",
+    "--es", "com.termux.RUN_COMMAND_PATH", TMUX_BIN,
+    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", `attach-session,-t,${sessionName}`,
+    "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
+  ];
+
+  const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore" });
+  if (result.status !== 0) {
+    // Fallback: just bring Termux to foreground
+    log.warn(`RunCommandService failed for '${sessionName}', falling back to foreground`, { session: sessionName });
+    const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
     spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
+  } else {
+    log.info(`Opened Termux tab attached to '${sessionName}'`, { session: sessionName });
   }
 
-  log.debug(`Opened Termux for session '${sessionName}'`, { session: sessionName });
   return true;
 }
 
