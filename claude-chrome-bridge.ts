@@ -61,25 +61,35 @@ const ADB_PATH = `${TERMUX_BIN}/adb`;
 // Auto-detect ADB serial for multi-device environments.
 // ANDROID_SERIAL env var doesn't work with some adb builds when value contains ':'
 // (IP:port format), so we must pass -s explicitly.
-const ADB_SERIAL: string = (() => {
+// Re-resolves dynamically so stale serials (offline devices) are dropped.
+let _adbSerial = "";
+let _adbSerialTs = 0;
+const ADB_SERIAL_TTL_MS = 30_000; // re-check every 30s
+
+function getAdbSerial(): string {
+  const now = Date.now();
+  if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
+  _adbSerialTs = now;
   try {
     const result = runSync([ADB_PATH, "devices"]);
     const lines = result.stdout.toString().trim().split("\n")
       .filter(l => l.endsWith("\tdevice"));
-    if (lines.length <= 1) return ""; // single or no device — no -s needed
+    if (lines.length <= 1) { _adbSerial = ""; return _adbSerial; }
     // Multiple devices: find the one running Edge Canary
     for (const line of lines) {
       const serial = line.split("\t")[0];
       const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
-      if (check.exitCode === 0 && check.stdout.toString().trim()) return serial;
+      if (check.exitCode === 0 && check.stdout.toString().trim()) { _adbSerial = serial; return _adbSerial; }
     }
-    return lines[0]?.split("\t")[0] ?? ""; // fallback to first device
-  } catch { return ""; }
-})();
+    _adbSerial = lines[0]?.split("\t")[0] ?? "";
+    return _adbSerial;
+  } catch { _adbSerial = ""; return _adbSerial; }
+}
 
 /** Build an adb command array, inserting -s <serial> when multiple devices present */
 function adb(...args: string[]): string[] {
-  return ADB_SERIAL ? [ADB_PATH, "-s", ADB_SERIAL, ...args] : [ADB_PATH, ...args];
+  const serial = getAdbSerial();
+  return serial ? [ADB_PATH, "-s", serial, ...args] : [ADB_PATH, ...args];
 }
 
 // NOTE: termux-notification/termux-toast can't be used from Bun — the termux-api-broadcast
