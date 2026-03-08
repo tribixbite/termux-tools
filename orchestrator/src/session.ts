@@ -307,13 +307,15 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
 
   const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore" });
   if (result.status !== 0) {
-    // Fallback: just bring Termux to foreground
-    log.warn(`RunCommandService failed for '${sessionName}', falling back to foreground`, { session: sessionName });
-    const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
-    spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
+    log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
   } else {
-    log.info(`Opened Termux tab attached to '${sessionName}'`, { session: sessionName });
+    log.info(`Created Termux tab for '${sessionName}'`, { session: sessionName });
   }
+
+  // Always bring Termux to foreground — RunCommandService creates the tab
+  // but doesn't switch the visible app
+  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+  spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
 
   return true;
 }
