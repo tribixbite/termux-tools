@@ -86,7 +86,7 @@ function getCleanEnv(): NodeJS.ProcessEnv {
  */
 function tmux(...args: string[]): string | null {
   try {
-    const result = spawnSync("tmux", args, {
+    const result = spawnSync(TMUX_BIN, args, {
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "pipe"],
@@ -101,7 +101,7 @@ function tmux(...args: string[]): string | null {
 
 /** Check if the tmux server is alive */
 export function isTmuxServerAlive(): boolean {
-  const result = spawnSync("tmux", ["start-server"], {
+  const result = spawnSync(TMUX_BIN, ["start-server"], {
     timeout: 5000,
     stdio: "ignore",
     env: getCleanEnv(),
@@ -121,7 +121,7 @@ export function listTmuxSessions(): string[] {
 
 /** Check if a specific tmux session exists */
 export function sessionExists(name: string): boolean {
-  const result = spawnSync("tmux", ["has-session", "-t", name], {
+  const result = spawnSync(TMUX_BIN, ["has-session", "-t", name], {
     timeout: 5000,
     stdio: "ignore",
     env: getCleanEnv(),
@@ -164,7 +164,7 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
     createArgs.push("-c", path);
   }
 
-  const result = spawnSync("tmux", createArgs, {
+  const result = spawnSync(TMUX_BIN, createArgs, {
     timeout: 10_000,
     stdio: "ignore",
     env: getCleanEnv(),
@@ -307,17 +307,47 @@ export function getAttachedClients(name: string): number {
  * IPC is often unavailable — only $PREFIX/bin/am works reliably.
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
-  // RunCommandService BACKGROUND=false creates a visible tab running tmux attach
+  const env = amEnv();
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const bash = join(prefix, "bin", "bash");
+
+  // Check if a tmux client is already attached to this session
+  const clients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
+  if (clients && clients.trim().length > 0) {
+    // Already attached — just bring Termux to foreground
+    log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
+    const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+    spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
+    return true;
+  }
+
+  // Write a tiny attach script that sets the Termux tab title before attaching.
+  // --esa comma escaping makes inline args fragile; a script file is reliable.
+  const scriptPath = join(prefix, "tmp", `tmx-tab-${sessionName}.sh`);
+  const script = [
+    `#!/data/data/com.termux/files/usr/bin/bash`,
+    `# Set Termux tab title (ESC ]0; title BEL)`,
+    `printf '\\033]0;${sessionName}\\007'`,
+    `exec ${TMUX_BIN} attach-session -t ${sessionName}`,
+  ].join("\n");
+  try {
+    const { writeFileSync, chmodSync } = require("fs");
+    writeFileSync(scriptPath, script);
+    chmodSync(scriptPath, 0o755);
+  } catch (e) {
+    log.warn(`Failed to write tab script: ${(e as Error).message}`, { session: sessionName });
+  }
+
+  // RunCommandService BACKGROUND=false creates a visible tab
   const svcArgs = [
     "startservice", "--user", "0",
     "-n", "com.termux/com.termux.app.RunCommandService",
     "-a", "com.termux.RUN_COMMAND",
-    "--es", "com.termux.RUN_COMMAND_PATH", TMUX_BIN,
-    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", `attach-session,-t,${sessionName}`,
+    "--es", "com.termux.RUN_COMMAND_PATH", bash,
+    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", scriptPath,
     "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
   ];
 
-  const env = amEnv();
   const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore", env });
   if (result.status !== 0) {
     log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
