@@ -370,9 +370,10 @@ export class Daemon {
   private adoptExistingSessions(): void {
     if (!isTmuxServerAlive()) return;
 
-    const existingSessions = listTmuxSessions();
+    const existingSessions = new Set(listTmuxSessions());
     const configuredNames = new Set(this.config.sessions.map((s) => s.name));
 
+    // Adopt tmux sessions that are alive but daemon thinks are not running
     for (const name of existingSessions) {
       if (!configuredNames.has(name)) continue;
 
@@ -381,9 +382,18 @@ export class Daemon {
         this.log.info(`Adopting existing tmux session '${name}'`, { session: name });
         this.state.forceStatus(name, "running");
         if (!s.uptime_start) {
-          // Set uptime_start to now since we don't know when it actually started
           this.state.getSession(name)!.uptime_start = new Date().toISOString();
         }
+      }
+    }
+
+    // Recover sessions stuck in transient states (stopping/starting) whose tmux session is gone
+    for (const cfg of this.config.sessions) {
+      const s = this.state.getSession(cfg.name);
+      if (!s) continue;
+      if ((s.status === "stopping" || s.status === "starting") && !existingSessions.has(cfg.name)) {
+        this.log.info(`Recovering stale '${s.status}' session '${cfg.name}' → stopped`, { session: cfg.name });
+        this.state.forceStatus(cfg.name, "stopped");
       }
     }
   }

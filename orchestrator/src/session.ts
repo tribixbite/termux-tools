@@ -168,9 +168,9 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   // Start the appropriate process inside the session
   switch (type) {
     case "claude":
-      // Start Claude Code directly — don't rely on shell aliases.
-      // No --continue: starts fresh if no prior conversation (avoids exit on first run).
-      sendKeys(name, "claude --dangerously-skip-permissions", true);
+      // Start Claude Code via node explicitly — Termux lacks /usr/bin/env
+      // which the claude shebang requires. Using node + resolved path bypasses this.
+      sendKeys(name, "node $(readlink -f $(which claude)) --dangerously-skip-permissions", true);
       break;
 
     case "daemon":
