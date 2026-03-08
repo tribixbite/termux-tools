@@ -1,0 +1,462 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+---
+
+<Layout
+  title="TMX Orchestrator — termux-tools"
+  description="TypeScript daemon for tmux session lifecycle management on Android. Health checks, memory monitoring, auto-restart, and a real-time dashboard."
+  path="orchestrator"
+>
+  <Nav current="/orchestrator" />
+  <main>
+    <!-- Hero -->
+    <section class="relative overflow-hidden px-4 pt-16 pb-20 sm:px-6 lg:px-8">
+      <div class="pointer-events-none absolute inset-0 opacity-[0.03]"
+        style="background-image: linear-gradient(var(--color-terminal-green) 1px, transparent 1px), linear-gradient(90deg, var(--color-terminal-green) 1px, transparent 1px); background-size: 40px 40px;">
+      </div>
+
+      <div class="relative mx-auto max-w-4xl text-center">
+        <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
+          <span class="text-terminal-green">$</span> tmx boot
+        </div>
+
+        <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
+          TMX<span class="text-terminal-green"> Orchestrator</span>
+        </h1>
+
+        <p class="mx-auto mb-2 max-w-2xl text-xl text-terminal-text sm:text-2xl">
+          Tmux session lifecycle daemon for Android
+        </p>
+
+        <p class="mb-8 text-sm text-terminal-dim">
+          Health checks &middot; memory monitoring &middot; auto-restart &middot; real-time dashboard
+        </p>
+
+        <div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <a href="https://github.com/tribixbite/termux-tools/tree/main/orchestrator"
+            class="inline-flex items-center gap-2 rounded-lg border border-terminal-green bg-terminal-green/10 px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green transition-colors hover:bg-terminal-green/20"
+            target="_blank" rel="noopener">
+            Source
+          </a>
+          <a href="#cli"
+            class="inline-flex items-center gap-2 rounded-lg border border-terminal-border px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-text transition-colors hover:border-terminal-dim hover:text-terminal-bright">
+            CLI Reference
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Architecture -->
+    <section id="architecture" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Architecture
+        </h2>
+
+        <div class="overflow-x-auto rounded-lg border border-terminal-border bg-terminal-surface p-6">
+          <pre class="font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm"><code><span class="text-terminal-dim">┌─────────────────────────────────────────────────────────┐</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-bright">tmx.toml</span>  ──&gt;  <span class="text-terminal-green">TMX Daemon</span> <span class="text-terminal-dim">(:18970)</span>                      <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                     │                                    <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           ┌─────────┼─────────┐                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           ▼         ▼         ▼                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       <span class="text-terminal-cyan">Session</span>   <span class="text-terminal-cyan">Session</span>   <span class="text-terminal-cyan">Session</span>                       <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       <span class="text-terminal-dim">(claude)</span>  <span class="text-terminal-dim">(daemon)</span>  <span class="text-terminal-dim">(service)</span>                      <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           │         │         │                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           └─────────┼─────────┘                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                     ▼                                    <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>               <span class="text-terminal-amber">tmux server</span>                                <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>                     │                                    <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           ┌─────────┼─────────┐                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>           ▼         ▼         ▼                           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>     <span class="text-terminal-bright">Health</span>    <span class="text-terminal-bright">Memory</span>    <span class="text-terminal-bright">Dashboard</span>                    <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>     <span class="text-terminal-dim">checks</span>    <span class="text-terminal-dim">monitor</span>   <span class="text-terminal-dim">SSE + REST</span>                   <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">└─────────────────────────────────────────────────────────┘</span></code></pre>
+        </div>
+
+        <div class="mt-6 grid gap-4 sm:grid-cols-3">
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">Session Types</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              <code>claude</code> — polls readiness, sends "go"<br>
+              <code>daemon</code> — custom command with env<br>
+              <code>service</code> — headless background process
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Health Checks</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              tmux_alive, http, process, custom.<br>
+              Configurable thresholds + auto-restart.
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan">Memory Pressure</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              Reads /proc/meminfo in real time.<br>
+              Levels: normal &rarr; warning &rarr; critical &rarr; emergency.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Configuration -->
+    <section id="config" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Configuration
+        </h2>
+
+        <p class="mb-4 text-sm text-terminal-dim">
+          Config lives at <code class="text-terminal-green">~/.config/tmx/tmx.toml</code>.
+          Supports <code class="text-terminal-amber">$ENV_VAR</code> expansion and schema validation.
+        </p>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">~/.config/tmx/tmx.toml</div>
+          <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
+            <div class="text-terminal-dim"># Global settings</div>
+            <div><span class="text-terminal-cyan">boot_timeout_s</span> = <span class="text-terminal-amber">120</span></div>
+            <div><span class="text-terminal-cyan">poll_interval_s</span> = <span class="text-terminal-amber">30</span></div>
+            <div><span class="text-terminal-cyan">max_restarts</span> = <span class="text-terminal-amber">3</span></div>
+            <div class="mt-3 text-terminal-dim"># Claude Code session</div>
+            <div><span class="text-terminal-bright">[[session]]</span></div>
+            <div><span class="text-terminal-cyan">name</span> = <span class="text-terminal-green">"my-project"</span></div>
+            <div><span class="text-terminal-cyan">type</span> = <span class="text-terminal-green">"claude"</span></div>
+            <div><span class="text-terminal-cyan">path</span> = <span class="text-terminal-green">"$HOME/git/my-project"</span></div>
+            <div class="mt-3 text-terminal-dim"># Daemon with custom command</div>
+            <div><span class="text-terminal-bright">[[session]]</span></div>
+            <div><span class="text-terminal-cyan">name</span> = <span class="text-terminal-green">"bridge"</span></div>
+            <div><span class="text-terminal-cyan">type</span> = <span class="text-terminal-green">"daemon"</span></div>
+            <div><span class="text-terminal-cyan">command</span> = <span class="text-terminal-green">"node bridge/dist/cli.js"</span></div>
+            <div><span class="text-terminal-cyan">depends_on</span> = [<span class="text-terminal-green">"my-project"</span>]</div>
+            <div class="mt-3 text-terminal-dim"># Health check</div>
+            <div><span class="text-terminal-bright">[session.health]</span></div>
+            <div><span class="text-terminal-cyan">type</span> = <span class="text-terminal-green">"http"</span></div>
+            <div><span class="text-terminal-cyan">url</span> = <span class="text-terminal-green">"http://127.0.0.1:18963/health"</span></div>
+          </div>
+        </div>
+
+        <div class="mt-6 overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <table class="w-full font-[family-name:var(--font-mono)] text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-terminal-border">
+                <th class="px-4 py-3 text-left text-terminal-green">Field</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Type</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { name: "name", type: "string", desc: "Unique session identifier (becomes tmux session name)" },
+                { name: "type", type: "enum", desc: "claude | daemon | service" },
+                { name: "path", type: "string?", desc: "Working directory ($ENV expansion supported)" },
+                { name: "command", type: "string?", desc: "Command to run (daemon/service types)" },
+                { name: "depends_on", type: "string[]", desc: "Sessions that must start first" },
+                { name: "env", type: "object?", desc: "Extra environment variables" },
+                { name: "health", type: "object?", desc: "Health check config (type, url, interval)" },
+                { name: "max_restarts", type: "number?", desc: "Override global restart limit" },
+              ].map((v, i) => (
+                <tr class={i < 7 ? "border-b border-terminal-border/30" : ""}>
+                  <td class="px-4 py-2.5 text-terminal-bright">{v.name}</td>
+                  <td class="px-4 py-2.5 text-terminal-amber">{v.type}</td>
+                  <td class="px-4 py-2.5 text-terminal-dim">{v.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- CLI Commands -->
+    <section id="cli" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> CLI
+        </h2>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="p-4 font-[family-name:var(--font-mono)] text-sm leading-relaxed">
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> tmx boot</span></div>
+            <div class="mt-1 text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> adb fixed</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> cleverkeys started (claude)</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> bridge started (daemon)</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> playwright started (service)</div>
+            <div class="mt-3 text-terminal-dim">~ $<span class="text-terminal-bright"> tmx status</span></div>
+            <div class="mt-1 text-terminal-green">  tmx daemon uptime 4h 23m</div>
+            <div class="text-terminal-dim">  NAME          STATUS    RSS     UPTIME    HEALTH</div>
+            <div class="text-terminal-dim">  cleverkeys    <span class="text-terminal-green">running</span>   245MB   4h 23m    <span class="text-terminal-green">ok</span></div>
+            <div class="text-terminal-dim">  bridge        <span class="text-terminal-green">running</span>   38MB    4h 22m    <span class="text-terminal-green">ok</span></div>
+          </div>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          {[
+            { cmd: "tmx boot", desc: "Start daemon + all sessions in dependency order" },
+            { cmd: "tmx status", desc: "Show daemon uptime, memory, and session table" },
+            { cmd: "tmx health", desc: "Run health checks on all sessions" },
+            { cmd: "tmx go <name>", desc: "Send \"go\" to a Claude session waiting for input" },
+            { cmd: "tmx tabs", desc: "Open Termux tabs for all running sessions" },
+            { cmd: "tmx memory", desc: "Show system memory and per-session RSS" },
+            { cmd: "tmx config", desc: "Validate and display parsed tmx.toml" },
+            { cmd: "tmx shutdown", desc: "Gracefully stop all sessions and the daemon" },
+            { cmd: "tmx migrate", desc: "Convert legacy repos.conf to tmx.toml format" },
+          ].map((c) => (
+            <div class="flex items-baseline gap-3 font-[family-name:var(--font-mono)] text-sm">
+              <code class="text-terminal-green shrink-0">{c.cmd}</code>
+              <span class="text-terminal-dim text-xs">— {c.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section id="dashboard" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Dashboard
+        </h2>
+
+        <p class="mb-6 text-sm text-terminal-dim">
+          Astro 5 + Svelte 5 static site served by the daemon on port <code class="text-terminal-green">18970</code>.
+          Real-time updates via Server-Sent Events. Three pages:
+        </p>
+
+        <div class="grid gap-4 sm:grid-cols-3">
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">Overview</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              System gauges (memory, processes, ADB).<br>
+              Session table with stop/restart/go controls.<br>
+              Collapsible cards for CFC bridge status.
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Memory</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              System memory breakdown.<br>
+              Per-session RSS usage.<br>
+              Android app manager (force-stop apps).
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan">Logs</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              Real-time log tail via SSE.<br>
+              Filter by level and session.<br>
+              Auto-scroll with pause on hover.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- REST API -->
+    <section id="api" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> REST API
+        </h2>
+
+        <p class="mb-6 text-sm text-terminal-dim">
+          All endpoints served on <code class="text-terminal-green">http://127.0.0.1:18970</code>.
+          SSE endpoint pushes state updates in real time.
+        </p>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <table class="w-full font-[family-name:var(--font-mono)] text-xs sm:text-sm">
+            <thead>
+              <tr class="border-b border-terminal-border">
+                <th class="px-4 py-3 text-left text-terminal-green">Endpoint</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Method</th>
+                <th class="px-4 py-3 text-left text-terminal-dim">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { path: "/api/state", method: "GET", desc: "Full daemon state (sessions, memory, health)" },
+                { path: "/api/events", method: "SSE", desc: "Real-time state push via Server-Sent Events" },
+                { path: "/api/start/:name", method: "POST", desc: "Start a stopped session" },
+                { path: "/api/stop/:name", method: "POST", desc: "Stop a running session" },
+                { path: "/api/restart/:name", method: "POST", desc: "Stop + start a session" },
+                { path: "/api/go/:name", method: "POST", desc: "Send \"go\" to a Claude session" },
+                { path: "/api/tab/:name", method: "POST", desc: "Switch tmux client to session + bring Termux to foreground" },
+                { path: "/api/memory", method: "GET", desc: "System memory + per-session RSS" },
+                { path: "/api/processes", method: "GET", desc: "Android app list via adb shell ps" },
+                { path: "/api/kill/:pkg", method: "POST", desc: "Force-stop an Android app" },
+                { path: "/api/adb", method: "GET", desc: "List connected ADB devices" },
+                { path: "/api/adb/connect", method: "POST", desc: "Run wireless ADB scan" },
+              ].map((v, i) => (
+                <tr class={i < 11 ? "border-b border-terminal-border/30" : ""}>
+                  <td class="px-4 py-2.5 text-terminal-bright">{v.path}</td>
+                  <td class={`px-4 py-2.5 ${v.method === "SSE" ? "text-terminal-cyan" : v.method === "POST" ? "text-terminal-amber" : "text-terminal-green"}`}>{v.method}</td>
+                  <td class="px-4 py-2.5 text-terminal-dim">{v.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Session Lifecycle -->
+    <section id="lifecycle" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Session Lifecycle
+        </h2>
+
+        <div class="overflow-x-auto rounded-lg border border-terminal-border bg-terminal-surface p-6">
+          <pre class="font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm"><code><span class="text-terminal-dim">pending</span> <span class="text-terminal-dim">&rarr;</span> <span class="text-terminal-amber">waiting</span> <span class="text-terminal-dim">&rarr;</span> <span class="text-terminal-cyan">starting</span> <span class="text-terminal-dim">&rarr;</span> <span class="text-terminal-green">running</span> <span class="text-terminal-dim">&harr;</span> <span class="text-terminal-amber">degraded</span>
+                                            <span class="text-terminal-dim">│</span>
+                                            <span class="text-terminal-dim">├&rarr;</span> <span class="text-red-400">failed</span>
+                                            <span class="text-terminal-dim">│</span>
+                                            <span class="text-terminal-dim">└&rarr;</span> <span class="text-terminal-dim">stopping &rarr; stopped</span></code></pre>
+        </div>
+
+        <div class="mt-6 space-y-3">
+          {[
+            { state: "pending", color: "text-terminal-dim", desc: "Session defined in config but not yet processed" },
+            { state: "waiting", color: "text-terminal-amber", desc: "Waiting for depends_on sessions to start" },
+            { state: "starting", color: "text-terminal-cyan", desc: "Tmux session created, process launching" },
+            { state: "running", color: "text-terminal-green", desc: "Process active, health checks passing" },
+            { state: "degraded", color: "text-terminal-amber", desc: "Running but health checks failing" },
+            { state: "failed", color: "text-red-400", desc: "Exceeded max_restarts, manual intervention needed" },
+            { state: "stopped", color: "text-terminal-dim", desc: "Gracefully stopped via CLI or API" },
+          ].map((s) => (
+            <div class="flex items-baseline gap-3 font-[family-name:var(--font-mono)] text-sm">
+              <code class={`shrink-0 ${s.color}`}>{s.state}</code>
+              <span class="text-terminal-dim text-xs">— {s.desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Watchdog -->
+    <section id="watchdog" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Watchdog
+        </h2>
+
+        <p class="mb-4 text-sm text-terminal-dim">
+          The <code class="text-terminal-green">watchdog.sh</code> script runs as a bash loop and restarts the daemon
+          if it gets OOM-killed by Android's low memory killer. It also handles the initial boot sequence.
+        </p>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">typical boot flow</div>
+          <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
+            <div class="text-terminal-dim">$ <span class="text-terminal-bright">tmx boot</span></div>
+            <div class="text-terminal-dim">  watchdog.sh starts in background</div>
+            <div class="text-terminal-dim">  watchdog spawns <span class="text-terminal-green">tmx daemon</span></div>
+            <div class="text-terminal-dim">  daemon reads tmx.toml</div>
+            <div class="text-terminal-dim">  dependency sort &rarr; parallel start within each depth</div>
+            <div class="text-terminal-dim">  claude sessions: poll readiness &rarr; send "go"</div>
+            <div class="text-terminal-dim">  health check loop starts (poll_interval_s)</div>
+            <div class="text-terminal-dim">  dashboard available at <span class="text-terminal-green">:18970</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Build & Install -->
+    <section id="install" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Build &amp; Install
+        </h2>
+
+        <div class="space-y-6">
+          {[
+            {
+              step: "1",
+              title: "Clone and install dependencies",
+              code: "git clone https://github.com/tribixbite/termux-tools\ncd termux-tools/orchestrator\nbun install",
+            },
+            {
+              step: "2",
+              title: "Build the bundle",
+              code: "bun run build",
+              note: "Produces dist/tmx.js (~113KB CJS bundle via esbuild).",
+            },
+            {
+              step: "3",
+              title: "Create symlink",
+              code: "mkdir -p ~/.local/bin\nln -sf $(pwd)/dist/tmx.js ~/.local/bin/tmx\nchmod +x ~/.local/bin/tmx",
+              note: "Ensure ~/.local/bin is in your PATH.",
+            },
+            {
+              step: "4",
+              title: "Create config and boot",
+              code: "mkdir -p ~/.config/tmx\n# Edit ~/.config/tmx/tmx.toml (see config section above)\ntmx boot",
+            },
+          ].map((s) => (
+            <div class="flex gap-4">
+              <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-terminal-green/30 font-[family-name:var(--font-mono)] text-sm text-terminal-green">
+                {s.step}
+              </div>
+              <div class="flex-1">
+                <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-bright">{s.title}</h3>
+                {s.code && (
+                  <div class="mb-2 overflow-hidden rounded border border-terminal-border bg-terminal-surface px-4 py-2.5 font-[family-name:var(--font-mono)] text-xs text-terminal-text">
+                    {s.code.split("\n").map((line: string) => (
+                      <div class={line.startsWith("#") ? "text-terminal-dim" : ""}>
+                        {!line.startsWith("#") && <span class="text-terminal-dim">$ </span>}{line}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {s.note && (
+                  <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{s.note}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <!-- Requirements -->
+    <section id="requirements" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Requirements
+        </h2>
+
+        <div class="flex flex-wrap gap-3">
+          {[
+            { name: "Android device", required: true },
+            { name: "Termux", required: true },
+            { name: "tmux", required: true },
+            { name: "Bun runtime", required: true },
+            { name: "Node.js 18+", required: true, note: "for esbuild" },
+            { name: "ADB", required: false, note: "for dashboard process manager" },
+          ].map((r) => (
+            <span class={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs
+              ${r.required
+                ? "border-terminal-green/30 bg-terminal-green/5 text-terminal-green"
+                : "border-terminal-border text-terminal-dim"
+              }`}>
+              <span class={r.required ? "text-terminal-green" : "text-terminal-dim"}>
+                {r.required ? "●" : "○"}
+              </span>
+              {r.name}
+            </span>
+          ))}
+        </div>
+
+        <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          <span class="text-terminal-green">●</span> required &nbsp;
+          <span class="text-terminal-dim">○</span> optional
+        </p>
+      </div>
+    </section>
+  </main>
+  <Footer />
+</Layout>
