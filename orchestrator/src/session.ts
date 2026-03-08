@@ -7,7 +7,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
 import type { Logger } from "./log.js";
@@ -177,9 +177,9 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
 
   log.info(`Created tmux session '${name}'`, { session: name, type, path });
 
-  // Set tmux to propagate session name as terminal tab title
-  tmux("set-option", "-t", name, "set-titles", "on");
-  tmux("set-option", "-t", name, "set-titles-string", "#S");
+  // Ensure tmux propagates session name as terminal tab title (global option)
+  tmux("set-option", "-g", "set-titles", "on");
+  tmux("set-option", "-g", "set-titles-string", "#S");
 
   // Start the appropriate process inside the session
   switch (type) {
@@ -303,72 +303,73 @@ export function getAttachedClients(name: string): number {
 }
 
 /**
- * Open a Termux tab attached to a tmux session.
+ * Bring a tmux session to the visible Termux foreground.
  *
- * Uses $PREFIX/bin/am (app_process wrapper) to call RunCommandService with
- * BACKGROUND=false, which creates a visible foreground Termux tab.
- * Note: ADB's `am` lacks the RUN_COMMAND permission, and `termux-am` socket
- * IPC is often unavailable — only $PREFIX/bin/am works reliably.
+ * Strategy: find any existing tmux client and switch it to the target session
+ * via `tmux switch-client`. With `set-titles on` (global), tmux automatically
+ * updates the outer terminal title to the session name (#S).
+ *
+ * RunCommandService tab creation is unreliable on Android 15+ (foreground
+ * service restrictions silently block new session creation from background
+ * contexts), so we avoid it entirely.
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
   const env = amEnv();
-  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const bash = join(prefix, "bin", "bash");
 
-  // Ensure tmux propagates session name as terminal title
-  tmux("set-option", "-t", sessionName, "set-titles", "on");
-  tmux("set-option", "-t", sessionName, "set-titles-string", "#S");
+  // Ensure tmux propagates session name as outer terminal title
+  tmux("set-option", "-g", "set-titles", "on");
+  tmux("set-option", "-g", "set-titles-string", "#S");
 
-  // Check if a tmux client is already attached to this session
-  const clients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
-  if (clients && clients.trim().length > 0) {
-    // Already attached — just bring Termux to foreground
+  // Check if there's already a client on this exact session
+  const targetClients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
+  if (targetClients && targetClients.trim().length > 0) {
     log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
-    const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+    // Write title escape to ensure tab label is correct
+    const clientTty = targetClients.trim().split("\n")[0];
+    try { writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`); } catch { /* ignore */ }
+    const actArgs = ["start", "-a", "android.intent.action.MAIN",
+      "-c", "android.intent.category.LAUNCHER",
+      "-n", "com.termux/com.termux.app.TermuxActivity"];
     spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
     return true;
   }
 
-  // Write a tiny attach script that sets the Termux tab title before attaching.
-  // --esa comma escaping makes inline args fragile; a script file is reliable.
-  // tmux overrides terminal title on attach, so we enable set-titles within
-  // the session so tmux itself writes the ESC ]0; title sequence.
-  const scriptPath = join(prefix, "tmp", `tmx-tab-${sessionName}.sh`);
-  const script = [
-    `#!/data/data/com.termux/files/usr/bin/bash`,
-    `# Enable tmux title propagation for this session, then attach`,
-    `${TMUX_BIN} set-option -t ${sessionName} set-titles on 2>/dev/null`,
-    `${TMUX_BIN} set-option -t ${sessionName} set-titles-string '#S' 2>/dev/null`,
-    `printf '\\033]0;${sessionName}\\007'`,
-    `exec ${TMUX_BIN} attach-session -t ${sessionName}`,
-  ].join("\n");
-  try {
-    const { writeFileSync, chmodSync } = require("fs");
-    writeFileSync(scriptPath, script);
-    chmodSync(scriptPath, 0o755);
-  } catch (e) {
-    log.warn(`Failed to write tab script: ${(e as Error).message}`, { session: sessionName });
-  }
+  // Find ANY existing tmux client to switch
+  const allClients = tmux("list-clients", "-F", "#{client_name}:#{client_tty}");
+  if (allClients && allClients.trim().length > 0) {
+    const firstClient = allClients.trim().split("\n")[0];
+    const colonIdx = firstClient.indexOf(":");
+    const clientName = firstClient.substring(0, colonIdx);
+    const clientTty = firstClient.substring(colonIdx + 1);
 
-  // RunCommandService BACKGROUND=false creates a visible tab
-  const svcArgs = [
-    "startservice", "--user", "0",
-    "-n", "com.termux/com.termux.app.RunCommandService",
-    "-a", "com.termux.RUN_COMMAND",
-    "--es", "com.termux.RUN_COMMAND_PATH", bash,
-    "--esa", "com.termux.RUN_COMMAND_ARGUMENTS", scriptPath,
-    "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
-  ];
+    const switched = tmux("switch-client", "-c", clientName, "-t", sessionName);
+    if (switched !== null) {
+      log.info(`Switched client '${clientName}' to session '${sessionName}'`, { session: sessionName });
+      // Force tmux to resend title escape to the terminal
+      tmux("refresh-client", "-c", clientName);
+    } else {
+      log.warn(`Failed to switch client to '${sessionName}', falling back to attach`, { session: sessionName });
+    }
 
-  const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore", env });
-  if (result.status !== 0) {
-    log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
+    // Write OSC title escape directly to the client's PTY as fallback.
+    // Termux reads \033]0;title\007 and updates the tab label.
+    try {
+      writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`);
+      log.debug(`Wrote title escape to ${clientTty}`, { session: sessionName });
+    } catch {
+      log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
+    }
+  } else {
+    // No tmux clients exist — user may need to manually run tmux attach.
+    log.warn(`No tmux clients found, cannot switch to '${sessionName}'`, { session: sessionName });
   }
 
   // Bring Termux to foreground
-  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+  const actArgs = ["start", "-a", "android.intent.action.MAIN",
+    "-c", "android.intent.category.LAUNCHER",
+    "-n", "com.termux/com.termux.app.TermuxActivity"];
   spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
-  log.info(`Opened Termux tab for '${sessionName}'`, { session: sessionName });
+  log.info(`Brought Termux to foreground for '${sessionName}'`, { session: sessionName });
 
   return true;
 }

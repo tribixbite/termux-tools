@@ -1179,6 +1179,8 @@ function createSession(config, log) {
     return false;
   }
   log.info(`Created tmux session '${name}'`, { session: name, type, path });
+  tmux("set-option", "-g", "set-titles", "on");
+  tmux("set-option", "-g", "set-titles-string", "#S");
   switch (type) {
     case "claude":
       sendKeys(name, "node $(readlink -f $(which claude)) --dangerously-skip-permissions", true);
@@ -1255,54 +1257,61 @@ async function stopSession(name, log, timeoutMs = 1e4) {
 }
 function createTermuxTab(sessionName, log) {
   const env = amEnv();
-  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const bash = (0, import_node_path2.join)(prefix, "bin", "bash");
-  const clients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
-  if (clients && clients.trim().length > 0) {
+  tmux("set-option", "-g", "set-titles", "on");
+  tmux("set-option", "-g", "set-titles-string", "#S");
+  const targetClients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
+  if (targetClients && targetClients.trim().length > 0) {
     log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
-    const actArgs2 = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+    const clientTty = targetClients.trim().split("\n")[0];
+    try {
+      (0, import_node_fs5.writeFileSync)(clientTty, `\x1B]0;${sessionName}\x07`);
+    } catch {
+    }
+    const actArgs2 = [
+      "start",
+      "-a",
+      "android.intent.action.MAIN",
+      "-c",
+      "android.intent.category.LAUNCHER",
+      "-n",
+      "com.termux/com.termux.app.TermuxActivity"
+    ];
     (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs2, { timeout: 3e3, stdio: "ignore", env });
     return true;
   }
-  const scriptPath = (0, import_node_path2.join)(prefix, "tmp", `tmx-tab-${sessionName}.sh`);
-  const script = [
-    `#!/data/data/com.termux/files/usr/bin/bash`,
-    `# Set Termux tab title (ESC ]0; title BEL)`,
-    `printf '\\033]0;${sessionName}\\007'`,
-    `exec ${TMUX_BIN} attach-session -t ${sessionName}`
-  ].join("\n");
-  try {
-    const { writeFileSync: writeFileSync3, chmodSync } = require("fs");
-    writeFileSync3(scriptPath, script);
-    chmodSync(scriptPath, 493);
-  } catch (e) {
-    log.warn(`Failed to write tab script: ${e.message}`, { session: sessionName });
+  const allClients = tmux("list-clients", "-F", "#{client_name}:#{client_tty}");
+  if (allClients && allClients.trim().length > 0) {
+    const firstClient = allClients.trim().split("\n")[0];
+    const colonIdx = firstClient.indexOf(":");
+    const clientName = firstClient.substring(0, colonIdx);
+    const clientTty = firstClient.substring(colonIdx + 1);
+    const switched = tmux("switch-client", "-c", clientName, "-t", sessionName);
+    if (switched !== null) {
+      log.info(`Switched client '${clientName}' to session '${sessionName}'`, { session: sessionName });
+      tmux("refresh-client", "-c", clientName);
+    } else {
+      log.warn(`Failed to switch client to '${sessionName}', falling back to attach`, { session: sessionName });
+    }
+    try {
+      (0, import_node_fs5.writeFileSync)(clientTty, `\x1B]0;${sessionName}\x07`);
+      log.debug(`Wrote title escape to ${clientTty}`, { session: sessionName });
+    } catch {
+      log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
+    }
+  } else {
+    log.warn(`No tmux clients found, cannot switch to '${sessionName}'`, { session: sessionName });
   }
-  const svcArgs = [
-    "startservice",
-    "--user",
-    "0",
-    "-n",
-    "com.termux/com.termux.app.RunCommandService",
+  const actArgs = [
+    "start",
     "-a",
-    "com.termux.RUN_COMMAND",
-    "--es",
-    "com.termux.RUN_COMMAND_PATH",
-    bash,
-    "--esa",
-    "com.termux.RUN_COMMAND_ARGUMENTS",
-    scriptPath,
-    "--ez",
-    "com.termux.RUN_COMMAND_BACKGROUND",
-    "false"
+    "android.intent.action.MAIN",
+    "-c",
+    "android.intent.category.LAUNCHER",
+    "-n",
+    "com.termux/com.termux.app.TermuxActivity"
   ];
-  const result = (0, import_node_child_process3.spawnSync)(AM_BIN, svcArgs, { timeout: 5e3, stdio: "ignore", env });
-  if (result.status !== 0) {
-    log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
-  }
-  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
   (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs, { timeout: 3e3, stdio: "ignore", env });
-  log.info(`Opened Termux tab for '${sessionName}'`, { session: sessionName });
+  log.info(`Brought Termux to foreground for '${sessionName}'`, { session: sessionName });
   return true;
 }
 function sleep(ms) {
