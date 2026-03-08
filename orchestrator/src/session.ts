@@ -7,7 +7,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
 import type { Logger } from "./log.js";
@@ -360,8 +360,22 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
       log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
     }
   } else {
-    // No tmux clients exist — user may need to manually run tmux attach.
-    log.warn(`No tmux clients found, cannot switch to '${sessionName}'`, { session: sessionName });
+    // No tmux clients exist — find a standalone Termux bash session and
+    // inject a `tmux attach` command to create a client on the target session.
+    const standalonePty = findStandaloneTermuxPty();
+    if (standalonePty) {
+      log.info(`No tmux clients — injecting attach command to ${standalonePty}`, { session: sessionName });
+      try {
+        // Write title escape + tmux attach command to the PTY.
+        // Using `exec` replaces the bash shell with the tmux client.
+        const cmd = `\x1b]0;${sessionName}\x07exec ${TMUX_BIN} attach-session -t ${sessionName}\n`;
+        writeFileSync(standalonePty, cmd);
+      } catch (e) {
+        log.warn(`Failed to inject attach to ${standalonePty}: ${(e as Error).message}`, { session: sessionName });
+      }
+    } else {
+      log.warn(`No tmux clients and no standalone Termux sessions found`, { session: sessionName });
+    }
   }
 
   // Bring Termux to foreground
@@ -372,6 +386,38 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
   log.info(`Brought Termux to foreground for '${sessionName}'`, { session: sessionName });
 
   return true;
+}
+
+/**
+ * Find a standalone Termux bash session PTY (not inside tmux).
+ * Scans /proc for bash login shells whose environment lacks TMUX=.
+ * Returns the PTY path (e.g. /dev/pts/3) or null if none found.
+ */
+function findStandaloneTermuxPty(): string | null {
+  try {
+    const entries = readdirSync("/proc").filter((e) => /^\d+$/.test(e));
+    for (const pid of entries) {
+      try {
+        const comm = readFileSync(join("/proc", pid, "comm"), "utf-8").trim();
+        if (comm !== "bash") continue;
+
+        // Check cmdline for login shell (-bash or bash -l)
+        const cmdline = readFileSync(join("/proc", pid, "cmdline"), "utf-8");
+        if (!cmdline.includes("-bash") && !cmdline.includes("-l")) continue;
+
+        // Skip if TMUX is set (means it's inside a tmux pane)
+        const environ = readFileSync(join("/proc", pid, "environ"), "utf-8");
+        if (environ.includes("TMUX=")) continue;
+
+        // Get the PTY
+        const tty = readlinkSync(join("/proc", pid, "fd", "0"));
+        if (tty.startsWith("/dev/pts/")) return tty;
+      } catch {
+        continue; // permission denied or process gone
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 /** Promise-based sleep */
