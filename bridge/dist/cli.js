@@ -4597,7 +4597,7 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, ADB_SERIAL, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, pendingToolQueue, HTTP_TOOL_TIMEOUT_MS, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, ADB_SERIAL, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, pendingToolQueue, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
     init_import_meta_shim();
@@ -5327,6 +5327,8 @@ var init_claude_chrome_bridge = __esm({
     }
     pendingToolQueue = [];
     HTTP_TOOL_TIMEOUT_MS = 3e4;
+    lastToolName = null;
+    lastToolTime = null;
     nativeHost = null;
     stdoutDecoder = new NativeMessageDecoder();
     wsClients = /* @__PURE__ */ new Set();
@@ -5343,7 +5345,9 @@ var init_claude_chrome_bridge = __esm({
               nativeHost: nativeHost !== null,
               clients: wsClients.size,
               uptime: process.uptime(),
-              cdp: cdpManager.getStatus()
+              cdp: cdpManager.getStatus(),
+              lastTool: lastToolName,
+              lastToolTime
             }),
             { headers: { "Content-Type": "application/json" } }
           );
@@ -5493,6 +5497,8 @@ var init_claude_chrome_bridge = __esm({
               params: body.params ?? {}
             });
             const queuePos = pendingToolQueue.length;
+            lastToolName = body.method;
+            lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
             log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
             const result = await new Promise((resolve3) => {
               const timeout = setTimeout(() => {

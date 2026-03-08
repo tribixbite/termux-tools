@@ -1077,6 +1077,12 @@ function resolveTermuxBin(name) {
 }
 var TERMUX_AM_BIN = resolveTermuxBin("termux-am");
 var AM_BIN = resolveTermuxBin("am");
+var TMUX_BIN = resolveTermuxBin("tmux");
+function amEnv() {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const ldPreload = (0, import_node_path2.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
+  return { ...process.env, LD_PRELOAD: ldPreload };
+}
 var CLAUDE_READY_TIMEOUT = 3e4;
 var CLAUDE_POLL_INTERVAL = 500;
 var CLAUDE_READY_PATTERNS = [
@@ -1110,7 +1116,7 @@ function getCleanEnv() {
 }
 function tmux(...args2) {
   try {
-    const result = (0, import_node_child_process3.spawnSync)("tmux", args2, {
+    const result = (0, import_node_child_process3.spawnSync)(TMUX_BIN, args2, {
       encoding: "utf-8",
       timeout: 1e4,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1123,7 +1129,7 @@ function tmux(...args2) {
   }
 }
 function isTmuxServerAlive() {
-  const result = (0, import_node_child_process3.spawnSync)("tmux", ["start-server"], {
+  const result = (0, import_node_child_process3.spawnSync)(TMUX_BIN, ["start-server"], {
     timeout: 5e3,
     stdio: "ignore",
     env: getCleanEnv()
@@ -1136,7 +1142,7 @@ function listTmuxSessions() {
   return output.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function sessionExists(name) {
-  const result = (0, import_node_child_process3.spawnSync)("tmux", ["has-session", "-t", name], {
+  const result = (0, import_node_child_process3.spawnSync)(TMUX_BIN, ["has-session", "-t", name], {
     timeout: 5e3,
     stdio: "ignore",
     env: getCleanEnv()
@@ -1163,7 +1169,7 @@ function createSession(config, log) {
   if (path) {
     createArgs.push("-c", path);
   }
-  const result = (0, import_node_child_process3.spawnSync)("tmux", createArgs, {
+  const result = (0, import_node_child_process3.spawnSync)(TMUX_BIN, createArgs, {
     timeout: 1e4,
     stdio: "ignore",
     env: getCleanEnv()
@@ -1175,7 +1181,7 @@ function createSession(config, log) {
   log.info(`Created tmux session '${name}'`, { session: name, type, path });
   switch (type) {
     case "claude":
-      sendKeys(name, "claude --dangerously-skip-permissions", true);
+      sendKeys(name, "node $(readlink -f $(which claude)) --dangerously-skip-permissions", true);
       break;
     case "daemon":
       if (command2) {
@@ -1248,44 +1254,56 @@ async function stopSession(name, log, timeoutMs = 1e4) {
   return stopped;
 }
 function createTermuxTab(sessionName, log) {
-  const attachCmd = `printf '\\033]0;${sessionName}\\007' && tmux attach -t '${sessionName}'`;
+  const env = amEnv();
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const bash = (0, import_node_path2.join)(prefix, "bin", "bash");
+  const clients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
+  if (clients && clients.trim().length > 0) {
+    log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
+    const actArgs2 = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+    (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs2, { timeout: 3e3, stdio: "ignore", env });
+    return true;
+  }
+  const scriptPath = (0, import_node_path2.join)(prefix, "tmp", `tmx-tab-${sessionName}.sh`);
+  const script = [
+    `#!/data/data/com.termux/files/usr/bin/bash`,
+    `# Set Termux tab title (ESC ]0; title BEL)`,
+    `printf '\\033]0;${sessionName}\\007'`,
+    `exec ${TMUX_BIN} attach-session -t ${sessionName}`
+  ].join("\n");
+  try {
+    const { writeFileSync: writeFileSync3, chmodSync } = require("fs");
+    writeFileSync3(scriptPath, script);
+    chmodSync(scriptPath, 493);
+  } catch (e) {
+    log.warn(`Failed to write tab script: ${e.message}`, { session: sessionName });
+  }
   const svcArgs = [
     "startservice",
+    "--user",
+    "0",
     "-n",
     "com.termux/com.termux.app.RunCommandService",
     "-a",
     "com.termux.RUN_COMMAND",
     "--es",
     "com.termux.RUN_COMMAND_PATH",
-    "/data/data/com.termux/files/usr/bin/bash",
+    bash,
     "--esa",
     "com.termux.RUN_COMMAND_ARGUMENTS",
-    `-c,${attachCmd}`,
+    scriptPath,
     "--ez",
     "com.termux.RUN_COMMAND_BACKGROUND",
-    "false",
-    "--es",
-    "com.termux.RUN_COMMAND_SESSION_ACTION",
-    "0"
+    "false"
   ];
-  const amResult = (0, import_node_child_process3.spawnSync)(TERMUX_AM_BIN, svcArgs, {
-    timeout: 5e3,
-    stdio: "ignore"
-  });
-  if (amResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via termux-am`, { session: sessionName });
-    return true;
+  const result = (0, import_node_child_process3.spawnSync)(AM_BIN, svcArgs, { timeout: 5e3, stdio: "ignore", env });
+  if (result.status !== 0) {
+    log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
   }
-  const fallbackResult = (0, import_node_child_process3.spawnSync)(AM_BIN, svcArgs, {
-    timeout: 5e3,
-    stdio: "ignore"
-  });
-  if (fallbackResult.status === 0) {
-    log.debug(`Created Termux tab for '${sessionName}' via am`, { session: sessionName });
-    return true;
-  }
-  log.error(`Failed to create Termux tab for '${sessionName}'`, { session: sessionName });
-  return false;
+  const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
+  (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs, { timeout: 3e3, stdio: "ignore", env });
+  log.info(`Opened Termux tab for '${sessionName}'`, { session: sessionName });
+  return true;
 }
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -2212,7 +2230,7 @@ var Daemon = class _Daemon {
   /** Adopt existing tmux sessions on daemon restart */
   adoptExistingSessions() {
     if (!isTmuxServerAlive()) return;
-    const existingSessions = listTmuxSessions();
+    const existingSessions = new Set(listTmuxSessions());
     const configuredNames = new Set(this.config.sessions.map((s) => s.name));
     for (const name of existingSessions) {
       if (!configuredNames.has(name)) continue;
@@ -2223,6 +2241,14 @@ var Daemon = class _Daemon {
         if (!s.uptime_start) {
           this.state.getSession(name).uptime_start = (/* @__PURE__ */ new Date()).toISOString();
         }
+      }
+    }
+    for (const cfg of this.config.sessions) {
+      const s = this.state.getSession(cfg.name);
+      if (!s) continue;
+      if ((s.status === "stopping" || s.status === "starting") && !existingSessions.has(cfg.name)) {
+        this.log.info(`Recovering stale '${s.status}' session '${cfg.name}' \u2192 stopped`, { session: cfg.name });
+        this.state.forceStatus(cfg.name, "stopped");
       }
     }
   }
@@ -2587,6 +2613,19 @@ var Daemon = class _Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Package name required" } };
           return this.forceStopApp(name);
+        case "adb":
+          if (!name) {
+            return { status: 200, data: this.getAdbDevices() };
+          }
+          if (name === "connect") {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.adbWirelessConnect();
+          }
+          if (name === "disconnect") {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.adbDisconnectAll();
+          }
+          return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -2756,6 +2795,63 @@ var Daemon = class _Daemon {
       return { status: 200, data: { ok: true, pkg } };
     } catch (err) {
       return { status: 500, data: { error: `Failed to stop ${pkg}: ${err.message}` } };
+    }
+  }
+  // -- ADB device management --------------------------------------------------
+  /** List connected ADB devices */
+  getAdbDevices() {
+    try {
+      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, ["devices"], {
+        encoding: "utf-8",
+        timeout: 5e3,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      if (result.status !== 0 || !result.stdout) return { devices: [] };
+      const devices = result.stdout.split("\n").slice(1).filter((l) => l.includes("	")).map((l) => {
+        const [serial, state] = l.split("	");
+        return { serial: serial.trim(), state: state.trim() };
+      });
+      return { devices };
+    } catch {
+      return { devices: [] };
+    }
+  }
+  /** Initiate ADB wireless connection using the adbc script */
+  adbWirelessConnect() {
+    const script = (0, import_node_path4.join)(
+      process.env.HOME ?? "/data/data/com.termux/files/home",
+      "git/termux-tools/tools/adb-wireless-connect.sh"
+    );
+    try {
+      const result = (0, import_node_child_process6.spawnSync)("bash", [script], {
+        encoding: "utf-8",
+        timeout: 2e4,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, PATH: process.env.PATH }
+      });
+      const output = (result.stdout ?? "") + (result.stderr ?? "");
+      if (output.includes("connected") || output.includes("Reconnected")) {
+        this.adbSerial = null;
+        this.adbSerialExpiry = 0;
+        return { status: 200, data: { ok: true, message: output.trim().split("\n").pop() } };
+      }
+      return { status: 500, data: { ok: false, message: output.trim().split("\n").pop() || "Connection failed" } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: err.message } };
+    }
+  }
+  /** Disconnect all ADB devices */
+  adbDisconnectAll() {
+    try {
+      (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", "-a"], {
+        timeout: 5e3,
+        stdio: "ignore"
+      });
+      this.adbSerial = null;
+      this.adbSerialExpiry = 0;
+      return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: err.message } };
     }
   }
   // -- Cron -------------------------------------------------------------------

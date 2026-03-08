@@ -177,6 +177,10 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
 
   log.info(`Created tmux session '${name}'`, { session: name, type, path });
 
+  // Set tmux to propagate session name as terminal tab title
+  tmux("set-option", "-t", name, "set-titles", "on");
+  tmux("set-option", "-t", name, "set-titles-string", "#S");
+
   // Start the appropriate process inside the session
   switch (type) {
     case "claude":
@@ -311,6 +315,10 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
   const bash = join(prefix, "bin", "bash");
 
+  // Ensure tmux propagates session name as terminal title
+  tmux("set-option", "-t", sessionName, "set-titles", "on");
+  tmux("set-option", "-t", sessionName, "set-titles-string", "#S");
+
   // Check if a tmux client is already attached to this session
   const clients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
   if (clients && clients.trim().length > 0) {
@@ -323,10 +331,14 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
 
   // Write a tiny attach script that sets the Termux tab title before attaching.
   // --esa comma escaping makes inline args fragile; a script file is reliable.
+  // tmux overrides terminal title on attach, so we enable set-titles within
+  // the session so tmux itself writes the ESC ]0; title sequence.
   const scriptPath = join(prefix, "tmp", `tmx-tab-${sessionName}.sh`);
   const script = [
     `#!/data/data/com.termux/files/usr/bin/bash`,
-    `# Set Termux tab title (ESC ]0; title BEL)`,
+    `# Enable tmux title propagation for this session, then attach`,
+    `${TMUX_BIN} set-option -t ${sessionName} set-titles on 2>/dev/null`,
+    `${TMUX_BIN} set-option -t ${sessionName} set-titles-string '#S' 2>/dev/null`,
     `printf '\\033]0;${sessionName}\\007'`,
     `exec ${TMUX_BIN} attach-session -t ${sessionName}`,
   ].join("\n");
