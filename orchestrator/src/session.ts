@@ -25,6 +25,18 @@ const TERMUX_AM_BIN = resolveTermuxBin("termux-am");
 const AM_BIN = resolveTermuxBin("am");
 const TMUX_BIN = resolveTermuxBin("tmux");
 
+/**
+ * Environment for am/termux-am commands.
+ * Bun's glibc runner strips LD_PRELOAD, but the Termux exec interceptor
+ * (libtermux-exec-ld-preload.so) is required for app_process to work.
+ * Without it, `am` silently succeeds (exit 0) but does nothing.
+ */
+function amEnv(): NodeJS.ProcessEnv {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const ldPreload = join(prefix, "lib", "libtermux-exec-ld-preload.so");
+  return { ...process.env, LD_PRELOAD: ldPreload };
+}
+
 /** Timeout for Claude Code readiness polling (ms) */
 const CLAUDE_READY_TIMEOUT = 30_000;
 /** Interval between readiness polls (ms) */
@@ -305,17 +317,16 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
     "--ez", "com.termux.RUN_COMMAND_BACKGROUND", "false",
   ];
 
-  const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore" });
+  const env = amEnv();
+  const result = spawnSync(AM_BIN, svcArgs, { timeout: 5000, stdio: "ignore", env });
   if (result.status !== 0) {
     log.warn(`RunCommandService failed for '${sessionName}'`, { session: sessionName });
-  } else {
-    log.info(`Created Termux tab for '${sessionName}'`, { session: sessionName });
   }
 
-  // Always bring Termux to foreground — RunCommandService creates the tab
-  // but doesn't switch the visible app
+  // Bring Termux to foreground
   const actArgs = ["start", "-n", "com.termux/com.termux.app.TermuxActivity"];
-  spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore" });
+  spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
+  log.info(`Opened Termux tab for '${sessionName}'`, { session: sessionName });
 
   return true;
 }
