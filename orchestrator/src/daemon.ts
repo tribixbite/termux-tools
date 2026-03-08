@@ -158,13 +158,15 @@ export class Daemon {
     this.log.info("Boot sequence starting");
     this.wake.evaluate("boot_start");
 
+    const bootDeadline = Date.now() + this.config.orchestrator.boot_timeout_s * 1000;
+
     // Step 1: ADB fix
     if (this.config.adb.enabled) {
       await this.fixAdb();
     }
 
-    // Step 2: Start sessions in dependency order
-    await this.startAllSessions();
+    // Step 2: Start sessions in dependency order (with boot timeout)
+    const timedOut = await this.startAllSessions(bootDeadline);
 
     // Step 3: Start cron daemon if not running
     this.startCron();
@@ -177,8 +179,13 @@ export class Daemon {
     const runningCount = Object.values(this.state.getState().sessions)
       .filter((s) => s.status === "running").length;
 
-    this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-    notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+    if (timedOut) {
+      this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`);
+    } else {
+      this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+    }
   }
 
   /** Graceful shutdown — reverse-order stop, release wake lock, exit */
@@ -234,11 +241,26 @@ export class Daemon {
 
   // -- Session management -----------------------------------------------------
 
-  /** Start all enabled sessions in dependency order */
-  private async startAllSessions(): Promise<void> {
+  /**
+   * Start all enabled sessions in dependency order.
+   * Returns true if boot_timeout_s was exceeded (remaining sessions skipped).
+   */
+  private async startAllSessions(deadline: number): Promise<boolean> {
     const batches = computeStartupOrder(this.config.sessions);
 
     for (const batch of batches) {
+      // Check boot timeout before each batch
+      if (Date.now() >= deadline) {
+        this.log.warn(`Boot timeout reached, skipping batch depth=${batch.depth}: ${batch.sessions.join(", ")}`);
+        for (const name of batch.sessions) {
+          const s = this.state.getSession(name);
+          if (s && (s.status === "pending" || s.status === "waiting")) {
+            this.state.transition(name, "failed", "Boot timeout exceeded");
+          }
+        }
+        return true;
+      }
+
       this.log.info(`Starting batch depth=${batch.depth}: ${batch.sessions.join(", ")}`);
 
       // Start all sessions in this batch in parallel
@@ -248,6 +270,8 @@ export class Daemon {
       // Brief pause between batches for stability
       await sleep(500);
     }
+
+    return false;
   }
 
   /** Start a single session by name */
