@@ -430,6 +430,7 @@ export class Daemon {
   /**
    * Resolve the active ADB device serial (needed when multiple devices are listed).
    * Caches with a short TTL so reconnects with new ports are picked up.
+   * Auto-disconnects stale offline/unauthorized entries to prevent confusion.
    */
   private resolveAdbSerial(): string | null {
     const now = Date.now();
@@ -441,19 +442,34 @@ export class Daemon {
         stdio: ["ignore", "pipe", "pipe"],
       });
       if (result.status !== 0 || !result.stdout) return null;
-      // Parse lines like "10.0.0.131:40267\tdevice"
-      const devices = result.stdout
-        .split("\n")
-        .filter((l) => l.endsWith("\tdevice"))
-        .map((l) => l.split("\t")[0]);
-      if (devices.length === 0) {
+
+      const lines = result.stdout.split("\n").filter((l) => l.includes("\t"));
+      const online: string[] = [];
+      const stale: string[] = [];
+
+      for (const line of lines) {
+        const [serial, state] = line.split("\t");
+        if (state?.trim() === "device") {
+          online.push(serial.trim());
+        } else if (state?.trim() === "offline" || state?.trim() === "unauthorized") {
+          stale.push(serial.trim());
+        }
+      }
+
+      // Auto-disconnect stale entries to prevent "more than one device" errors
+      for (const serial of stale) {
+        this.log.debug(`Disconnecting stale ADB device: ${serial}`);
+        spawnSync(ADB_BIN, ["disconnect", serial], { timeout: 3000, stdio: "ignore" });
+      }
+
+      if (online.length === 0) {
         this.adbSerial = null;
         return null;
       }
-      if (devices.length > 1) {
-        this.log.debug(`Multiple ADB devices, using ${devices[0]}`);
+      if (online.length > 1) {
+        this.log.debug(`Multiple ADB devices, using ${online[0]}`);
       }
-      this.adbSerial = devices[0];
+      this.adbSerial = online[0];
       this.adbSerialExpiry = now + Daemon.ADB_SERIAL_TTL_MS;
       return this.adbSerial;
     } catch {
@@ -890,6 +906,9 @@ export class Daemon {
           }
           if (name === "disconnect") {
             if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            // /api/adb/disconnect/:serial — disconnect specific device
+            const serial = segments[2] ? decodeURIComponent(segments[2]) : undefined;
+            if (serial) return this.adbDisconnectDevice(serial);
             return this.adbDisconnectAll();
           }
           return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
@@ -1138,6 +1157,24 @@ export class Daemon {
       this.adbSerial = null;
       this.adbSerialExpiry = 0;
       return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: (err as Error).message } };
+    }
+  }
+
+  /** Disconnect a specific ADB device by serial */
+  private adbDisconnectDevice(serial: string): { status: number; data: unknown } {
+    try {
+      const result = spawnSync(ADB_BIN, ["disconnect", serial], {
+        encoding: "utf-8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      // Invalidate cached serial since the active device may have changed
+      this.adbSerial = null;
+      this.adbSerialExpiry = 0;
+      const output = (result.stdout ?? "").trim();
+      return { status: 200, data: { ok: true, serial, message: output } };
     } catch (err) {
       return { status: 500, data: { ok: false, message: (err as Error).message } };
     }

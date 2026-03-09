@@ -213,7 +213,17 @@ export async function adbConnect(): Promise<{ ok: boolean; message?: string }> {
   }
 }
 
-/** Disconnect ADB */
+/** Disconnect all ADB devices */
 export async function adbDisconnect(): Promise<void> {
   await fetch("/api/adb/disconnect", { method: "POST" });
+}
+
+/** Disconnect a specific ADB device by serial */
+export async function adbDisconnectDevice(serial: string): Promise<{ ok: boolean; message?: string }> {
+  try {
+    const res = await fetch(`/api/adb/disconnect/${encodeURIComponent(serial)}`, { method: "POST" });
+    return res.json();
+  } catch {
+    return { ok: false, message: "Request failed" };
+  }
 }

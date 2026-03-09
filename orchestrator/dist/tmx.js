@@ -1290,7 +1290,7 @@ function createTermuxTab(sessionName, log) {
       log.info(`Switched client '${clientName}' to session '${sessionName}'`, { session: sessionName });
       tmux("refresh-client", "-c", clientName);
     } else {
-      log.warn(`Failed to switch client to '${sessionName}', falling back to attach`, { session: sessionName });
+      log.warn(`Failed to switch client to '${sessionName}'`, { session: sessionName });
     }
     try {
       (0, import_node_fs5.writeFileSync)(clientTty, `\x1B]0;${sessionName}\x07`);
@@ -1299,7 +1299,7 @@ function createTermuxTab(sessionName, log) {
       log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
     }
   } else {
-    log.warn(`No tmux clients found, cannot switch to '${sessionName}'`, { session: sessionName });
+    log.warn(`No tmux clients found \u2014 open Termux and run: tmux attach -t ${sessionName}`, { session: sessionName });
   }
   const actArgs = [
     "start",
@@ -2090,17 +2090,23 @@ var Daemon = class _Daemon {
   async boot() {
     this.log.info("Boot sequence starting");
     this.wake.evaluate("boot_start");
+    const bootDeadline = Date.now() + this.config.orchestrator.boot_timeout_s * 1e3;
     if (this.config.adb.enabled) {
       await this.fixAdb();
     }
-    await this.startAllSessions();
+    const timedOut = await this.startAllSessions(bootDeadline);
     this.startCron();
     this.state.setBootComplete(true);
     this.wake.evaluate("boot_end", this.state.getState().sessions);
     const sessionCount = this.config.sessions.filter((s) => s.enabled).length;
     const runningCount = Object.values(this.state.getState().sessions).filter((s) => s.status === "running").length;
-    this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-    notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+    if (timedOut) {
+      this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`);
+    } else {
+      this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+    }
   }
   /** Graceful shutdown — reverse-order stop, release wake lock, exit */
   shutdownInProgress = false;
@@ -2142,15 +2148,29 @@ var Daemon = class _Daemon {
     notify("tmx", "Orchestrator stopped");
   }
   // -- Session management -----------------------------------------------------
-  /** Start all enabled sessions in dependency order */
-  async startAllSessions() {
+  /**
+   * Start all enabled sessions in dependency order.
+   * Returns true if boot_timeout_s was exceeded (remaining sessions skipped).
+   */
+  async startAllSessions(deadline) {
     const batches = computeStartupOrder(this.config.sessions);
     for (const batch of batches) {
+      if (Date.now() >= deadline) {
+        this.log.warn(`Boot timeout reached, skipping batch depth=${batch.depth}: ${batch.sessions.join(", ")}`);
+        for (const name of batch.sessions) {
+          const s = this.state.getSession(name);
+          if (s && (s.status === "pending" || s.status === "waiting")) {
+            this.state.transition(name, "failed", "Boot timeout exceeded");
+          }
+        }
+        return true;
+      }
       this.log.info(`Starting batch depth=${batch.depth}: ${batch.sessions.join(", ")}`);
       const startPromises = batch.sessions.map((name) => this.startSession(name));
       await Promise.all(startPromises);
       await sleep2(500);
     }
+    return false;
   }
   /** Start a single session by name */
   async startSession(name) {
@@ -2267,6 +2287,7 @@ var Daemon = class _Daemon {
   /**
    * Resolve the active ADB device serial (needed when multiple devices are listed).
    * Caches with a short TTL so reconnects with new ports are picked up.
+   * Auto-disconnects stale offline/unauthorized entries to prevent confusion.
    */
   resolveAdbSerial() {
     const now = Date.now();
@@ -2278,15 +2299,29 @@ var Daemon = class _Daemon {
         stdio: ["ignore", "pipe", "pipe"]
       });
       if (result.status !== 0 || !result.stdout) return null;
-      const devices = result.stdout.split("\n").filter((l) => l.endsWith("	device")).map((l) => l.split("	")[0]);
-      if (devices.length === 0) {
+      const lines = result.stdout.split("\n").filter((l) => l.includes("	"));
+      const online = [];
+      const stale = [];
+      for (const line of lines) {
+        const [serial, state] = line.split("	");
+        if (state?.trim() === "device") {
+          online.push(serial.trim());
+        } else if (state?.trim() === "offline" || state?.trim() === "unauthorized") {
+          stale.push(serial.trim());
+        }
+      }
+      for (const serial of stale) {
+        this.log.debug(`Disconnecting stale ADB device: ${serial}`);
+        (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", serial], { timeout: 3e3, stdio: "ignore" });
+      }
+      if (online.length === 0) {
         this.adbSerial = null;
         return null;
       }
-      if (devices.length > 1) {
-        this.log.debug(`Multiple ADB devices, using ${devices[0]}`);
+      if (online.length > 1) {
+        this.log.debug(`Multiple ADB devices, using ${online[0]}`);
       }
-      this.adbSerial = devices[0];
+      this.adbSerial = online[0];
       this.adbSerialExpiry = now + _Daemon.ADB_SERIAL_TTL_MS;
       return this.adbSerial;
     } catch {
@@ -2632,6 +2667,8 @@ var Daemon = class _Daemon {
           }
           if (name === "disconnect") {
             if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            const serial = segments[2] ? decodeURIComponent(segments[2]) : void 0;
+            if (serial) return this.adbDisconnectDevice(serial);
             return this.adbDisconnectAll();
           }
           return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
@@ -2859,6 +2896,22 @@ var Daemon = class _Daemon {
       this.adbSerial = null;
       this.adbSerialExpiry = 0;
       return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { ok: false, message: err.message } };
+    }
+  }
+  /** Disconnect a specific ADB device by serial */
+  adbDisconnectDevice(serial) {
+    try {
+      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", serial], {
+        encoding: "utf-8",
+        timeout: 5e3,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      this.adbSerial = null;
+      this.adbSerialExpiry = 0;
+      const output = (result.stdout ?? "").trim();
+      return { status: 200, data: { ok: true, serial, message: output } };
     } catch (err) {
       return { status: 500, data: { ok: false, message: err.message } };
     }
