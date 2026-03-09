@@ -209,6 +209,7 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     connect_timeout_s: asNumber(adbRaw.connect_timeout_s, "adb.connect_timeout_s", 45),
     retry_interval_s: asNumber(adbRaw.retry_interval_s, "adb.retry_interval_s", 300),
     phantom_fix: asBool(adbRaw.phantom_fix, "adb.phantom_fix", true),
+    boot_delay_s: asNumber(adbRaw.boot_delay_s, "adb.boot_delay_s", 15),
   };
 
   // Health defaults

@@ -10,7 +10,8 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
 import { Logger } from "./log.js";
@@ -28,6 +29,7 @@ import {
   sessionExists,
   listTmuxSessions,
   sendGoToSession,
+  waitForClaudeReady,
   stopSession,
   sendKeys,
   createTermuxTab,
@@ -70,6 +72,31 @@ function notify(title: string, content: string): void {
   }
 }
 
+/** Resolve this device's local IP address (for ADB self-identification) */
+function resolveLocalIp(): string | null {
+  try {
+    const result = spawnSync("ip", ["route", "get", "1"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Output: "1.0.0.0 via X.X.X.X dev wlan0 src 192.168.1.100 uid 10223"
+    const match = result.stdout?.match(/src\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch { /* fall through */ }
+  try {
+    // Fallback: ifconfig wlan0
+    const result = spawnSync("ifconfig", ["wlan0"], {
+      encoding: "utf-8",
+      timeout: 3000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const match = result.stdout?.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch { /* fall through */ }
+  return null;
+}
+
 export class Daemon {
   private config: TmxConfig;
   private log: Logger;
@@ -85,6 +112,10 @@ export class Daemon {
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
+  /** Cached local IP for ADB self-identification */
+  private localIp: string | null = null;
+  private localIpExpiry = 0;
+  private static readonly LOCAL_IP_TTL_MS = 60_000;
   private running = false;
 
   constructor(configPath?: string) {
@@ -109,8 +140,44 @@ export class Daemon {
     );
   }
 
+  /**
+   * Pre-flight checks — ensure required directories exist and config is sane.
+   * Called at the top of start() so the daemon crashes early with a clear message
+   * rather than failing mysteriously later.
+   */
+  private preflight(): void {
+    const { log_dir, state_file, socket } = this.config.orchestrator;
+
+    // Ensure log directory exists
+    if (!existsSync(log_dir)) {
+      mkdirSync(log_dir, { recursive: true });
+      this.log.debug(`Created log directory: ${log_dir}`);
+    }
+
+    // Ensure state file parent directory exists
+    const stateDir = dirname(state_file);
+    if (!existsSync(stateDir)) {
+      mkdirSync(stateDir, { recursive: true });
+      this.log.debug(`Created state directory: ${stateDir}`);
+    }
+
+    // Ensure socket parent directory exists
+    const socketDir = dirname(socket);
+    if (!existsSync(socketDir)) {
+      mkdirSync(socketDir, { recursive: true });
+      this.log.debug(`Created socket directory: ${socketDir}`);
+    }
+
+    // Validate session count vs budget
+    const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
+    if (enabledCount === 0) {
+      this.log.warn("No enabled sessions in config");
+    }
+  }
+
   /** Start the daemon — main entry point */
   async start(): Promise<void> {
+    this.preflight();
     this.running = true;
     this.log.info("Daemon starting", {
       sessions: this.config.sessions.length,
@@ -160,8 +227,12 @@ export class Daemon {
 
     const bootDeadline = Date.now() + this.config.orchestrator.boot_timeout_s * 1000;
 
-    // Step 1: ADB fix
+    // Step 1: ADB fix (with boot delay on first boot for wireless debugging to initialize)
     if (this.config.adb.enabled) {
+      if (!this.state.getState().boot_complete && this.config.adb.boot_delay_s > 0) {
+        this.log.info(`Waiting ${this.config.adb.boot_delay_s}s for wireless debugging to initialize`);
+        await sleep(this.config.adb.boot_delay_s * 1000);
+      }
       await this.fixAdb();
     }
 
@@ -171,7 +242,19 @@ export class Daemon {
     // Step 3: Start cron daemon if not running
     this.startCron();
 
-    // Step 4: Mark boot complete
+    // Step 4: Restore Termux tabs for non-headless running sessions.
+    // The watchdog.sh handles the initial tmux attach (exec tmux attach),
+    // but switch-client needs a client to exist first. Run after a brief
+    // delay so the watchdog has time to attach.
+    setTimeout(() => {
+      const tabResult = this.cmdTabs();
+      if (tabResult.ok) {
+        const data = tabResult.data as { restored: number; skipped: number };
+        this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+      }
+    }, 3000);
+
+    // Step 5: Mark boot complete
     this.state.setBootComplete(true);
     this.wake.evaluate("boot_end", this.state.getState().sessions);
 
@@ -245,7 +328,7 @@ export class Daemon {
    * Start all enabled sessions in dependency order.
    * Returns true if boot_timeout_s was exceeded (remaining sessions skipped).
    */
-  private async startAllSessions(deadline: number): Promise<boolean> {
+  private async startAllSessions(deadline: number = Infinity): Promise<boolean> {
     const batches = computeStartupOrder(this.config.sessions);
 
     for (const batch of batches) {
@@ -269,6 +352,33 @@ export class Daemon {
 
       // Brief pause between batches for stability
       await sleep(500);
+    }
+
+    // Retry sessions stuck in "waiting" whose dependencies are now satisfied.
+    // This handles the case where a batch completes but deps within the same
+    // batch weren't "running" yet when the dependent was first evaluated.
+    const maxRetries = 3;
+    for (let retry = 0; retry < maxRetries; retry++) {
+      const waitingSessions = this.config.sessions.filter((s) => {
+        const state = this.state.getSession(s.name);
+        return state?.status === "waiting" && s.enabled;
+      });
+
+      if (waitingSessions.length === 0) break;
+      if (Date.now() >= deadline) break;
+
+      this.log.info(`Retrying ${waitingSessions.length} waiting sessions (attempt ${retry + 1}/${maxRetries})`);
+      await sleep(1000); // Give recently-started sessions time to reach "running"
+
+      const retryPromises = waitingSessions.map((s) => this.startSession(s.name));
+      await Promise.all(retryPromises);
+
+      // Check if any are still waiting
+      const stillWaiting = waitingSessions.filter((s) => {
+        const state = this.state.getSession(s.name);
+        return state?.status === "waiting";
+      });
+      if (stillWaiting.length === 0) break;
     }
 
     return false;
@@ -356,18 +466,30 @@ export class Daemon {
     // Give Claude Code a moment to initialize
     await sleep(2000);
 
+    let readinessResult: "ready" | "timeout" | "disappeared" = "timeout";
+
     if (config.auto_go) {
-      const sent = await sendGoToSession(name, this.log);
-      if (!sent) {
-        this.log.warn(`Failed to send 'go' to '${name}' — Claude may not be ready`, { session: name });
+      readinessResult = await sendGoToSession(name, this.log);
+      if (readinessResult !== "ready") {
+        this.log.warn(`Failed to send 'go' to '${name}' — ${readinessResult}`, { session: name });
       }
+    } else {
+      // Still poll for readiness even without auto_go, to set correct state
+      readinessResult = await waitForClaudeReady(name, this.log);
     }
 
-    // Transition to running (we'll verify with health checks)
     const s = this.state.getSession(name);
-    if (s?.status === "starting") {
+    if (!s || s.status !== "starting") return;
+
+    if (readinessResult === "ready") {
       this.state.transition(name, "running");
+    } else if (readinessResult === "timeout") {
+      // Timeout — session may still be loading, mark degraded so health checks kick in
+      this.state.transition(name, "running"); // must go through running first
+      this.state.transition(name, "degraded");
+      this.log.warn(`Session '${name}' entered degraded state (readiness timeout)`, { session: name });
     }
+    // "disappeared" — session is gone, leave in starting (health check will handle)
   }
 
   /** Stop a single session by name */
@@ -392,30 +514,35 @@ export class Daemon {
 
   /** Adopt existing tmux sessions on daemon restart */
   private adoptExistingSessions(): void {
-    if (!isTmuxServerAlive()) return;
-
-    const existingSessions = new Set(listTmuxSessions());
+    const tmuxAlive = isTmuxServerAlive();
+    const existingSessions = tmuxAlive ? new Set(listTmuxSessions()) : new Set<string>();
     const configuredNames = new Set(this.config.sessions.map((s) => s.name));
 
-    // Adopt tmux sessions that are alive but daemon thinks are not running
-    for (const name of existingSessions) {
-      if (!configuredNames.has(name)) continue;
+    if (tmuxAlive) {
+      // Adopt tmux sessions that are alive but daemon thinks are not running
+      for (const name of existingSessions) {
+        if (!configuredNames.has(name)) continue;
 
-      const s = this.state.getSession(name);
-      if (s && s.status !== "running") {
-        this.log.info(`Adopting existing tmux session '${name}'`, { session: name });
-        this.state.forceStatus(name, "running");
-        if (!s.uptime_start) {
-          this.state.getSession(name)!.uptime_start = new Date().toISOString();
+        const s = this.state.getSession(name);
+        if (s && s.status !== "running") {
+          this.log.info(`Adopting existing tmux session '${name}'`, { session: name });
+          this.state.forceStatus(name, "running");
+          if (!s.uptime_start) {
+            this.state.getSession(name)!.uptime_start = new Date().toISOString();
+          }
         }
       }
     }
 
-    // Recover sessions stuck in transient states (stopping/starting) whose tmux session is gone
+    // Recover sessions whose state claims they're active but tmux session is gone.
+    // Handles: post-reboot (state.json persists but tmux is dead), OOM kills,
+    // and sessions stuck in transient states (stopping/starting).
     for (const cfg of this.config.sessions) {
       const s = this.state.getSession(cfg.name);
       if (!s) continue;
-      if ((s.status === "stopping" || s.status === "starting") && !existingSessions.has(cfg.name)) {
+      const isActiveState = s.status === "running" || s.status === "degraded" ||
+        s.status === "stopping" || s.status === "starting";
+      if (isActiveState && !existingSessions.has(cfg.name)) {
         this.log.info(`Recovering stale '${s.status}' session '${cfg.name}' → stopped`, { session: cfg.name });
         this.state.forceStatus(cfg.name, "stopped");
       }
@@ -427,8 +554,19 @@ export class Daemon {
   /** ADB serial cache TTL — re-resolve every 30s to handle reconnects */
   private static readonly ADB_SERIAL_TTL_MS = 30_000;
 
+  /** Get local IP with caching (60s TTL) */
+  private getLocalIp(): string | null {
+    const now = Date.now();
+    if (this.localIp && now < this.localIpExpiry) return this.localIp;
+    this.localIp = resolveLocalIp();
+    this.localIpExpiry = now + Daemon.LOCAL_IP_TTL_MS;
+    if (this.localIp) this.log.debug(`Local IP resolved: ${this.localIp}`);
+    return this.localIp;
+  }
+
   /**
    * Resolve the active ADB device serial (needed when multiple devices are listed).
+   * Prefers localhost/self-device connections over external phones.
    * Caches with a short TTL so reconnects with new ports are picked up.
    * Auto-disconnects stale offline/unauthorized entries to prevent confusion.
    */
@@ -466,10 +604,27 @@ export class Daemon {
         this.adbSerial = null;
         return null;
       }
+
+      // Prefer localhost/self-device connections over external phones
       if (online.length > 1) {
-        this.log.debug(`Multiple ADB devices, using ${online[0]}`);
+        const localIp = this.getLocalIp();
+        const localhost = online.find((s) =>
+          s.startsWith("127.0.0.1:") ||
+          s.startsWith("localhost:") ||
+          (localIp && s.startsWith(`${localIp}:`))
+        );
+        if (localhost) {
+          this.log.debug(`Multiple ADB devices, preferring localhost: ${localhost}`);
+          this.adbSerial = localhost;
+        } else {
+          this.log.warn(`Multiple ADB devices, no localhost match — using ${online[0]}. ` +
+            `Devices: ${online.join(", ")}`);
+          this.adbSerial = online[0];
+        }
+      } else {
+        this.adbSerial = online[0];
       }
-      this.adbSerial = online[0];
+
       this.adbSerialExpiry = now + Daemon.ADB_SERIAL_TTL_MS;
       return this.adbSerial;
     } catch {
@@ -530,8 +685,34 @@ export class Daemon {
     }
   }
 
+  /**
+   * Verify the resolved ADB device is this device (not an external phone).
+   * Checks that the serial IP matches localhost or this device's local IP.
+   */
+  private isLocalAdbDevice(): boolean {
+    const serial = this.resolveAdbSerial();
+    if (!serial) return false;
+
+    // Localhost connections are always local
+    if (serial.startsWith("127.0.0.1:") || serial.startsWith("localhost:")) return true;
+
+    // Check if serial IP matches local IP
+    const localIp = this.getLocalIp();
+    if (localIp && serial.startsWith(`${localIp}:`)) return true;
+
+    // Serial doesn't match any local address — might be an external device
+    return false;
+  }
+
   /** Apply Android 12+ phantom process killer fix via ADB */
   private applyPhantomFix(): void {
+    // Safety check: only apply settings to this device, not external phones
+    if (!this.isLocalAdbDevice()) {
+      const serial = this.resolveAdbSerial();
+      this.log.warn(`Skipping phantom fix — ADB device '${serial}' may not be this device`);
+      return;
+    }
+
     const shellCmds = [
       ["/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"],
       ["settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"],
@@ -1381,8 +1562,9 @@ export class Daemon {
   private async cmdGo(name: string): Promise<IpcResponse> {
     const resolved = this.resolveName(name);
     if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
-    const sent = await sendGoToSession(resolved, this.log);
-    return { ok: sent, data: sent ? `Sent 'go' to '${resolved}'` : `Failed to send 'go' to '${resolved}'` };
+    const result = await sendGoToSession(resolved, this.log);
+    const ok = result === "ready";
+    return { ok, data: ok ? `Sent 'go' to '${resolved}'` : `Failed to send 'go' to '${resolved}' (${result})` };
   }
 
   /** Send command — send arbitrary text to a session */

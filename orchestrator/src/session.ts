@@ -38,7 +38,7 @@ function amEnv(): NodeJS.ProcessEnv {
 }
 
 /** Timeout for Claude Code readiness polling (ms) */
-const CLAUDE_READY_TIMEOUT = 30_000;
+const CLAUDE_READY_TIMEOUT = 60_000;
 /** Interval between readiness polls (ms) */
 const CLAUDE_POLL_INTERVAL = 500;
 /** Patterns that indicate Claude Code is ready for input */
@@ -46,6 +46,7 @@ const CLAUDE_READY_PATTERNS = [
   />\s*$/,           // prompt indicator
   /\$\s*$/,          // shell prompt (fallback)
   /claude\s*>/i,     // claude prompt
+  /\?\s*$/,          // question mark prompt (e.g., "What would you like to do?")
 ];
 /** Delay before sending "go" after readiness detection (ms) */
 const GO_SEND_DELAY = 500;
@@ -207,18 +208,22 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   return true;
 }
 
+/** Result of Claude readiness check */
+export type ReadinessResult = "ready" | "timeout" | "disappeared";
+
 /**
  * Wait for a Claude-type session to become ready for input.
  * Polls tmux capture-pane looking for a prompt indicator.
- * Returns true if ready, false if timeout exceeded.
+ * Returns "ready" if a prompt was detected, "timeout" if the deadline passed,
+ * or "disappeared" if the tmux session was killed.
  */
-export async function waitForClaudeReady(name: string, log: Logger): Promise<boolean> {
+export async function waitForClaudeReady(name: string, log: Logger): Promise<ReadinessResult> {
   const start = Date.now();
 
   while (Date.now() - start < CLAUDE_READY_TIMEOUT) {
     if (!sessionExists(name)) {
       log.warn(`Session '${name}' disappeared while waiting for readiness`, { session: name });
-      return false;
+      return "disappeared";
     }
 
     const pane = capturePane(name, 10);
@@ -227,7 +232,7 @@ export async function waitForClaudeReady(name: string, log: Logger): Promise<boo
       if (pattern.test(pane)) {
         const elapsed = Date.now() - start;
         log.debug(`Session '${name}' ready in ${elapsed}ms`, { session: name, elapsed });
-        return true;
+        return "ready";
       }
     }
 
@@ -235,18 +240,19 @@ export async function waitForClaudeReady(name: string, log: Logger): Promise<boo
   }
 
   log.warn(`Session '${name}' readiness timeout after ${CLAUDE_READY_TIMEOUT}ms`, { session: name });
-  return false;
+  return "timeout";
 }
 
 /**
  * Send "go" to a Claude session after waiting for readiness.
- * Returns true if "go" was sent, false if session wasn't ready.
+ * Returns the readiness result: "ready" if go was sent successfully,
+ * "timeout" or "disappeared" if the session wasn't ready.
  */
-export async function sendGoToSession(name: string, log: Logger): Promise<boolean> {
-  const ready = await waitForClaudeReady(name, log);
-  if (!ready) {
-    log.warn(`Skipping 'go' for '${name}' — not ready`, { session: name });
-    return false;
+export async function sendGoToSession(name: string, log: Logger): Promise<ReadinessResult> {
+  const result = await waitForClaudeReady(name, log);
+  if (result !== "ready") {
+    log.warn(`Skipping 'go' for '${name}' — ${result}`, { session: name });
+    return result;
   }
 
   // Brief delay to ensure the prompt is fully rendered
@@ -254,9 +260,9 @@ export async function sendGoToSession(name: string, log: Logger): Promise<boolea
 
   if (sendKeys(name, "go", true)) {
     log.info(`Sent 'go' to '${name}'`, { session: name });
-    return true;
+    return "ready";
   }
-  return false;
+  return "timeout";
 }
 
 /** Gracefully stop a tmux session */

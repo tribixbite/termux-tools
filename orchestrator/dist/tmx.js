@@ -27,7 +27,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs10 = require("node:fs");
+var import_node_fs11 = require("node:fs");
 var import_node_child_process7 = require("node:child_process");
 
 // src/ipc.ts
@@ -131,9 +131,13 @@ var IpcClient = class {
   async isRunning() {
     if (!(0, import_node_fs.existsSync)(this.socketPath)) return false;
     try {
-      const resp = await this.send({ cmd: "status" });
+      const resp = await this.send({ cmd: "status" }, 3e3);
       return resp.ok;
     } catch {
+      try {
+        (0, import_node_fs.unlinkSync)(this.socketPath);
+      } catch {
+      }
       return false;
     }
   }
@@ -188,6 +192,7 @@ var IpcClient = class {
 
 // src/daemon.ts
 var import_node_child_process6 = require("node:child_process");
+var import_node_fs9 = require("node:fs");
 var import_node_path4 = require("node:path");
 
 // src/config.ts
@@ -351,7 +356,8 @@ function validateConfig(raw) {
     ),
     connect_timeout_s: asNumber(adbRaw.connect_timeout_s, "adb.connect_timeout_s", 45),
     retry_interval_s: asNumber(adbRaw.retry_interval_s, "adb.retry_interval_s", 300),
-    phantom_fix: asBool(adbRaw.phantom_fix, "adb.phantom_fix", true)
+    phantom_fix: asBool(adbRaw.phantom_fix, "adb.phantom_fix", true),
+    boot_delay_s: asNumber(adbRaw.boot_delay_s, "adb.boot_delay_s", 15)
   };
   const hdRaw = raw.health_defaults ?? {};
   const health_defaults = {};
@@ -1083,15 +1089,17 @@ function amEnv() {
   const ldPreload = (0, import_node_path2.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
-var CLAUDE_READY_TIMEOUT = 3e4;
+var CLAUDE_READY_TIMEOUT = 6e4;
 var CLAUDE_POLL_INTERVAL = 500;
 var CLAUDE_READY_PATTERNS = [
   />\s*$/,
   // prompt indicator
   /\$\s*$/,
   // shell prompt (fallback)
-  /claude\s*>/i
+  /claude\s*>/i,
   // claude prompt
+  /\?\s*$/
+  // question mark prompt (e.g., "What would you like to do?")
 ];
 var GO_SEND_DELAY = 500;
 function cleanEnv() {
@@ -1205,33 +1213,33 @@ async function waitForClaudeReady(name, log) {
   while (Date.now() - start < CLAUDE_READY_TIMEOUT) {
     if (!sessionExists(name)) {
       log.warn(`Session '${name}' disappeared while waiting for readiness`, { session: name });
-      return false;
+      return "disappeared";
     }
     const pane = capturePane(name, 10);
     for (const pattern of CLAUDE_READY_PATTERNS) {
       if (pattern.test(pane)) {
         const elapsed = Date.now() - start;
         log.debug(`Session '${name}' ready in ${elapsed}ms`, { session: name, elapsed });
-        return true;
+        return "ready";
       }
     }
     await sleep(CLAUDE_POLL_INTERVAL);
   }
   log.warn(`Session '${name}' readiness timeout after ${CLAUDE_READY_TIMEOUT}ms`, { session: name });
-  return false;
+  return "timeout";
 }
 async function sendGoToSession(name, log) {
-  const ready = await waitForClaudeReady(name, log);
-  if (!ready) {
-    log.warn(`Skipping 'go' for '${name}' \u2014 not ready`, { session: name });
-    return false;
+  const result = await waitForClaudeReady(name, log);
+  if (result !== "ready") {
+    log.warn(`Skipping 'go' for '${name}' \u2014 ${result}`, { session: name });
+    return result;
   }
   await sleep(GO_SEND_DELAY);
   if (sendKeys(name, "go", true)) {
     log.info(`Sent 'go' to '${name}'`, { session: name });
-    return true;
+    return "ready";
   }
-  return false;
+  return "timeout";
 }
 async function stopSession(name, log, timeoutMs = 1e4) {
   if (!sessionExists(name)) {
@@ -2025,6 +2033,29 @@ function notify(title, content) {
   } catch {
   }
 }
+function resolveLocalIp() {
+  try {
+    const result = (0, import_node_child_process6.spawnSync)("ip", ["route", "get", "1"], {
+      encoding: "utf-8",
+      timeout: 3e3,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const match = result.stdout?.match(/src\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+  }
+  try {
+    const result = (0, import_node_child_process6.spawnSync)("ifconfig", ["wlan0"], {
+      encoding: "utf-8",
+      timeout: 3e3,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const match = result.stdout?.match(/inet\s+(\d+\.\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+  }
+  return null;
+}
 var Daemon = class _Daemon {
   config;
   log;
@@ -2040,6 +2071,10 @@ var Daemon = class _Daemon {
   adbRetryTimer = null;
   adbSerial = null;
   adbSerialExpiry = 0;
+  /** Cached local IP for ADB self-identification */
+  localIp = null;
+  localIpExpiry = 0;
+  static LOCAL_IP_TTL_MS = 6e4;
   running = false;
   constructor(configPath) {
     this.config = loadConfig(configPath);
@@ -2060,8 +2095,35 @@ var Daemon = class _Daemon {
       this.log
     );
   }
+  /**
+   * Pre-flight checks — ensure required directories exist and config is sane.
+   * Called at the top of start() so the daemon crashes early with a clear message
+   * rather than failing mysteriously later.
+   */
+  preflight() {
+    const { log_dir, state_file, socket } = this.config.orchestrator;
+    if (!(0, import_node_fs9.existsSync)(log_dir)) {
+      (0, import_node_fs9.mkdirSync)(log_dir, { recursive: true });
+      this.log.debug(`Created log directory: ${log_dir}`);
+    }
+    const stateDir = (0, import_node_path4.dirname)(state_file);
+    if (!(0, import_node_fs9.existsSync)(stateDir)) {
+      (0, import_node_fs9.mkdirSync)(stateDir, { recursive: true });
+      this.log.debug(`Created state directory: ${stateDir}`);
+    }
+    const socketDir = (0, import_node_path4.dirname)(socket);
+    if (!(0, import_node_fs9.existsSync)(socketDir)) {
+      (0, import_node_fs9.mkdirSync)(socketDir, { recursive: true });
+      this.log.debug(`Created socket directory: ${socketDir}`);
+    }
+    const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
+    if (enabledCount === 0) {
+      this.log.warn("No enabled sessions in config");
+    }
+  }
   /** Start the daemon — main entry point */
   async start() {
+    this.preflight();
     this.running = true;
     this.log.info("Daemon starting", {
       sessions: this.config.sessions.length,
@@ -2092,10 +2154,21 @@ var Daemon = class _Daemon {
     this.wake.evaluate("boot_start");
     const bootDeadline = Date.now() + this.config.orchestrator.boot_timeout_s * 1e3;
     if (this.config.adb.enabled) {
+      if (!this.state.getState().boot_complete && this.config.adb.boot_delay_s > 0) {
+        this.log.info(`Waiting ${this.config.adb.boot_delay_s}s for wireless debugging to initialize`);
+        await sleep2(this.config.adb.boot_delay_s * 1e3);
+      }
       await this.fixAdb();
     }
     const timedOut = await this.startAllSessions(bootDeadline);
     this.startCron();
+    setTimeout(() => {
+      const tabResult = this.cmdTabs();
+      if (tabResult.ok) {
+        const data = tabResult.data;
+        this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+      }
+    }, 3e3);
     this.state.setBootComplete(true);
     this.wake.evaluate("boot_end", this.state.getState().sessions);
     const sessionCount = this.config.sessions.filter((s) => s.enabled).length;
@@ -2152,7 +2225,7 @@ var Daemon = class _Daemon {
    * Start all enabled sessions in dependency order.
    * Returns true if boot_timeout_s was exceeded (remaining sessions skipped).
    */
-  async startAllSessions(deadline) {
+  async startAllSessions(deadline = Infinity) {
     const batches = computeStartupOrder(this.config.sessions);
     for (const batch of batches) {
       if (Date.now() >= deadline) {
@@ -2169,6 +2242,24 @@ var Daemon = class _Daemon {
       const startPromises = batch.sessions.map((name) => this.startSession(name));
       await Promise.all(startPromises);
       await sleep2(500);
+    }
+    const maxRetries = 3;
+    for (let retry = 0; retry < maxRetries; retry++) {
+      const waitingSessions = this.config.sessions.filter((s) => {
+        const state = this.state.getSession(s.name);
+        return state?.status === "waiting" && s.enabled;
+      });
+      if (waitingSessions.length === 0) break;
+      if (Date.now() >= deadline) break;
+      this.log.info(`Retrying ${waitingSessions.length} waiting sessions (attempt ${retry + 1}/${maxRetries})`);
+      await sleep2(1e3);
+      const retryPromises = waitingSessions.map((s) => this.startSession(s.name));
+      await Promise.all(retryPromises);
+      const stillWaiting = waitingSessions.filter((s) => {
+        const state = this.state.getSession(s.name);
+        return state?.status === "waiting";
+      });
+      if (stillWaiting.length === 0) break;
     }
     return false;
   }
@@ -2230,15 +2321,23 @@ var Daemon = class _Daemon {
   /** Handle Claude session startup: wait for readiness, send "go" if configured */
   async handleClaudeStartup(name, config) {
     await sleep2(2e3);
+    let readinessResult = "timeout";
     if (config.auto_go) {
-      const sent = await sendGoToSession(name, this.log);
-      if (!sent) {
-        this.log.warn(`Failed to send 'go' to '${name}' \u2014 Claude may not be ready`, { session: name });
+      readinessResult = await sendGoToSession(name, this.log);
+      if (readinessResult !== "ready") {
+        this.log.warn(`Failed to send 'go' to '${name}' \u2014 ${readinessResult}`, { session: name });
       }
+    } else {
+      readinessResult = await waitForClaudeReady(name, this.log);
     }
     const s = this.state.getSession(name);
-    if (s?.status === "starting") {
+    if (!s || s.status !== "starting") return;
+    if (readinessResult === "ready") {
       this.state.transition(name, "running");
+    } else if (readinessResult === "timeout") {
+      this.state.transition(name, "running");
+      this.state.transition(name, "degraded");
+      this.log.warn(`Session '${name}' entered degraded state (readiness timeout)`, { session: name });
     }
   }
   /** Stop a single session by name */
@@ -2258,24 +2357,27 @@ var Daemon = class _Daemon {
   }
   /** Adopt existing tmux sessions on daemon restart */
   adoptExistingSessions() {
-    if (!isTmuxServerAlive()) return;
-    const existingSessions = new Set(listTmuxSessions());
+    const tmuxAlive = isTmuxServerAlive();
+    const existingSessions = tmuxAlive ? new Set(listTmuxSessions()) : /* @__PURE__ */ new Set();
     const configuredNames = new Set(this.config.sessions.map((s) => s.name));
-    for (const name of existingSessions) {
-      if (!configuredNames.has(name)) continue;
-      const s = this.state.getSession(name);
-      if (s && s.status !== "running") {
-        this.log.info(`Adopting existing tmux session '${name}'`, { session: name });
-        this.state.forceStatus(name, "running");
-        if (!s.uptime_start) {
-          this.state.getSession(name).uptime_start = (/* @__PURE__ */ new Date()).toISOString();
+    if (tmuxAlive) {
+      for (const name of existingSessions) {
+        if (!configuredNames.has(name)) continue;
+        const s = this.state.getSession(name);
+        if (s && s.status !== "running") {
+          this.log.info(`Adopting existing tmux session '${name}'`, { session: name });
+          this.state.forceStatus(name, "running");
+          if (!s.uptime_start) {
+            this.state.getSession(name).uptime_start = (/* @__PURE__ */ new Date()).toISOString();
+          }
         }
       }
     }
     for (const cfg of this.config.sessions) {
       const s = this.state.getSession(cfg.name);
       if (!s) continue;
-      if ((s.status === "stopping" || s.status === "starting") && !existingSessions.has(cfg.name)) {
+      const isActiveState = s.status === "running" || s.status === "degraded" || s.status === "stopping" || s.status === "starting";
+      if (isActiveState && !existingSessions.has(cfg.name)) {
         this.log.info(`Recovering stale '${s.status}' session '${cfg.name}' \u2192 stopped`, { session: cfg.name });
         this.state.forceStatus(cfg.name, "stopped");
       }
@@ -2284,8 +2386,18 @@ var Daemon = class _Daemon {
   // -- ADB helpers ------------------------------------------------------------
   /** ADB serial cache TTL — re-resolve every 30s to handle reconnects */
   static ADB_SERIAL_TTL_MS = 3e4;
+  /** Get local IP with caching (60s TTL) */
+  getLocalIp() {
+    const now = Date.now();
+    if (this.localIp && now < this.localIpExpiry) return this.localIp;
+    this.localIp = resolveLocalIp();
+    this.localIpExpiry = now + _Daemon.LOCAL_IP_TTL_MS;
+    if (this.localIp) this.log.debug(`Local IP resolved: ${this.localIp}`);
+    return this.localIp;
+  }
   /**
    * Resolve the active ADB device serial (needed when multiple devices are listed).
+   * Prefers localhost/self-device connections over external phones.
    * Caches with a short TTL so reconnects with new ports are picked up.
    * Auto-disconnects stale offline/unauthorized entries to prevent confusion.
    */
@@ -2319,9 +2431,20 @@ var Daemon = class _Daemon {
         return null;
       }
       if (online.length > 1) {
-        this.log.debug(`Multiple ADB devices, using ${online[0]}`);
+        const localIp = this.getLocalIp();
+        const localhost = online.find(
+          (s) => s.startsWith("127.0.0.1:") || s.startsWith("localhost:") || localIp && s.startsWith(`${localIp}:`)
+        );
+        if (localhost) {
+          this.log.debug(`Multiple ADB devices, preferring localhost: ${localhost}`);
+          this.adbSerial = localhost;
+        } else {
+          this.log.warn(`Multiple ADB devices, no localhost match \u2014 using ${online[0]}. Devices: ${online.join(", ")}`);
+          this.adbSerial = online[0];
+        }
+      } else {
+        this.adbSerial = online[0];
       }
-      this.adbSerial = online[0];
       this.adbSerialExpiry = now + _Daemon.ADB_SERIAL_TTL_MS;
       return this.adbSerial;
     } catch {
@@ -2369,8 +2492,25 @@ var Daemon = class _Daemon {
       return false;
     }
   }
+  /**
+   * Verify the resolved ADB device is this device (not an external phone).
+   * Checks that the serial IP matches localhost or this device's local IP.
+   */
+  isLocalAdbDevice() {
+    const serial = this.resolveAdbSerial();
+    if (!serial) return false;
+    if (serial.startsWith("127.0.0.1:") || serial.startsWith("localhost:")) return true;
+    const localIp = this.getLocalIp();
+    if (localIp && serial.startsWith(`${localIp}:`)) return true;
+    return false;
+  }
   /** Apply Android 12+ phantom process killer fix via ADB */
   applyPhantomFix() {
+    if (!this.isLocalAdbDevice()) {
+      const serial = this.resolveAdbSerial();
+      this.log.warn(`Skipping phantom fix \u2014 ADB device '${serial}' may not be this device`);
+      return;
+    }
     const shellCmds = [
       ["/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"],
       ["settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"]
@@ -3084,8 +3224,9 @@ var Daemon = class _Daemon {
   async cmdGo(name) {
     const resolved = this.resolveName(name);
     if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
-    const sent = await sendGoToSession(resolved, this.log);
-    return { ok: sent, data: sent ? `Sent 'go' to '${resolved}'` : `Failed to send 'go' to '${resolved}'` };
+    const result = await sendGoToSession(resolved, this.log);
+    const ok = result === "ready";
+    return { ok, data: ok ? `Sent 'go' to '${resolved}'` : `Failed to send 'go' to '${resolved}' (${result})` };
   }
   /** Send command — send arbitrary text to a session */
   cmdSend(name, text) {
@@ -3137,12 +3278,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs9 = require("node:fs");
+var import_node_fs10 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs9.existsSync)(filePath)) {
+  if (!(0, import_node_fs10.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs9.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs10.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -3235,7 +3376,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs9.existsSync) ?? null;
+  return candidates.find(import_node_fs10.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -3311,17 +3452,29 @@ async function runBoot() {
     console.log(`${CYAN}Starting daemon...${RESET2}`);
     const daemonArgs = ["daemon"];
     if (configPath) daemonArgs.push("--config", configPath);
+    let logDir;
+    try {
+      const config = loadConfig(configPath);
+      logDir = config.orchestrator.log_dir;
+    } catch {
+      logDir = `${process.env.HOME}/.local/share/tmx/logs`;
+    }
+    (0, import_node_fs11.mkdirSync)(logDir, { recursive: true });
+    const stderrPath = `${logDir}/daemon-stderr.log`;
+    const stderrFd = (0, import_node_fs11.openSync)(stderrPath, "a");
     const child = (0, import_node_child_process7.spawn)(process.argv[0], [process.argv[1], ...daemonArgs], {
       detached: true,
-      stdio: "ignore"
+      stdio: ["ignore", "ignore", stderrFd]
     });
     child.unref();
+    (0, import_node_fs11.closeSync)(stderrFd);
     for (let i = 0; i < 20; i++) {
       await sleep3(500);
       if (await client.isRunning()) break;
     }
     if (!await client.isRunning()) {
       console.error(`${RED}Daemon failed to start${RESET2}`);
+      printStartupDiagnostics(logDir, stderrPath);
       process.exit(1);
     }
     console.log(`${GREEN}Daemon started${RESET2}`);
@@ -3333,6 +3486,50 @@ async function runBoot() {
     console.error(`${RED}Boot failed: ${resp.error}${RESET2}`);
     process.exit(1);
   }
+}
+function printStartupDiagnostics(logDir, stderrPath) {
+  console.error();
+  try {
+    if ((0, import_node_fs11.existsSync)(stderrPath)) {
+      const stderr = (0, import_node_fs11.readFileSync)(stderrPath, "utf-8").trim();
+      if (stderr) {
+        const lines = stderr.split("\n").slice(-20);
+        console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET2}`);
+        for (const line of lines) {
+          console.error(`  ${DIM2}${line}${RESET2}`);
+        }
+        console.error();
+      }
+    }
+  } catch {
+  }
+  try {
+    const logFile = `${logDir}/tmx.jsonl`;
+    if ((0, import_node_fs11.existsSync)(logFile)) {
+      const content = (0, import_node_fs11.readFileSync)(logFile, "utf-8").trim();
+      if (content) {
+        const entries = content.split("\n").slice(-10);
+        console.error(`${YELLOW}Recent log entries:${RESET2}`);
+        for (const raw of entries) {
+          try {
+            const entry = JSON.parse(raw);
+            const time = entry.ts?.slice(11, 23) ?? "";
+            const color = entry.level === "error" ? RED : entry.level === "warn" ? YELLOW : DIM2;
+            console.error(`  ${DIM2}${time}${RESET2} ${color}${entry.level}${RESET2} ${entry.msg}`);
+          } catch {
+            console.error(`  ${DIM2}${raw.slice(0, 120)}${RESET2}`);
+          }
+        }
+        console.error();
+      }
+    }
+  } catch {
+  }
+  console.error(`${CYAN}Suggestions:${RESET2}`);
+  console.error(`  ${DIM2}1.${RESET2} Check logs:    ${BOLD}tmx logs${RESET2}`);
+  console.error(`  ${DIM2}2.${RESET2} Validate config: ${BOLD}tmx config${RESET2}`);
+  console.error(`  ${DIM2}3.${RESET2} Run foreground: ${BOLD}tmx daemon${RESET2}`);
+  console.error(`  ${DIM2}4.${RESET2} Check stderr:   ${BOLD}cat ${stderrPath}${RESET2}`);
 }
 function runConfig() {
   const configPath = getConfigFlag();
@@ -3367,6 +3564,7 @@ function runConfig() {
   console.log(`${BOLD}ADB${RESET2}`);
   console.log(`  enabled:     ${config.adb.enabled}`);
   console.log(`  phantom_fix: ${config.adb.phantom_fix}`);
+  console.log(`  boot_delay:  ${config.adb.boot_delay_s}s`);
   console.log();
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET2}`);
   printSessionTable(config.sessions.map((s) => ({
@@ -3392,15 +3590,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs10.existsSync)(outDir)) {
-    (0, import_node_fs10.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs11.existsSync)(outDir)) {
+    (0, import_node_fs11.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs10.existsSync)(outPath)) {
+  if ((0, import_node_fs11.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs10.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs11.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs10.writeFileSync)(outPath, toml);
+    (0, import_node_fs11.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -3697,7 +3895,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs10.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs11.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

@@ -94,6 +94,8 @@ export interface AdbConfig {
   retry_interval_s: number;
   /** Apply phantom process killer fix */
   phantom_fix: boolean;
+  /** Seconds to wait for wireless debugging to initialize after fresh boot (default 15) */
+  boot_delay_s: number;
 }
 
 /** Top-level orchestrator config */

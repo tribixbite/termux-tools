@@ -5,8 +5,9 @@
  * See `tmx --help` for available commands.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 import { IpcClient } from "./ipc.js";
 import { Daemon } from "./daemon.js";
 import { loadConfig, findConfigPath, validateConfigFile } from "./config.js";
@@ -110,19 +111,32 @@ async function runBoot(): Promise<void> {
   // Check if daemon is already running
   const running = await client.isRunning();
   if (!running) {
-    // Start daemon in background (fork)
+    // Start daemon in background (fork), capturing stderr for diagnostics
     console.log(`${CYAN}Starting daemon...${RESET}`);
     const daemonArgs = ["daemon"];
     if (configPath) daemonArgs.push("--config", configPath);
 
+    // Resolve log dir for stderr capture
+    let logDir: string;
+    try {
+      const config = loadConfig(configPath);
+      logDir = config.orchestrator.log_dir;
+    } catch {
+      logDir = `${process.env.HOME}/.local/share/tmx/logs`;
+    }
+    mkdirSync(logDir, { recursive: true });
+    const stderrPath = `${logDir}/daemon-stderr.log`;
+    const stderrFd = openSync(stderrPath, "a");
+
     // Use the same executable that invoked us
     const child = spawn(process.argv[0], [process.argv[1], ...daemonArgs], {
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", stderrFd],
     });
     child.unref();
+    closeSync(stderrFd);
 
-    // Wait for daemon to be ready
+    // Wait for daemon to be ready (10s max)
     for (let i = 0; i < 20; i++) {
       await sleep(500);
       if (await client.isRunning()) break;
@@ -130,6 +144,8 @@ async function runBoot(): Promise<void> {
 
     if (!(await client.isRunning())) {
       console.error(`${RED}Daemon failed to start${RESET}`);
+      // Show diagnostic information
+      printStartupDiagnostics(logDir, stderrPath);
       process.exit(1);
     }
     console.log(`${GREEN}Daemon started${RESET}`);
@@ -143,6 +159,55 @@ async function runBoot(): Promise<void> {
     console.error(`${RED}Boot failed: ${resp.error}${RESET}`);
     process.exit(1);
   }
+}
+
+/** Print diagnostic info when daemon fails to start */
+function printStartupDiagnostics(logDir: string, stderrPath: string): void {
+  console.error();
+
+  // Show stderr output if available
+  try {
+    if (existsSync(stderrPath)) {
+      const stderr = readFileSync(stderrPath, "utf-8").trim();
+      if (stderr) {
+        const lines = stderr.split("\n").slice(-20);
+        console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET}`);
+        for (const line of lines) {
+          console.error(`  ${DIM}${line}${RESET}`);
+        }
+        console.error();
+      }
+    }
+  } catch { /* ignore */ }
+
+  // Show recent log entries if available
+  try {
+    const logFile = `${logDir}/tmx.jsonl`;
+    if (existsSync(logFile)) {
+      const content = readFileSync(logFile, "utf-8").trim();
+      if (content) {
+        const entries = content.split("\n").slice(-10);
+        console.error(`${YELLOW}Recent log entries:${RESET}`);
+        for (const raw of entries) {
+          try {
+            const entry = JSON.parse(raw) as { ts: string; level: string; msg: string };
+            const time = entry.ts?.slice(11, 23) ?? "";
+            const color = entry.level === "error" ? RED : entry.level === "warn" ? YELLOW : DIM;
+            console.error(`  ${DIM}${time}${RESET} ${color}${entry.level}${RESET} ${entry.msg}`);
+          } catch {
+            console.error(`  ${DIM}${raw.slice(0, 120)}${RESET}`);
+          }
+        }
+        console.error();
+      }
+    }
+  } catch { /* ignore */ }
+
+  console.error(`${CYAN}Suggestions:${RESET}`);
+  console.error(`  ${DIM}1.${RESET} Check logs:    ${BOLD}tmx logs${RESET}`);
+  console.error(`  ${DIM}2.${RESET} Validate config: ${BOLD}tmx config${RESET}`);
+  console.error(`  ${DIM}3.${RESET} Run foreground: ${BOLD}tmx daemon${RESET}`);
+  console.error(`  ${DIM}4.${RESET} Check stderr:   ${BOLD}cat ${stderrPath}${RESET}`);
 }
 
 /** Validate and print resolved config */
@@ -184,6 +249,7 @@ function runConfig(): void {
   console.log(`${BOLD}ADB${RESET}`);
   console.log(`  enabled:     ${config.adb.enabled}`);
   console.log(`  phantom_fix: ${config.adb.phantom_fix}`);
+  console.log(`  boot_delay:  ${config.adb.boot_delay_s}s`);
   console.log();
 
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET}`);

@@ -143,9 +143,14 @@ export class IpcClient {
   async isRunning(): Promise<boolean> {
     if (!existsSync(this.socketPath)) return false;
     try {
-      const resp = await this.send({ cmd: "status" });
+      // Use a short 3s timeout — if daemon is alive it responds instantly
+      const resp = await this.send({ cmd: "status" }, 3_000);
       return resp.ok;
     } catch {
+      // Socket exists but connection failed — stale socket from OOM kill / crash
+      try {
+        unlinkSync(this.socketPath);
+      } catch { /* already gone or permission issue — either way, not running */ }
       return false;
     }
   }
