@@ -110,6 +110,8 @@ export class Daemon {
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
+  /** Pending auto-restart timers — tracked so shutdown() can cancel them */
+  private restartTimers = new Set<ReturnType<typeof setTimeout>>();
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -247,10 +249,14 @@ export class Daemon {
     // but switch-client needs a client to exist first. Run after a brief
     // delay so the watchdog has time to attach.
     setTimeout(() => {
-      const tabResult = this.cmdTabs();
-      if (tabResult.ok) {
-        const data = tabResult.data as { restored: number; skipped: number };
-        this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+      try {
+        const tabResult = this.cmdTabs();
+        if (tabResult.ok) {
+          const data = tabResult.data as { restored: number; skipped: number };
+          this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+        }
+      } catch (err) {
+        this.log.warn(`Auto-tabs failed: ${err}`);
       }
     }, 3000);
 
@@ -291,6 +297,12 @@ export class Daemon {
       clearInterval(this.adbRetryTimer);
       this.adbRetryTimer = null;
     }
+
+    // Cancel pending auto-restart timers
+    for (const timer of this.restartTimers) {
+      clearTimeout(timer);
+    }
+    this.restartTimers.clear();
 
     // Stop sessions in reverse dependency order
     const shutdownOrder = computeShutdownOrder(this.config.sessions);
@@ -507,6 +519,9 @@ export class Daemon {
       // Force-set to stopped anyway
       this.state.forceStatus(name, "stopped");
     }
+
+    // Clear stale activity snapshot so next start gets a fresh baseline
+    this.activity.remove(name);
 
     this.wake.evaluate("session_change", this.state.getState().sessions);
     return stopped;
@@ -802,8 +817,10 @@ export class Daemon {
       // Transition to starting (increments restart_count)
       this.state.transition(session.name, "starting");
 
-      // Schedule the actual restart
-      setTimeout(async () => {
+      // Schedule the actual restart (tracked for cleanup in shutdown)
+      const timer = setTimeout(async () => {
+        this.restartTimers.delete(timer);
+        this.activity.remove(session.name); // Clear stale snapshot before restart
         await stopSession(session.name, this.log);
         const created = createSession(session, this.log);
         if (created) {
@@ -816,6 +833,7 @@ export class Daemon {
           this.state.transition(session.name, "failed", "Restart failed");
         }
       }, backoffMs);
+      this.restartTimers.add(timer);
     }
 
     // Check process budget
@@ -1578,7 +1596,7 @@ export class Daemon {
   /** Tabs command — create Termux UI tabs for sessions */
   private cmdTabs(names?: string[]): IpcResponse {
     const targetSessions = names?.length
-      ? names.map((n) => this.resolveName(n)).filter(Boolean) as string[]
+      ? names.map((n) => this.resolveName(n)).filter((n): n is string => n !== null)
       : this.config.sessions
           .filter((s) => !s.headless && s.enabled)
           .map((s) => s.name);

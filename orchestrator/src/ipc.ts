@@ -194,6 +194,7 @@ export class IpcClient {
         if (!resolved) {
           clearTimeout(timer);
           resolved = true;
+          conn.destroy();
           reject(err);
         }
       });

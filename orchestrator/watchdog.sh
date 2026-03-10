@@ -26,8 +26,11 @@ while true; do
   if [ $EXIT_CODE -eq 0 ]; then
     echo "[$(date)] Boot succeeded, attaching tmux client" >> "$LOG_DIR/watchdog.log"
     # Attach tmux to this terminal — makes the watchdog tab a tmux client.
-    # When tmux exits (daemon shutdown/OOM), the loop continues and reboots.
-    exec tmux attach
+    # No exec — when tmux exits (daemon shutdown/OOM), the loop continues and reboots.
+    tmux attach
+    echo "[$(date)] tmux exited, loop will restart daemon" >> "$LOG_DIR/watchdog.log"
+    sleep 2
+    continue
   fi
 
   echo "[$(date)] tmx boot failed (code=$EXIT_CODE), restarting in 5s..." >> "$LOG_DIR/watchdog.log"

@@ -29,6 +29,7 @@ var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToF
 // src/tmx.ts
 var import_node_fs11 = require("node:fs");
 var import_node_child_process7 = require("node:child_process");
+var import_node_path5 = require("node:path");
 
 // src/ipc.ts
 var net = __toESM(require("node:net"));
@@ -176,6 +177,7 @@ var IpcClient = class {
         if (!resolved) {
           clearTimeout(timer);
           resolved = true;
+          conn.destroy();
           reject(err);
         }
       });
@@ -1334,10 +1336,19 @@ function checkSessionHealth(sessionName, healthConfig, log) {
       case "tmux_alive":
         return tmuxAliveCheck(sessionName, start);
       case "http":
+        if (!healthConfig.url) {
+          return { session: sessionName, healthy: false, message: "HTTP check missing 'url' config", duration_ms: Date.now() - start };
+        }
         return httpCheck(sessionName, healthConfig.url, start);
       case "process":
+        if (!healthConfig.process_pattern) {
+          return { session: sessionName, healthy: false, message: "Process check missing 'process_pattern' config", duration_ms: Date.now() - start };
+        }
         return processCheck(sessionName, healthConfig.process_pattern, start);
       case "custom":
+        if (!healthConfig.command) {
+          return { session: sessionName, healthy: false, message: "Custom check missing 'command' config", duration_ms: Date.now() - start };
+        }
         return customCheck(sessionName, healthConfig.command, start);
       default:
         return {
@@ -1445,22 +1456,24 @@ function runHealthSweep(config, state, log) {
     const result = checkSessionHealth(session.name, healthConfig, log);
     results.push(result);
     state.recordHealthCheck(session.name, result.healthy, result.message);
+    const updated = state.getSession(session.name);
+    if (!updated) continue;
     if (result.healthy) {
-      if (s.status === "degraded") {
+      if (updated.status === "degraded") {
         state.transition(session.name, "starting");
         log.info(`Session '${session.name}' recovered`, { session: session.name });
       }
     } else {
       log.warn(`Health check failed for '${session.name}': ${result.message}`, {
         session: session.name,
-        consecutive_failures: s.consecutive_failures + 1,
+        consecutive_failures: updated.consecutive_failures,
         threshold: healthConfig.unhealthy_threshold
       });
-      if (s.consecutive_failures + 1 >= healthConfig.unhealthy_threshold) {
-        if (s.status === "running") {
+      if (updated.consecutive_failures >= healthConfig.unhealthy_threshold) {
+        if (updated.status === "running") {
           state.transition(session.name, "degraded");
-        } else if (s.status === "degraded") {
-          if (s.restart_count >= session.max_restarts) {
+        } else if (updated.status === "degraded") {
+          if (updated.restart_count >= session.max_restarts) {
             state.transition(
               session.name,
               "failed",
@@ -2069,6 +2082,8 @@ var Daemon = class _Daemon {
   healthTimer = null;
   memoryTimer = null;
   adbRetryTimer = null;
+  /** Pending auto-restart timers — tracked so shutdown() can cancel them */
+  restartTimers = /* @__PURE__ */ new Set();
   adbSerial = null;
   adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -2163,10 +2178,14 @@ var Daemon = class _Daemon {
     const timedOut = await this.startAllSessions(bootDeadline);
     this.startCron();
     setTimeout(() => {
-      const tabResult = this.cmdTabs();
-      if (tabResult.ok) {
-        const data = tabResult.data;
-        this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+      try {
+        const tabResult = this.cmdTabs();
+        if (tabResult.ok) {
+          const data = tabResult.data;
+          this.log.info(`Auto-tabs: restored=${data.restored} skipped=${data.skipped}`);
+        }
+      } catch (err) {
+        this.log.warn(`Auto-tabs failed: ${err}`);
       }
     }, 3e3);
     this.state.setBootComplete(true);
@@ -2199,6 +2218,10 @@ var Daemon = class _Daemon {
       clearInterval(this.adbRetryTimer);
       this.adbRetryTimer = null;
     }
+    for (const timer of this.restartTimers) {
+      clearTimeout(timer);
+    }
+    this.restartTimers.clear();
     const shutdownOrder = computeShutdownOrder(this.config.sessions);
     for (const batch of shutdownOrder) {
       const stopPromises = batch.sessions.map(async (name) => {
@@ -2352,6 +2375,7 @@ var Daemon = class _Daemon {
     } else {
       this.state.forceStatus(name, "stopped");
     }
+    this.activity.remove(name);
     this.wake.evaluate("session_change", this.state.getState().sessions);
     return stopped;
   }
@@ -2583,7 +2607,9 @@ var Daemon = class _Daemon {
         session: session.name
       });
       this.state.transition(session.name, "starting");
-      setTimeout(async () => {
+      const timer = setTimeout(async () => {
+        this.restartTimers.delete(timer);
+        this.activity.remove(session.name);
         await stopSession(session.name, this.log);
         const created = createSession(session, this.log);
         if (created) {
@@ -2596,6 +2622,7 @@ var Daemon = class _Daemon {
           this.state.transition(session.name, "failed", "Restart failed");
         }
       }, backoffMs);
+      this.restartTimers.add(timer);
     }
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
@@ -3237,7 +3264,7 @@ var Daemon = class _Daemon {
   }
   /** Tabs command — create Termux UI tabs for sessions */
   cmdTabs(names) {
-    const targetSessions = names?.length ? names.map((n) => this.resolveName(n)).filter(Boolean) : this.config.sessions.filter((s) => !s.headless && s.enabled).map((s) => s.name);
+    const targetSessions = names?.length ? names.map((n) => this.resolveName(n)).filter((n) => n !== null) : this.config.sessions.filter((s) => !s.headless && s.enabled).map((s) => s.name);
     let restored = 0;
     let skipped = 0;
     for (const name of targetSessions) {
@@ -3397,6 +3424,22 @@ var STATUS_COLORS = {
   failed: `${RED}failed${RESET2}`,
   pending: `${DIM2}pending${RESET2}`
 };
+function resolveBunPath() {
+  try {
+    const result = (0, import_node_child_process7.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
+    if (result.stdout?.trim()) return result.stdout.trim();
+  } catch {
+  }
+  const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+  const candidates = [
+    (0, import_node_path5.join)(home, ".bun", "bin", "bun"),
+    (0, import_node_path5.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
+  ];
+  for (const p of candidates) {
+    if ((0, import_node_fs11.existsSync)(p)) return p;
+  }
+  return process.argv[0];
+}
 var args = process.argv.slice(2);
 var command = args[0] ?? "status";
 var subArgs = args.slice(1);
@@ -3462,7 +3505,8 @@ async function runBoot() {
     (0, import_node_fs11.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
     const stderrFd = (0, import_node_fs11.openSync)(stderrPath, "a");
-    const child = (0, import_node_child_process7.spawn)(process.argv[0], [process.argv[1], ...daemonArgs], {
+    const bunPath = resolveBunPath();
+    const child = (0, import_node_child_process7.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd]
     });

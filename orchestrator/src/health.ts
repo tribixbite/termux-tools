@@ -29,13 +29,22 @@ export function checkSessionHealth(
         return tmuxAliveCheck(sessionName, start);
 
       case "http":
-        return httpCheck(sessionName, healthConfig.url!, start);
+        if (!healthConfig.url) {
+          return { session: sessionName, healthy: false, message: "HTTP check missing 'url' config", duration_ms: Date.now() - start };
+        }
+        return httpCheck(sessionName, healthConfig.url, start);
 
       case "process":
-        return processCheck(sessionName, healthConfig.process_pattern!, start);
+        if (!healthConfig.process_pattern) {
+          return { session: sessionName, healthy: false, message: "Process check missing 'process_pattern' config", duration_ms: Date.now() - start };
+        }
+        return processCheck(sessionName, healthConfig.process_pattern, start);
 
       case "custom":
-        return customCheck(sessionName, healthConfig.command!, start);
+        if (!healthConfig.command) {
+          return { session: sessionName, healthy: false, message: "Custom check missing 'command' config", duration_ms: Date.now() - start };
+        }
+        return customCheck(sessionName, healthConfig.command, start);
 
       default:
         return {
@@ -167,29 +176,33 @@ export function runHealthSweep(
     const result = checkSessionHealth(session.name, healthConfig, log);
     results.push(result);
 
-    // Record the result in state
+    // Record the result in state (mutates s in place)
     state.recordHealthCheck(session.name, result.healthy, result.message);
+
+    // Re-read session state after mutation to get current consecutive_failures
+    const updated = state.getSession(session.name);
+    if (!updated) continue;
 
     if (result.healthy) {
       // If degraded and now healthy, transition back to running
-      if (s.status === "degraded") {
+      if (updated.status === "degraded") {
         state.transition(session.name, "starting"); // will go running after next check
         log.info(`Session '${session.name}' recovered`, { session: session.name });
       }
     } else {
       log.warn(`Health check failed for '${session.name}': ${result.message}`, {
         session: session.name,
-        consecutive_failures: s.consecutive_failures + 1,
+        consecutive_failures: updated.consecutive_failures,
         threshold: healthConfig.unhealthy_threshold,
       });
 
       // Check if we've exceeded the unhealthy threshold
-      if (s.consecutive_failures + 1 >= healthConfig.unhealthy_threshold) {
-        if (s.status === "running") {
+      if (updated.consecutive_failures >= healthConfig.unhealthy_threshold) {
+        if (updated.status === "running") {
           state.transition(session.name, "degraded");
-        } else if (s.status === "degraded") {
+        } else if (updated.status === "degraded") {
           // Check if we should auto-restart or fail
-          if (s.restart_count >= session.max_restarts) {
+          if (updated.restart_count >= session.max_restarts) {
             state.transition(session.name, "failed",
               `Exceeded max restarts (${session.max_restarts})`);
           }
