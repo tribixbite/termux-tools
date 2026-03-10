@@ -6,8 +6,8 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync } from "node:fs";
-import { spawn } from "node:child_process";
-import { dirname } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
 import { IpcClient } from "./ipc.js";
 import { Daemon } from "./daemon.js";
 import { loadConfig, findConfigPath, validateConfigFile } from "./config.js";
@@ -37,6 +37,31 @@ const STATUS_COLORS: Record<string, string> = {
   failed:   `${RED}failed${RESET}`,
   pending:  `${DIM}pending${RESET}`,
 };
+
+/**
+ * Resolve the bun wrapper path for spawning child processes.
+ * On Termux, `bun` is a bash wrapper that invokes grun (glibc-runner) + buno.
+ * process.argv[0] resolves to the raw buno binary which can't run standalone
+ * on Android (causes "invalid ELF header"). We need the wrapper script.
+ */
+function resolveBunPath(): string {
+  // Try `which bun` first — returns the wrapper script path
+  try {
+    const result = spawnSync("which", ["bun"], { encoding: "utf-8", timeout: 3000 });
+    if (result.stdout?.trim()) return result.stdout.trim();
+  } catch { /* fall through */ }
+  // Fallback: check common locations
+  const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+  const candidates = [
+    join(home, ".bun", "bin", "bun"),
+    join(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  // Last resort — use process.argv[0] and hope for the best
+  return process.argv[0];
+}
 
 // -- CLI router ---------------------------------------------------------------
 
@@ -128,8 +153,11 @@ async function runBoot(): Promise<void> {
     const stderrPath = `${logDir}/daemon-stderr.log`;
     const stderrFd = openSync(stderrPath, "a");
 
-    // Use the same executable that invoked us
-    const child = spawn(process.argv[0], [process.argv[1], ...daemonArgs], {
+    // Spawn daemon using the bun wrapper (not process.argv[0] which may be the
+    // raw buno binary under glibc-runner — spawning it directly bypasses grun
+    // and causes "invalid ELF header" on Android/Termux).
+    const bunPath = resolveBunPath();
+    const child = spawn(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd],
     });
