@@ -63,12 +63,56 @@ function resolveAdbPath(): string {
 
 const ADB_BIN = resolveAdbPath();
 
-/** Send a Termux notification */
+/** Resolve full path for a Termux binary (bun's spawnSync can't find $PREFIX/bin via PATH) */
+function resolveTermuxBin(name: string): string {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const candidate = join(prefix, "bin", name);
+  try { if (existsSync(candidate)) return candidate; } catch { /* fall through */ }
+  return name;
+}
+
+/** Env for Termux:API commands — bun's glibc runner strips LD_PRELOAD needed by am/app_process */
+function termuxApiEnv(): NodeJS.ProcessEnv {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const ldPreload = join(prefix, "lib", "libtermux-exec-ld-preload.so");
+  return { ...process.env, LD_PRELOAD: ldPreload };
+}
+
+const TERMUX_NOTIFICATION_BIN = resolveTermuxBin("termux-notification");
+
+/** Send a Termux notification (one-shot) */
 function notify(title: string, content: string): void {
   try {
-    spawnSync("termux-notification", ["--title", title, "--content", content], {
+    spawnSync(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content], {
       timeout: 5000,
       stdio: "ignore",
+      env: termuxApiEnv(),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** Send a Termux notification with arbitrary extra args (for --ongoing, --id, etc.) */
+function notifyWithArgs(args: string[]): void {
+  try {
+    spawnSync(TERMUX_NOTIFICATION_BIN, args, {
+      timeout: 5000,
+      stdio: "ignore",
+      env: termuxApiEnv(),
+    });
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** Remove a Termux notification by ID */
+function removeNotification(id: string): void {
+  try {
+    spawnSync(resolveTermuxBin("termux-notification-remove"), [id], {
+      timeout: 5000,
+      stdio: "ignore",
+      env: termuxApiEnv(),
     });
   } catch {
     // Non-fatal
@@ -289,6 +333,9 @@ export class Daemon {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
       notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
     }
+
+    // Initial persistent status notification
+    this.updateStatusNotification();
   }
 
   /** Graceful shutdown — reverse-order stop, release wake lock, exit */
@@ -349,6 +396,9 @@ export class Daemon {
 
     // Stop IPC server
     this.ipc.stop();
+
+    // Remove persistent status notification
+    removeNotification("tmx-status");
 
     this.running = false;
     this.log.info("Shutdown complete");
@@ -921,6 +971,9 @@ export class Daemon {
 
     // Push SSE update with combined state+memory
     this.pushSseState();
+
+    // Update persistent status notification in system bar
+    this.updateStatusNotification();
   }
 
   /** Push current state snapshot to all SSE clients */
@@ -931,6 +984,48 @@ export class Daemon {
     if (statusResp.ok) {
       this.dashboard.pushEvent("state", statusResp.data);
     }
+  }
+
+  /**
+   * Update the persistent Android notification with active/total session counts.
+   * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
+   * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
+   */
+  private updateStatusNotification(): void {
+    const sessions = this.state.getState().sessions;
+    const activeNames: string[] = [];
+    const idleNames: string[] = [];
+    let totalRunning = 0;
+
+    for (const [name, s] of Object.entries(sessions)) {
+      if (s.status === "running" || s.status === "degraded") {
+        totalRunning++;
+        if (s.activity === "active") {
+          activeNames.push(name);
+        } else {
+          idleNames.push(name);
+        }
+      }
+    }
+
+    const activeCount = activeNames.length;
+    const title = `tmx ▶ ${activeCount}/${totalRunning}`;
+
+    // Build content lines showing session names
+    const parts: string[] = [];
+    if (activeNames.length > 0) parts.push(`active: ${activeNames.join(", ")}`);
+    if (idleNames.length > 0) parts.push(`idle: ${idleNames.join(", ")}`);
+    const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
+
+    notifyWithArgs([
+      "--ongoing",
+      "--alert-once",
+      "--id", "tmx-status",
+      "--priority", "low",
+      "--title", title,
+      "--content", content,
+      "--action", "open:http://localhost:18970",
+    ]);
   }
 
   /**

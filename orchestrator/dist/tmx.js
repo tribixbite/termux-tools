@@ -1275,30 +1275,58 @@ async function stopSession(name, log, timeoutMs = 1e4) {
   }
   return stopped;
 }
+function ensureAttachScript() {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const scriptPath = (0, import_node_path2.join)(prefix, "tmp", "tmx-attach.sh");
+  try {
+    (0, import_node_fs5.writeFileSync)(scriptPath, [
+      `#!/data/data/com.termux/files/usr/bin/bash`,
+      `printf '\\033]0;%s\\007' "$1"`,
+      `exec tmux attach -t "$1"`,
+      ""
+    ].join("\n"), { mode: 493 });
+  } catch {
+  }
+  return scriptPath;
+}
 function createTermuxTab(sessionName, log) {
   const env = amEnv();
   tmux("set-option", "-g", "set-titles", "on");
   tmux("set-option", "-g", "set-titles-string", "#S");
   const targetClients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
   if (targetClients && targetClients.trim().length > 0) {
-    log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
+    log.info(`Session '${sessionName}' already has a client, skipping tab creation`, { session: sessionName });
     const clientTty = targetClients.trim().split("\n")[0];
     try {
       (0, import_node_fs5.writeFileSync)(clientTty, `\x1B]0;${sessionName}\x07`);
     } catch {
     }
-    const actArgs2 = [
-      "start",
-      "-a",
-      "android.intent.action.MAIN",
-      "-c",
-      "android.intent.category.LAUNCHER",
-      "-n",
-      "com.termux/com.termux.app.TermuxActivity"
-    ];
-    (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs2, { timeout: 3e3, stdio: "ignore", env });
     return true;
   }
+  const scriptPath = ensureAttachScript();
+  const svcResult = (0, import_node_child_process3.spawnSync)(AM_BIN, [
+    "startservice",
+    "-n",
+    "com.termux/.app.TermuxService",
+    "-a",
+    "com.termux.service_execute",
+    "-d",
+    `file://${scriptPath}`,
+    "--esa",
+    "com.termux.execute.arguments",
+    sessionName,
+    "--ei",
+    "com.termux.execute.session_action",
+    "0",
+    "--es",
+    "com.termux.execute.shell_name",
+    sessionName
+  ], { timeout: 5e3, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8", env });
+  if (svcResult.status === 0) {
+    log.info(`Created Termux tab for '${sessionName}' via TermuxService`, { session: sessionName });
+    return true;
+  }
+  log.debug(`TermuxService failed for '${sessionName}', trying switch-client fallback`, { session: sessionName });
   const allClients = tmux("list-clients", "-F", "#{client_name}:#{client_tty}");
   if (allClients && allClients.trim().length > 0) {
     const firstClient = allClients.trim().split("\n")[0];
@@ -1309,29 +1337,14 @@ function createTermuxTab(sessionName, log) {
     if (switched !== null) {
       log.info(`Switched client '${clientName}' to session '${sessionName}'`, { session: sessionName });
       tmux("refresh-client", "-c", clientName);
-    } else {
-      log.warn(`Failed to switch client to '${sessionName}'`, { session: sessionName });
     }
     try {
       (0, import_node_fs5.writeFileSync)(clientTty, `\x1B]0;${sessionName}\x07`);
-      log.debug(`Wrote title escape to ${clientTty}`, { session: sessionName });
     } catch {
-      log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
     }
   } else {
     log.warn(`No tmux clients found \u2014 open Termux and run: tmux attach -t ${sessionName}`, { session: sessionName });
   }
-  const actArgs = [
-    "start",
-    "-a",
-    "android.intent.action.MAIN",
-    "-c",
-    "android.intent.category.LAUNCHER",
-    "-n",
-    "com.termux/com.termux.app.TermuxActivity"
-  ];
-  (0, import_node_child_process3.spawnSync)(AM_BIN, actArgs, { timeout: 3e3, stdio: "ignore", env });
-  log.info(`Brought Termux to foreground for '${sessionName}'`, { session: sessionName });
   return true;
 }
 function sleep(ms) {
@@ -2390,11 +2403,47 @@ function resolveAdbPath() {
   return "adb";
 }
 var ADB_BIN = resolveAdbPath();
+function resolveTermuxBin3(name) {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const candidate = (0, import_node_path6.join)(prefix, "bin", name);
+  try {
+    if ((0, import_node_fs11.existsSync)(candidate)) return candidate;
+  } catch {
+  }
+  return name;
+}
+function termuxApiEnv2() {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const ldPreload = (0, import_node_path6.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
+  return { ...process.env, LD_PRELOAD: ldPreload };
+}
+var TERMUX_NOTIFICATION_BIN = resolveTermuxBin3("termux-notification");
 function notify(title, content) {
   try {
-    (0, import_node_child_process7.spawnSync)("termux-notification", ["--title", title, "--content", content], {
+    (0, import_node_child_process7.spawnSync)(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content], {
       timeout: 5e3,
-      stdio: "ignore"
+      stdio: "ignore",
+      env: termuxApiEnv2()
+    });
+  } catch {
+  }
+}
+function notifyWithArgs(args2) {
+  try {
+    (0, import_node_child_process7.spawnSync)(TERMUX_NOTIFICATION_BIN, args2, {
+      timeout: 5e3,
+      stdio: "ignore",
+      env: termuxApiEnv2()
+    });
+  } catch {
+  }
+}
+function removeNotification(id) {
+  try {
+    (0, import_node_child_process7.spawnSync)(resolveTermuxBin3("termux-notification-remove"), [id], {
+      timeout: 5e3,
+      stdio: "ignore",
+      env: termuxApiEnv2()
     });
   } catch {
   }
@@ -2560,6 +2609,7 @@ var Daemon = class _Daemon {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
       notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
     }
+    this.updateStatusNotification();
   }
   /** Graceful shutdown — reverse-order stop, release wake lock, exit */
   shutdownInProgress = false;
@@ -2605,6 +2655,7 @@ var Daemon = class _Daemon {
       this.dashboard = null;
     }
     this.ipc.stop();
+    removeNotification("tmx-status");
     this.running = false;
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
@@ -3034,6 +3085,7 @@ var Daemon = class _Daemon {
       this.shedIdleSessions(sysMem.pressure);
     }
     this.pushSseState();
+    this.updateStatusNotification();
   }
   /** Push current state snapshot to all SSE clients */
   pushSseState() {
@@ -3042,6 +3094,47 @@ var Daemon = class _Daemon {
     if (statusResp.ok) {
       this.dashboard.pushEvent("state", statusResp.data);
     }
+  }
+  /**
+   * Update the persistent Android notification with active/total session counts.
+   * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
+   * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
+   */
+  updateStatusNotification() {
+    const sessions = this.state.getState().sessions;
+    const activeNames = [];
+    const idleNames = [];
+    let totalRunning = 0;
+    for (const [name, s] of Object.entries(sessions)) {
+      if (s.status === "running" || s.status === "degraded") {
+        totalRunning++;
+        if (s.activity === "active") {
+          activeNames.push(name);
+        } else {
+          idleNames.push(name);
+        }
+      }
+    }
+    const activeCount = activeNames.length;
+    const title = `tmx \u25B6 ${activeCount}/${totalRunning}`;
+    const parts = [];
+    if (activeNames.length > 0) parts.push(`active: ${activeNames.join(", ")}`);
+    if (idleNames.length > 0) parts.push(`idle: ${idleNames.join(", ")}`);
+    const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
+    notifyWithArgs([
+      "--ongoing",
+      "--alert-once",
+      "--id",
+      "tmx-status",
+      "--priority",
+      "low",
+      "--title",
+      title,
+      "--content",
+      content,
+      "--action",
+      "open:http://localhost:18970"
+    ]);
   }
   /**
    * Shed sessions to reduce memory pressure.
@@ -3777,7 +3870,8 @@ var Daemon = class _Daemon {
     const targetSessions = names?.length ? names.map((n) => this.resolveName(n)).filter((n) => n !== null) : this.config.sessions.filter((s) => !s.headless && s.enabled).map((s) => s.name);
     let restored = 0;
     let skipped = 0;
-    for (const name of targetSessions) {
+    for (let i = 0; i < targetSessions.length; i++) {
+      const name = targetSessions[i];
       if (!sessionExists(name)) {
         skipped++;
         continue;
@@ -3786,6 +3880,9 @@ var Daemon = class _Daemon {
         restored++;
       } else {
         skipped++;
+      }
+      if (i < targetSessions.length - 1) {
+        (0, import_node_child_process7.spawnSync)("sleep", ["1.5"], { timeout: 3e3 });
       }
     }
     return { ok: true, data: { restored, skipped, total: targetSessions.length } };
@@ -4044,6 +4141,19 @@ async function runBoot() {
   } else {
     console.error(`${RED}Boot failed: ${resp.error}${RESET2}`);
     process.exit(1);
+  }
+  if (subArgs.includes("--attach")) {
+    await sleep3(1e3);
+    const tmuxBin = (0, import_node_path7.join)(
+      process.env.PREFIX ?? "/data/data/com.termux/files/usr",
+      "bin",
+      "tmux"
+    );
+    const { execSync: execSyncLocal } = await import("node:child_process");
+    try {
+      execSyncLocal(`exec "${tmuxBin}" attach`, { stdio: "inherit" });
+    } catch {
+    }
   }
 }
 function printStartupDiagnostics(logDir, stderrPath) {
