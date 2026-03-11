@@ -27,9 +27,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs11 = require("node:fs");
-var import_node_child_process7 = require("node:child_process");
-var import_node_path5 = require("node:path");
+var import_node_fs12 = require("node:fs");
+var import_node_child_process8 = require("node:child_process");
+var import_node_path6 = require("node:path");
 
 // src/ipc.ts
 var net = __toESM(require("node:net"));
@@ -193,9 +193,9 @@ var IpcClient = class {
 };
 
 // src/daemon.ts
-var import_node_child_process6 = require("node:child_process");
-var import_node_fs9 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_child_process7 = require("node:child_process");
+var import_node_fs10 = require("node:fs");
+var import_node_path5 = require("node:path");
 
 // src/config.ts
 var import_node_fs2 = require("node:fs");
@@ -361,6 +361,12 @@ function validateConfig(raw) {
     phantom_fix: asBool(adbRaw.phantom_fix, "adb.phantom_fix", true),
     boot_delay_s: asNumber(adbRaw.boot_delay_s, "adb.boot_delay_s", 15)
   };
+  const batRaw = raw.battery ?? {};
+  const battery = {
+    enabled: asBool(batRaw.enabled, "battery.enabled", true),
+    low_threshold_pct: asNumber(batRaw.low_threshold_pct, "battery.low_threshold_pct", 10),
+    poll_interval_s: asNumber(batRaw.poll_interval_s, "battery.poll_interval_s", 60)
+  };
   const hdRaw = raw.health_defaults ?? {};
   const health_defaults = {};
   for (const type of VALID_SESSION_TYPES) {
@@ -446,7 +452,7 @@ function validateConfig(raw) {
     throw new Error(`Config validation failed:
   ${errors.join("\n  ")}`);
   }
-  return { orchestrator, adb, sessions, health_defaults };
+  return { orchestrator, adb, battery, sessions, health_defaults };
 }
 function asString(val, path, fallback) {
   if (val == null) return fallback;
@@ -817,6 +823,10 @@ var StateManager = class {
   /** Update system memory snapshot (transient, not persisted) */
   updateSystemMemory(memory) {
     this.state.memory = memory;
+  }
+  /** Update battery snapshot (transient, not persisted) */
+  updateBattery(battery) {
+    this.state.battery = battery;
   }
   /** Force-set a session's status (for adoption/reconciliation) */
   forceStatus(name, status) {
@@ -1781,10 +1791,196 @@ var ActivityDetector = class {
   }
 };
 
+// src/battery.ts
+var import_node_fs8 = require("node:fs");
+var import_node_child_process6 = require("node:child_process");
+var import_node_path3 = require("node:path");
+function termuxApiEnv() {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const ldPreload = (0, import_node_path3.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
+  return { ...process.env, LD_PRELOAD: ldPreload };
+}
+function resolveTermuxBin2(name) {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const candidate = (0, import_node_path3.join)(prefix, "bin", name);
+  try {
+    if ((0, import_node_fs8.existsSync)(candidate)) return candidate;
+  } catch {
+  }
+  return name;
+}
+var BatteryMonitor = class {
+  log;
+  lowThresholdPct;
+  actionState = {
+    actionsApplied: false,
+    appliedAtPct: 0,
+    appliedAt: 0
+  };
+  constructor(log, lowThresholdPct = 10) {
+    this.log = log;
+    this.lowThresholdPct = lowThresholdPct;
+  }
+  /** Update threshold (e.g. from config reload) */
+  setThreshold(pct) {
+    this.lowThresholdPct = pct;
+  }
+  /** Read current battery status */
+  getBatteryStatus() {
+    try {
+      const bin = resolveTermuxBin2("termux-battery-status");
+      const result = (0, import_node_child_process6.spawnSync)(bin, [], {
+        encoding: "utf-8",
+        timeout: 8e3,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: termuxApiEnv()
+      });
+      if (result.status === 0 && result.stdout) {
+        const data = JSON.parse(result.stdout);
+        return {
+          percentage: data.percentage,
+          charging: data.status === "CHARGING" || data.status === "FULL" || data.plugged !== "UNPLUGGED",
+          temperature: data.temperature,
+          health: data.health ?? "UNKNOWN"
+        };
+      }
+    } catch {
+    }
+    try {
+      const base = "/sys/class/power_supply/battery";
+      if (!(0, import_node_fs8.existsSync)(base)) return null;
+      const capacity = parseInt((0, import_node_fs8.readFileSync)(`${base}/capacity`, "utf-8").trim(), 10);
+      const statusStr = (0, import_node_fs8.readFileSync)(`${base}/status`, "utf-8").trim();
+      let temp = 0;
+      try {
+        temp = parseInt((0, import_node_fs8.readFileSync)(`${base}/temp`, "utf-8").trim(), 10) / 10;
+      } catch {
+      }
+      return {
+        percentage: isNaN(capacity) ? 0 : capacity,
+        charging: statusStr === "Charging" || statusStr === "Full",
+        temperature: temp,
+        health: "UNKNOWN"
+      };
+    } catch {
+      return null;
+    }
+  }
+  /**
+   * Check battery and take action if below threshold.
+   * Returns the battery status, or null if unavailable.
+   * Only takes action (disable wifi/data) when:
+   * - Battery is below threshold
+   * - Device is NOT charging
+   * - Actions haven't already been applied at this level
+   */
+  checkAndAct() {
+    const status = this.getBatteryStatus();
+    if (!status) return null;
+    const isLow = status.percentage <= this.lowThresholdPct && !status.charging;
+    if (isLow && !this.actionState.actionsApplied) {
+      this.log.warn(`Battery critically low: ${status.percentage}% (threshold: ${this.lowThresholdPct}%), not charging \u2014 disabling radios`, {
+        battery_pct: status.percentage,
+        charging: status.charging
+      });
+      this.disableRadios();
+      this.sendAlert(status.percentage);
+      this.actionState = {
+        actionsApplied: true,
+        appliedAtPct: status.percentage,
+        appliedAt: Date.now()
+      };
+    }
+    if (this.actionState.actionsApplied && status.charging && status.percentage > this.lowThresholdPct + 5) {
+      this.log.info(`Battery recovered to ${status.percentage}% and charging \u2014 re-enabling radios`);
+      this.enableRadios();
+      this.actionState.actionsApplied = false;
+    }
+    return status;
+  }
+  /** Whether low-battery actions are currently in effect */
+  get actionsActive() {
+    return this.actionState.actionsApplied;
+  }
+  /** Disable wifi and mobile data to conserve battery */
+  disableRadios() {
+    const env = termuxApiEnv();
+    const wifiBin = resolveTermuxBin2("termux-wifi-enable");
+    try {
+      const result = (0, import_node_child_process6.spawnSync)(wifiBin, ["false"], {
+        timeout: 8e3,
+        stdio: "ignore",
+        env
+      });
+      if (result.status === 0) {
+        this.log.info("WiFi disabled (battery saver)");
+      } else {
+        this.log.warn("termux-wifi-enable failed");
+      }
+    } catch (err) {
+      this.log.warn(`Failed to disable WiFi: ${err}`);
+    }
+    try {
+      (0, import_node_child_process6.spawnSync)("svc", ["data", "disable"], { timeout: 3e3, stdio: "ignore", env });
+      this.log.info("Mobile data disabled (battery saver)");
+    } catch (err) {
+      this.log.warn(`Failed to disable mobile data: ${err}`);
+    }
+  }
+  /** Re-enable wifi and mobile data */
+  enableRadios() {
+    const env = termuxApiEnv();
+    const wifiBin = resolveTermuxBin2("termux-wifi-enable");
+    try {
+      (0, import_node_child_process6.spawnSync)(wifiBin, ["true"], { timeout: 8e3, stdio: "ignore", env });
+      this.log.info("WiFi re-enabled (battery recovered)");
+    } catch (err) {
+      this.log.warn(`Failed to re-enable WiFi: ${err}`);
+    }
+    try {
+      (0, import_node_child_process6.spawnSync)("svc", ["data", "enable"], { timeout: 3e3, stdio: "ignore", env });
+      this.log.info("Mobile data re-enabled (battery recovered)");
+    } catch (err) {
+      this.log.warn(`Failed to re-enable mobile data: ${err}`);
+    }
+  }
+  /** Send notification about low battery */
+  sendAlert(pct) {
+    const env = termuxApiEnv();
+    const notifyBin = resolveTermuxBin2("termux-notification");
+    const toastBin = resolveTermuxBin2("termux-toast");
+    try {
+      (0, import_node_child_process6.spawnSync)(notifyBin, [
+        "--title",
+        "LOW BATTERY",
+        "--content",
+        `Battery at ${pct}% and not charging. WiFi & mobile data disabled to conserve power. Plug in to restore.`,
+        "--priority",
+        "max",
+        "--id",
+        "tmx-battery-low",
+        "--vibrate",
+        "500,200,500"
+      ], { timeout: 8e3, stdio: "ignore", env });
+    } catch {
+    }
+    try {
+      (0, import_node_child_process6.spawnSync)(toastBin, [
+        "-b",
+        "red",
+        "-c",
+        "white",
+        `BATTERY ${pct}% \u2014 radios disabled`
+      ], { timeout: 5e3, stdio: "ignore", env });
+    } catch {
+    }
+  }
+};
+
 // src/http.ts
 var http = __toESM(require("node:http"));
-var import_node_fs8 = require("node:fs");
-var import_node_path3 = require("node:path");
+var import_node_fs9 = require("node:fs");
+var import_node_path4 = require("node:path");
 var MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -1925,19 +2121,19 @@ data: ${JSON.stringify({ id: clientId })}
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
     filePath = filePath.replace(/\.\./g, "");
-    let fullPath = (0, import_node_path3.join)(this.staticDir, filePath);
-    if ((0, import_node_fs8.existsSync)(fullPath) && (0, import_node_fs8.statSync)(fullPath).isDirectory()) {
-      fullPath = (0, import_node_path3.join)(fullPath, "index.html");
-    } else if (!(0, import_node_fs8.existsSync)(fullPath) || !(0, import_node_fs8.statSync)(fullPath).isFile()) {
-      const dirIndex = (0, import_node_path3.join)(this.staticDir, filePath, "index.html");
-      if ((0, import_node_fs8.existsSync)(dirIndex) && (0, import_node_fs8.statSync)(dirIndex).isFile()) {
+    let fullPath = (0, import_node_path4.join)(this.staticDir, filePath);
+    if ((0, import_node_fs9.existsSync)(fullPath) && (0, import_node_fs9.statSync)(fullPath).isDirectory()) {
+      fullPath = (0, import_node_path4.join)(fullPath, "index.html");
+    } else if (!(0, import_node_fs9.existsSync)(fullPath) || !(0, import_node_fs9.statSync)(fullPath).isFile()) {
+      const dirIndex = (0, import_node_path4.join)(this.staticDir, filePath, "index.html");
+      if ((0, import_node_fs9.existsSync)(dirIndex) && (0, import_node_fs9.statSync)(dirIndex).isFile()) {
         fullPath = dirIndex;
       }
     }
-    if (!(0, import_node_fs8.existsSync)(fullPath) || !(0, import_node_fs8.statSync)(fullPath).isFile()) {
-      const indexPath = (0, import_node_path3.join)(this.staticDir, "index.html");
-      if ((0, import_node_fs8.existsSync)(indexPath)) {
-        const content2 = (0, import_node_fs8.readFileSync)(indexPath);
+    if (!(0, import_node_fs9.existsSync)(fullPath) || !(0, import_node_fs9.statSync)(fullPath).isFile()) {
+      const indexPath = (0, import_node_path4.join)(this.staticDir, "index.html");
+      if ((0, import_node_fs9.existsSync)(indexPath)) {
+        const content2 = (0, import_node_fs9.readFileSync)(indexPath);
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(content2);
         return;
@@ -1946,9 +2142,9 @@ data: ${JSON.stringify({ id: clientId })}
       res.end(this.getFallbackHtml());
       return;
     }
-    const ext = (0, import_node_path3.extname)(fullPath).toLowerCase();
+    const ext = (0, import_node_path4.extname)(fullPath).toLowerCase();
     const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-    const content = (0, import_node_fs8.readFileSync)(fullPath);
+    const content = (0, import_node_fs9.readFileSync)(fullPath);
     const cacheControl = ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
     res.writeHead(200, {
       "Content-Type": contentType,
@@ -2020,13 +2216,13 @@ function sleep2(ms) {
 }
 function resolveAdbPath() {
   try {
-    const result = (0, import_node_child_process6.spawnSync)("which", ["adb"], { encoding: "utf-8", timeout: 3e3 });
+    const result = (0, import_node_child_process7.spawnSync)("which", ["adb"], { encoding: "utf-8", timeout: 3e3 });
     if (result.stdout?.trim()) return result.stdout.trim();
   } catch {
   }
   const candidates = [
-    (0, import_node_path4.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
-    (0, import_node_path4.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
+    (0, import_node_path5.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    (0, import_node_path5.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
   ];
   for (const p of candidates) {
     try {
@@ -2039,7 +2235,7 @@ function resolveAdbPath() {
 var ADB_BIN = resolveAdbPath();
 function notify(title, content) {
   try {
-    (0, import_node_child_process6.spawnSync)("termux-notification", ["--title", title, "--content", content], {
+    (0, import_node_child_process7.spawnSync)("termux-notification", ["--title", title, "--content", content], {
       timeout: 5e3,
       stdio: "ignore"
     });
@@ -2048,7 +2244,7 @@ function notify(title, content) {
 }
 function resolveLocalIp() {
   try {
-    const result = (0, import_node_child_process6.spawnSync)("ip", ["route", "get", "1"], {
+    const result = (0, import_node_child_process7.spawnSync)("ip", ["route", "get", "1"], {
       encoding: "utf-8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "pipe"]
@@ -2058,7 +2254,7 @@ function resolveLocalIp() {
   } catch {
   }
   try {
-    const result = (0, import_node_child_process6.spawnSync)("ifconfig", ["wlan0"], {
+    const result = (0, import_node_child_process7.spawnSync)("ifconfig", ["wlan0"], {
       encoding: "utf-8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "pipe"]
@@ -2078,9 +2274,11 @@ var Daemon = class _Daemon {
   wake;
   memory;
   activity;
+  battery;
   dashboard = null;
   healthTimer = null;
   memoryTimer = null;
+  batteryTimer = null;
   adbRetryTimer = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   restartTimers = /* @__PURE__ */ new Set();
@@ -2104,6 +2302,7 @@ var Daemon = class _Daemon {
       this.config.orchestrator.memory_emergency_mb
     );
     this.activity = new ActivityDetector(this.log);
+    this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
       (cmd) => this.handleIpcCommand(cmd),
@@ -2117,18 +2316,18 @@ var Daemon = class _Daemon {
    */
   preflight() {
     const { log_dir, state_file, socket } = this.config.orchestrator;
-    if (!(0, import_node_fs9.existsSync)(log_dir)) {
-      (0, import_node_fs9.mkdirSync)(log_dir, { recursive: true });
+    if (!(0, import_node_fs10.existsSync)(log_dir)) {
+      (0, import_node_fs10.mkdirSync)(log_dir, { recursive: true });
       this.log.debug(`Created log directory: ${log_dir}`);
     }
-    const stateDir = (0, import_node_path4.dirname)(state_file);
-    if (!(0, import_node_fs9.existsSync)(stateDir)) {
-      (0, import_node_fs9.mkdirSync)(stateDir, { recursive: true });
+    const stateDir = (0, import_node_path5.dirname)(state_file);
+    if (!(0, import_node_fs10.existsSync)(stateDir)) {
+      (0, import_node_fs10.mkdirSync)(stateDir, { recursive: true });
       this.log.debug(`Created state directory: ${stateDir}`);
     }
-    const socketDir = (0, import_node_path4.dirname)(socket);
-    if (!(0, import_node_fs9.existsSync)(socketDir)) {
-      (0, import_node_fs9.mkdirSync)(socketDir, { recursive: true });
+    const socketDir = (0, import_node_path5.dirname)(socket);
+    if (!(0, import_node_fs10.existsSync)(socketDir)) {
+      (0, import_node_fs10.mkdirSync)(socketDir, { recursive: true });
       this.log.debug(`Created socket directory: ${socketDir}`);
     }
     const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
@@ -2152,6 +2351,7 @@ var Daemon = class _Daemon {
     this.setupSignalHandlers();
     this.startHealthTimer();
     this.startMemoryTimer();
+    this.startBatteryTimer();
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
     await new Promise((resolve) => {
@@ -2213,6 +2413,10 @@ var Daemon = class _Daemon {
     if (this.memoryTimer) {
       clearInterval(this.memoryTimer);
       this.memoryTimer = null;
+    }
+    if (this.batteryTimer) {
+      clearInterval(this.batteryTimer);
+      this.batteryTimer = null;
     }
     if (this.adbRetryTimer) {
       clearInterval(this.adbRetryTimer);
@@ -2429,7 +2633,7 @@ var Daemon = class _Daemon {
     const now = Date.now();
     if (this.adbSerial && now < this.adbSerialExpiry) return this.adbSerial;
     try {
-      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, ["devices"], {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -2448,7 +2652,7 @@ var Daemon = class _Daemon {
       }
       for (const serial of stale) {
         this.log.debug(`Disconnecting stale ADB device: ${serial}`);
-        (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", serial], { timeout: 3e3, stdio: "ignore" });
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", serial], { timeout: 3e3, stdio: "ignore" });
       }
       if (online.length === 0) {
         this.adbSerial = null;
@@ -2489,7 +2693,7 @@ var Daemon = class _Daemon {
     this.log.info("Attempting ADB connection for phantom process fix");
     const { connect_script, connect_timeout_s, phantom_fix } = this.config.adb;
     try {
-      const result = (0, import_node_child_process6.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
+      const result = (0, import_node_child_process7.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
         encoding: "utf-8",
         timeout: (connect_timeout_s + 5) * 1e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -2546,14 +2750,14 @@ var Daemon = class _Daemon {
     ];
     for (const cmd of shellCmds) {
       try {
-        (0, import_node_child_process6.spawnSync)(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 1e4, stdio: "ignore" });
       } catch (err) {
         this.log.warn(`Phantom fix command failed: ${cmd.join(" ")}`, { error: String(err) });
       }
     }
     for (const pkg of samsungPkgs) {
       try {
-        (0, import_node_child_process6.spawnSync)(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 1e4, stdio: "ignore" });
       } catch {
       }
     }
@@ -2724,6 +2928,30 @@ var Daemon = class _Daemon {
       notify("tmx memory", `${pressure} memory pressure \u2014 no sessions to shed`);
     }
   }
+  // -- Battery monitoring ------------------------------------------------------
+  /** Start periodic battery monitoring timer */
+  startBatteryTimer() {
+    if (!this.config.battery.enabled) {
+      this.log.debug("Battery monitoring disabled");
+      return;
+    }
+    const intervalMs = this.config.battery.poll_interval_s * 1e3;
+    this.batteryTimer = setInterval(() => {
+      this.batteryPoll();
+    }, intervalMs);
+    this.batteryPoll();
+  }
+  /** Poll battery status, take action if critically low */
+  batteryPoll() {
+    const status = this.battery.checkAndAct();
+    if (!status) return;
+    this.state.updateBattery({
+      percentage: status.percentage,
+      charging: status.charging,
+      temperature: status.temperature,
+      radios_disabled: this.battery.actionsActive
+    });
+  }
   // -- Dashboard HTTP server ---------------------------------------------------
   /** Start HTTP dashboard server if port > 0 */
   async startDashboard() {
@@ -2733,7 +2961,7 @@ var Daemon = class _Daemon {
       return;
     }
     const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
-    const staticDir = (0, import_node_path4.join)(scriptDir, "..", "dashboard", "dist");
+    const staticDir = (0, import_node_path5.join)(scriptDir, "..", "dashboard", "dist");
     this.dashboard = new DashboardServer(
       port,
       staticDir,
@@ -2937,7 +3165,7 @@ var Daemon = class _Daemon {
    */
   getAndroidApps() {
     try {
-      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
         encoding: "utf-8",
         timeout: 8e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -2996,7 +3224,7 @@ var Daemon = class _Daemon {
       return { status: 403, data: { error: `Cannot stop system package: ${pkg}` } };
     }
     try {
-      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -3014,7 +3242,7 @@ var Daemon = class _Daemon {
   /** List connected ADB devices */
   getAdbDevices() {
     try {
-      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, ["devices"], {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -3031,12 +3259,12 @@ var Daemon = class _Daemon {
   }
   /** Initiate ADB wireless connection using the adbc script */
   adbWirelessConnect() {
-    const script = (0, import_node_path4.join)(
+    const script = (0, import_node_path5.join)(
       process.env.HOME ?? "/data/data/com.termux/files/home",
       "git/termux-tools/tools/adb-wireless-connect.sh"
     );
     try {
-      const result = (0, import_node_child_process6.spawnSync)("bash", [script], {
+      const result = (0, import_node_child_process7.spawnSync)("bash", [script], {
         encoding: "utf-8",
         timeout: 2e4,
         stdio: ["ignore", "pipe", "pipe"],
@@ -3056,7 +3284,7 @@ var Daemon = class _Daemon {
   /** Disconnect all ADB devices */
   adbDisconnectAll() {
     try {
-      (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", "-a"], {
+      (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", "-a"], {
         timeout: 5e3,
         stdio: "ignore"
       });
@@ -3070,7 +3298,7 @@ var Daemon = class _Daemon {
   /** Disconnect a specific ADB device by serial */
   adbDisconnectDevice(serial) {
     try {
-      const result = (0, import_node_child_process6.spawnSync)(ADB_BIN, ["disconnect", serial], {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", serial], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -3087,9 +3315,9 @@ var Daemon = class _Daemon {
   /** Start crond if not already running */
   startCron() {
     try {
-      const result = (0, import_node_child_process6.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
+      const result = (0, import_node_child_process7.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
       if (result.status !== 0) {
-        (0, import_node_child_process6.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
+        (0, import_node_child_process7.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
         this.log.info("Started crond");
       }
     } catch {
@@ -3117,6 +3345,7 @@ var Daemon = class _Daemon {
           this.config.orchestrator.memory_critical_mb,
           this.config.orchestrator.memory_emergency_mb
         );
+        this.battery.setThreshold(this.config.battery.low_threshold_pct);
         this.log.info("Config reloaded successfully");
       } catch (err) {
         this.log.error(`Config reload failed: ${err}`);
@@ -3176,6 +3405,7 @@ var Daemon = class _Daemon {
         budget: this.budget.check(),
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
+        battery: state.battery ?? null,
         sessions: Object.values(state.sessions).map((s) => ({
           ...s,
           uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
@@ -3305,12 +3535,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs10 = require("node:fs");
+var import_node_fs11 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs10.existsSync)(filePath)) {
+  if (!(0, import_node_fs11.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs10.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs11.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -3403,7 +3633,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs10.existsSync) ?? null;
+  return candidates.find(import_node_fs11.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -3426,17 +3656,17 @@ var STATUS_COLORS = {
 };
 function resolveBunPath() {
   try {
-    const result = (0, import_node_child_process7.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
+    const result = (0, import_node_child_process8.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
     if (result.stdout?.trim()) return result.stdout.trim();
   } catch {
   }
   const home = process.env.HOME ?? "/data/data/com.termux/files/home";
   const candidates = [
-    (0, import_node_path5.join)(home, ".bun", "bin", "bun"),
-    (0, import_node_path5.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
+    (0, import_node_path6.join)(home, ".bun", "bin", "bun"),
+    (0, import_node_path6.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
   ];
   for (const p of candidates) {
-    if ((0, import_node_fs11.existsSync)(p)) return p;
+    if ((0, import_node_fs12.existsSync)(p)) return p;
   }
   return process.argv[0];
 }
@@ -3502,16 +3732,16 @@ async function runBoot() {
     } catch {
       logDir = `${process.env.HOME}/.local/share/tmx/logs`;
     }
-    (0, import_node_fs11.mkdirSync)(logDir, { recursive: true });
+    (0, import_node_fs12.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
-    const stderrFd = (0, import_node_fs11.openSync)(stderrPath, "a");
+    const stderrFd = (0, import_node_fs12.openSync)(stderrPath, "a");
     const bunPath = resolveBunPath();
-    const child = (0, import_node_child_process7.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
+    const child = (0, import_node_child_process8.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd]
     });
     child.unref();
-    (0, import_node_fs11.closeSync)(stderrFd);
+    (0, import_node_fs12.closeSync)(stderrFd);
     for (let i = 0; i < 20; i++) {
       await sleep3(500);
       if (await client.isRunning()) break;
@@ -3534,8 +3764,8 @@ async function runBoot() {
 function printStartupDiagnostics(logDir, stderrPath) {
   console.error();
   try {
-    if ((0, import_node_fs11.existsSync)(stderrPath)) {
-      const stderr = (0, import_node_fs11.readFileSync)(stderrPath, "utf-8").trim();
+    if ((0, import_node_fs12.existsSync)(stderrPath)) {
+      const stderr = (0, import_node_fs12.readFileSync)(stderrPath, "utf-8").trim();
       if (stderr) {
         const lines = stderr.split("\n").slice(-20);
         console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET2}`);
@@ -3549,8 +3779,8 @@ function printStartupDiagnostics(logDir, stderrPath) {
   }
   try {
     const logFile = `${logDir}/tmx.jsonl`;
-    if ((0, import_node_fs11.existsSync)(logFile)) {
-      const content = (0, import_node_fs11.readFileSync)(logFile, "utf-8").trim();
+    if ((0, import_node_fs12.existsSync)(logFile)) {
+      const content = (0, import_node_fs12.readFileSync)(logFile, "utf-8").trim();
       if (content) {
         const entries = content.split("\n").slice(-10);
         console.error(`${YELLOW}Recent log entries:${RESET2}`);
@@ -3610,6 +3840,11 @@ function runConfig() {
   console.log(`  phantom_fix: ${config.adb.phantom_fix}`);
   console.log(`  boot_delay:  ${config.adb.boot_delay_s}s`);
   console.log();
+  console.log(`${BOLD}Battery${RESET2}`);
+  console.log(`  enabled:     ${config.battery.enabled}`);
+  console.log(`  low_thresh:  ${config.battery.low_threshold_pct}%`);
+  console.log(`  poll_every:  ${config.battery.poll_interval_s}s`);
+  console.log();
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET2}`);
   printSessionTable(config.sessions.map((s) => ({
     name: s.name,
@@ -3634,15 +3869,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs11.existsSync)(outDir)) {
-    (0, import_node_fs11.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs12.existsSync)(outDir)) {
+    (0, import_node_fs12.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs11.existsSync)(outPath)) {
+  if ((0, import_node_fs12.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs11.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs12.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs11.writeFileSync)(outPath, toml);
+    (0, import_node_fs12.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -3790,6 +4025,13 @@ function formatDaemonStatus(data) {
     const m = data.memory;
     const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED : m.pressure === "warning" ? YELLOW : GREEN;
     console.log(`  mem:   ${pressureColor}${m.available_mb}MB free${RESET2} / ${m.total_mb}MB (${m.pressure})`);
+  }
+  if (data.battery) {
+    const bat = data.battery;
+    const batColor = bat.percentage <= 10 ? RED : bat.percentage <= 25 ? YELLOW : GREEN;
+    const chargeIcon = bat.charging ? `${GREEN}charging${RESET2}` : `${DIM2}discharging${RESET2}`;
+    const radios = bat.radios_disabled ? ` ${RED}radios off${RESET2}` : "";
+    console.log(`  bat:   ${batColor}${bat.percentage}%${RESET2} ${chargeIcon} ${DIM2}${bat.temperature.toFixed(0)}\xB0C${RESET2}${radios}`);
   }
   console.log();
   if (data.sessions?.length > 0) {
@@ -3939,7 +4181,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs11.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs12.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

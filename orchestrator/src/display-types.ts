@@ -16,6 +16,15 @@ export interface DaemonStatusData {
   wake_lock: boolean;
   sessions: SessionSummary[];
   memory?: SystemMemorySummary | null;
+  battery?: BatterySummary | null;
+}
+
+/** Battery summary for display */
+export interface BatterySummary {
+  percentage: number;
+  charging: boolean;
+  temperature: number;
+  radios_disabled: boolean;
 }
 
 /** Per-session row in the status table */

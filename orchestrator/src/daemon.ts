@@ -23,6 +23,7 @@ import { computeStartupOrder, computeShutdownOrder } from "./deps.js";
 import { runHealthSweep } from "./health.js";
 import { MemoryMonitor } from "./memory.js";
 import { ActivityDetector } from "./activity.js";
+import { BatteryMonitor } from "./battery.js";
 import { DashboardServer } from "./http.js";
 import {
   createSession,
@@ -106,9 +107,11 @@ export class Daemon {
   private wake: WakeLockManager;
   private memory: MemoryMonitor;
   private activity: ActivityDetector;
+  private battery: BatteryMonitor;
   private dashboard: DashboardServer | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
+  private batteryTimer: ReturnType<typeof setInterval> | null = null;
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   private restartTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -133,6 +136,7 @@ export class Daemon {
       this.config.orchestrator.memory_emergency_mb,
     );
     this.activity = new ActivityDetector(this.log);
+    this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
 
     // Wire up IPC handler
     this.ipc = new IpcServer(
@@ -205,6 +209,9 @@ export class Daemon {
 
     // Start memory monitoring timer (every 15s)
     this.startMemoryTimer();
+
+    // Start battery monitoring timer
+    this.startBatteryTimer();
 
     // Start HTTP dashboard if configured
     await this.startDashboard();
@@ -292,6 +299,10 @@ export class Daemon {
     if (this.memoryTimer) {
       clearInterval(this.memoryTimer);
       this.memoryTimer = null;
+    }
+    if (this.batteryTimer) {
+      clearInterval(this.batteryTimer);
+      this.batteryTimer = null;
     }
     if (this.adbRetryTimer) {
       clearInterval(this.adbRetryTimer);
@@ -974,6 +985,36 @@ export class Daemon {
     }
   }
 
+  // -- Battery monitoring ------------------------------------------------------
+
+  /** Start periodic battery monitoring timer */
+  private startBatteryTimer(): void {
+    if (!this.config.battery.enabled) {
+      this.log.debug("Battery monitoring disabled");
+      return;
+    }
+    const intervalMs = this.config.battery.poll_interval_s * 1000;
+    this.batteryTimer = setInterval(() => {
+      this.batteryPoll();
+    }, intervalMs);
+    // Run an initial poll immediately
+    this.batteryPoll();
+  }
+
+  /** Poll battery status, take action if critically low */
+  private batteryPoll(): void {
+    const status = this.battery.checkAndAct();
+    if (!status) return;
+
+    // Update state for dashboard/status display
+    this.state.updateBattery({
+      percentage: status.percentage,
+      charging: status.charging,
+      temperature: status.temperature,
+      radios_disabled: this.battery.actionsActive,
+    });
+  }
+
   // -- Dashboard HTTP server ---------------------------------------------------
 
   /** Start HTTP dashboard server if port > 0 */
@@ -1418,6 +1459,7 @@ export class Daemon {
           this.config.orchestrator.memory_critical_mb,
           this.config.orchestrator.memory_emergency_mb,
         );
+        this.battery.setThreshold(this.config.battery.low_threshold_pct);
         this.log.info("Config reloaded successfully");
       } catch (err) {
         this.log.error(`Config reload failed: ${err}`);
@@ -1496,6 +1538,7 @@ export class Daemon {
         budget: this.budget.check(),
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
+        battery: state.battery ?? null,
         sessions: Object.values(state.sessions).map((s) => ({
           ...s,
           uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null,

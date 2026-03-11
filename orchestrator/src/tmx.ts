@@ -280,6 +280,12 @@ function runConfig(): void {
   console.log(`  boot_delay:  ${config.adb.boot_delay_s}s`);
   console.log();
 
+  console.log(`${BOLD}Battery${RESET}`);
+  console.log(`  enabled:     ${config.battery.enabled}`);
+  console.log(`  low_thresh:  ${config.battery.low_threshold_pct}%`);
+  console.log(`  poll_every:  ${config.battery.poll_interval_s}s`);
+  console.log();
+
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET}`);
   printSessionTable(config.sessions.map((s) => ({
     name: s.name,
@@ -502,6 +508,15 @@ function formatDaemonStatus(data: DaemonStatusData): void {
     const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED
       : m.pressure === "warning" ? YELLOW : GREEN;
     console.log(`  mem:   ${pressureColor}${m.available_mb}MB free${RESET} / ${m.total_mb}MB (${m.pressure})`);
+  }
+
+  // Show battery if available
+  if (data.battery) {
+    const bat = data.battery;
+    const batColor = bat.percentage <= 10 ? RED : bat.percentage <= 25 ? YELLOW : GREEN;
+    const chargeIcon = bat.charging ? `${GREEN}charging${RESET}` : `${DIM}discharging${RESET}`;
+    const radios = bat.radios_disabled ? ` ${RED}radios off${RESET}` : "";
+    console.log(`  bat:   ${batColor}${bat.percentage}%${RESET} ${chargeIcon} ${DIM}${bat.temperature.toFixed(0)}°C${RESET}${radios}`);
   }
   console.log();
 

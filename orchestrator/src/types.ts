@@ -98,6 +98,16 @@ export interface AdbConfig {
   boot_delay_s: number;
 }
 
+/** Battery monitoring configuration block */
+export interface BatteryConfig {
+  /** Enable battery monitoring (default true) */
+  enabled: boolean;
+  /** Battery percentage threshold to trigger low-battery actions (default 10) */
+  low_threshold_pct: number;
+  /** Poll interval in seconds (default 60 — battery changes slowly) */
+  poll_interval_s: number;
+}
+
 /** Top-level orchestrator config */
 export interface OrchestratorConfig {
   socket: string;
@@ -129,6 +139,7 @@ export interface HealthDefaults {
 export interface TmxConfig {
   orchestrator: OrchestratorConfig;
   adb: AdbConfig;
+  battery: BatteryConfig;
   sessions: SessionConfig[];
   health_defaults: HealthDefaults;
 }
@@ -169,6 +180,17 @@ export interface TmxState {
   sessions: Record<string, SessionState>;
   /** Latest system memory snapshot (populated by daemon, not persisted) */
   memory?: SystemMemorySnapshot | null;
+  /** Latest battery snapshot (populated by daemon, not persisted) */
+  battery?: BatterySnapshot | null;
+}
+
+/** Battery snapshot stored in state */
+export interface BatterySnapshot {
+  percentage: number;
+  charging: boolean;
+  temperature: number;
+  /** Whether low-battery radio-disable actions are active */
+  radios_disabled: boolean;
 }
 
 /** System memory snapshot stored in state (mirrors SystemMemory from memory.ts) */

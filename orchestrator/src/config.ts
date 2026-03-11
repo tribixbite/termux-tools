@@ -10,6 +10,7 @@ import type {
   TmxConfig,
   OrchestratorConfig,
   AdbConfig,
+  BatteryConfig,
   SessionConfig,
   HealthCheckConfig,
   HealthDefaults,
@@ -212,6 +213,14 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     boot_delay_s: asNumber(adbRaw.boot_delay_s, "adb.boot_delay_s", 15),
   };
 
+  // Battery section
+  const batRaw = (raw.battery ?? {}) as Record<string, unknown>;
+  const battery: BatteryConfig = {
+    enabled: asBool(batRaw.enabled, "battery.enabled", true),
+    low_threshold_pct: asNumber(batRaw.low_threshold_pct, "battery.low_threshold_pct", 10),
+    poll_interval_s: asNumber(batRaw.poll_interval_s, "battery.poll_interval_s", 60),
+  };
+
   // Health defaults
   const hdRaw = (raw.health_defaults ?? {}) as Record<string, Record<string, unknown>>;
   const health_defaults: HealthDefaults = {};
@@ -319,7 +328,7 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     throw new Error(`Config validation failed:\n  ${errors.join("\n  ")}`);
   }
 
-  return { orchestrator, adb, sessions, health_defaults };
+  return { orchestrator, adb, battery, sessions, health_defaults };
 }
 
 // -- Type coercion helpers ----------------------------------------------------

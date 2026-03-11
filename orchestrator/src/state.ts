@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { SessionState, SessionStatus, SystemMemorySnapshot, TmxState, SessionConfig } from "./types.js";
+import type { SessionState, SessionStatus, SystemMemorySnapshot, BatterySnapshot, TmxState, SessionConfig } from "./types.js";
 import { VALID_TRANSITIONS } from "./types.js";
 import type { Logger } from "./log.js";
 
@@ -190,6 +190,11 @@ export class StateManager {
   /** Update system memory snapshot (transient, not persisted) */
   updateSystemMemory(memory: SystemMemorySnapshot | null): void {
     this.state.memory = memory;
+  }
+
+  /** Update battery snapshot (transient, not persisted) */
+  updateBattery(battery: BatterySnapshot | null): void {
+    this.state.battery = battery;
   }
 
   /** Force-set a session's status (for adoption/reconciliation) */
