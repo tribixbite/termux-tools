@@ -1159,8 +1159,9 @@ export class Daemon {
     this.batteryTimer = setInterval(() => {
       this.batteryPoll();
     }, intervalMs);
-    // Run an initial poll immediately
-    this.batteryPoll();
+    // Delay initial poll by 5s so it doesn't block IPC server startup.
+    // termux-battery-status is synchronous (~5-8s) and blocks the event loop.
+    setTimeout(() => this.batteryPoll(), 5000);
   }
 
   /** Poll battery status, take action if critically low */

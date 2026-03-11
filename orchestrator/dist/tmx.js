@@ -27,9 +27,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs12 = require("node:fs");
+var import_node_fs13 = require("node:fs");
 var import_node_child_process8 = require("node:child_process");
-var import_node_path6 = require("node:path");
+var import_node_path7 = require("node:path");
 
 // src/ipc.ts
 var net = __toESM(require("node:net"));
@@ -46,7 +46,7 @@ var IpcServer = class {
   }
   /** Start listening. Cleans up stale socket first. */
   start() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       if ((0, import_node_fs.existsSync)(this.socketPath)) {
         this.log.debug("Removing stale socket file");
         try {
@@ -62,7 +62,7 @@ var IpcServer = class {
       });
       this.server.listen(this.socketPath, () => {
         this.log.info(`IPC server listening on ${this.socketPath}`);
-        resolve();
+        resolve2();
       });
     });
   }
@@ -144,7 +144,7 @@ var IpcClient = class {
   }
   /** Send a command to the daemon and return the response */
   send(cmd, timeoutMs = 3e4) {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       const conn = net.createConnection(this.socketPath);
       let buffer = "";
       let resolved = false;
@@ -167,7 +167,7 @@ var IpcClient = class {
           resolved = true;
           conn.end();
           try {
-            resolve(JSON.parse(line));
+            resolve2(JSON.parse(line));
           } catch {
             reject(new Error(`Invalid response: ${line}`));
           }
@@ -194,8 +194,8 @@ var IpcClient = class {
 
 // src/daemon.ts
 var import_node_child_process7 = require("node:child_process");
-var import_node_fs10 = require("node:fs");
-var import_node_path5 = require("node:path");
+var import_node_fs11 = require("node:fs");
+var import_node_path6 = require("node:path");
 
 // src/config.ts
 var import_node_fs2 = require("node:fs");
@@ -1335,7 +1335,7 @@ function createTermuxTab(sessionName, log) {
   return true;
 }
 function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 
 // src/health.ts
@@ -1977,10 +1977,167 @@ var BatteryMonitor = class {
   }
 };
 
-// src/http.ts
-var http = __toESM(require("node:http"));
+// src/registry.ts
 var import_node_fs9 = require("node:fs");
 var import_node_path4 = require("node:path");
+var CURRENT_VERSION = 1;
+var NAME_PATTERN2 = /^[a-z0-9-]+$/;
+var Registry = class {
+  data;
+  filePath;
+  constructor(filePath) {
+    this.filePath = filePath;
+    this.data = this.load();
+  }
+  /** Get all registry entries */
+  entries() {
+    return this.data.sessions;
+  }
+  /** Find an entry by name */
+  find(name) {
+    return this.data.sessions.find((e) => e.name === name);
+  }
+  /** Find an entry by path */
+  findByPath(path) {
+    const abs = (0, import_node_path4.resolve)(path);
+    return this.data.sessions.find((e) => e.path === abs);
+  }
+  /** Add a new entry. Returns the entry, or null if name conflict. */
+  add(entry) {
+    if (this.find(entry.name)) return null;
+    const full = {
+      ...entry,
+      path: (0, import_node_path4.resolve)(entry.path),
+      opened_at: (/* @__PURE__ */ new Date()).toISOString(),
+      last_active: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    this.data.sessions.push(full);
+    this.save();
+    return full;
+  }
+  /** Remove an entry by name. Returns true if found and removed. */
+  remove(name) {
+    const before = this.data.sessions.length;
+    this.data.sessions = this.data.sessions.filter((e) => e.name !== name);
+    if (this.data.sessions.length < before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+  /** Update last_active timestamp for a session */
+  updateActivity(name) {
+    const entry = this.find(name);
+    if (entry) {
+      entry.last_active = (/* @__PURE__ */ new Date()).toISOString();
+    }
+  }
+  /** Save current registry state (call on shutdown or after mutations) */
+  flush() {
+    this.save();
+  }
+  /** Remove entries older than maxAgeDays */
+  prune(maxAgeDays = 30) {
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1e3;
+    const before = this.data.sessions.length;
+    this.data.sessions = this.data.sessions.filter((e) => {
+      return new Date(e.last_active).getTime() > cutoff;
+    });
+    const pruned = before - this.data.sessions.length;
+    if (pruned > 0) this.save();
+    return pruned;
+  }
+  /** Convert registry entries to SessionConfig[] for merging with config */
+  toSessionConfigs() {
+    return this.data.sessions.map((e) => ({
+      name: e.name,
+      type: "claude",
+      path: e.path,
+      command: void 0,
+      auto_go: e.auto_go,
+      priority: e.priority,
+      depends_on: [],
+      headless: false,
+      env: {},
+      health: void 0,
+      max_restarts: 3,
+      restart_backoff_s: 5,
+      enabled: true
+    }));
+  }
+  // -- Persistence ------------------------------------------------------------
+  load() {
+    try {
+      if ((0, import_node_fs9.existsSync)(this.filePath)) {
+        const content = (0, import_node_fs9.readFileSync)(this.filePath, "utf-8");
+        const parsed = JSON.parse(content);
+        if (parsed.version === CURRENT_VERSION && Array.isArray(parsed.sessions)) {
+          return parsed;
+        }
+      }
+    } catch {
+    }
+    return { version: CURRENT_VERSION, sessions: [] };
+  }
+  save() {
+    try {
+      const dir = (0, import_node_path4.dirname)(this.filePath);
+      if (!(0, import_node_fs9.existsSync)(dir)) (0, import_node_fs9.mkdirSync)(dir, { recursive: true });
+      const tmp = `${this.filePath}.tmp`;
+      (0, import_node_fs9.writeFileSync)(tmp, JSON.stringify(this.data, null, 2) + "\n");
+      (0, import_node_fs9.renameSync)(tmp, this.filePath);
+    } catch {
+    }
+  }
+};
+function parseRecentProjects(historyPath, maxLines = 1e3) {
+  if (!(0, import_node_fs9.existsSync)(historyPath)) return [];
+  try {
+    const content = (0, import_node_fs9.readFileSync)(historyPath, "utf-8");
+    const lines = content.trim().split("\n");
+    const tail = lines.slice(-maxLines);
+    const byPath = /* @__PURE__ */ new Map();
+    for (const line of tail) {
+      try {
+        const entry = JSON.parse(line);
+        if (!entry.project || !entry.timestamp) continue;
+        const existing = byPath.get(entry.project);
+        if (!existing || entry.timestamp > existing.timestamp) {
+          byPath.set(entry.project, {
+            timestamp: entry.timestamp,
+            sessionId: entry.sessionId
+          });
+        }
+      } catch {
+      }
+    }
+    const results = [];
+    for (const [path, info] of byPath) {
+      results.push({
+        name: deriveName(path),
+        path,
+        last_active: new Date(info.timestamp).toISOString(),
+        session_id: info.sessionId
+      });
+    }
+    results.sort((a, b) => b.last_active.localeCompare(a.last_active));
+    return results;
+  } catch {
+    return [];
+  }
+}
+function deriveName(path) {
+  const base = (0, import_node_path4.basename)(path).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  return base || "unnamed";
+}
+function isValidName(name) {
+  return NAME_PATTERN2.test(name);
+}
+
+// src/http.ts
+var http = __toESM(require("node:http"));
+var import_node_fs10 = require("node:fs");
+var import_node_path5 = require("node:path");
 var MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -2009,7 +2166,7 @@ var DashboardServer = class {
   }
   /** Start the HTTP server */
   start() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve2, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.on("error", (err) => {
         this.log.error(`Dashboard server error: ${err}`);
@@ -2017,7 +2174,7 @@ var DashboardServer = class {
       });
       this.server.listen(this.port, "0.0.0.0", () => {
         this.log.info(`Dashboard server listening on http://0.0.0.0:${this.port}`);
-        resolve();
+        resolve2();
       });
     });
   }
@@ -2107,10 +2264,10 @@ data: ${JSON.stringify({ id: clientId })}
   async handleApi(req, res, path) {
     let body = "";
     if (req.method === "POST") {
-      body = await new Promise((resolve) => {
+      body = await new Promise((resolve2) => {
         const chunks = [];
         req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        req.on("end", () => resolve2(Buffer.concat(chunks).toString()));
       });
     }
     const result = await this.apiHandler(req.method ?? "GET", path, body);
@@ -2121,19 +2278,19 @@ data: ${JSON.stringify({ id: clientId })}
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
     filePath = filePath.replace(/\.\./g, "");
-    let fullPath = (0, import_node_path4.join)(this.staticDir, filePath);
-    if ((0, import_node_fs9.existsSync)(fullPath) && (0, import_node_fs9.statSync)(fullPath).isDirectory()) {
-      fullPath = (0, import_node_path4.join)(fullPath, "index.html");
-    } else if (!(0, import_node_fs9.existsSync)(fullPath) || !(0, import_node_fs9.statSync)(fullPath).isFile()) {
-      const dirIndex = (0, import_node_path4.join)(this.staticDir, filePath, "index.html");
-      if ((0, import_node_fs9.existsSync)(dirIndex) && (0, import_node_fs9.statSync)(dirIndex).isFile()) {
+    let fullPath = (0, import_node_path5.join)(this.staticDir, filePath);
+    if ((0, import_node_fs10.existsSync)(fullPath) && (0, import_node_fs10.statSync)(fullPath).isDirectory()) {
+      fullPath = (0, import_node_path5.join)(fullPath, "index.html");
+    } else if (!(0, import_node_fs10.existsSync)(fullPath) || !(0, import_node_fs10.statSync)(fullPath).isFile()) {
+      const dirIndex = (0, import_node_path5.join)(this.staticDir, filePath, "index.html");
+      if ((0, import_node_fs10.existsSync)(dirIndex) && (0, import_node_fs10.statSync)(dirIndex).isFile()) {
         fullPath = dirIndex;
       }
     }
-    if (!(0, import_node_fs9.existsSync)(fullPath) || !(0, import_node_fs9.statSync)(fullPath).isFile()) {
-      const indexPath = (0, import_node_path4.join)(this.staticDir, "index.html");
-      if ((0, import_node_fs9.existsSync)(indexPath)) {
-        const content2 = (0, import_node_fs9.readFileSync)(indexPath);
+    if (!(0, import_node_fs10.existsSync)(fullPath) || !(0, import_node_fs10.statSync)(fullPath).isFile()) {
+      const indexPath = (0, import_node_path5.join)(this.staticDir, "index.html");
+      if ((0, import_node_fs10.existsSync)(indexPath)) {
+        const content2 = (0, import_node_fs10.readFileSync)(indexPath);
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(content2);
         return;
@@ -2142,9 +2299,9 @@ data: ${JSON.stringify({ id: clientId })}
       res.end(this.getFallbackHtml());
       return;
     }
-    const ext = (0, import_node_path4.extname)(fullPath).toLowerCase();
+    const ext = (0, import_node_path5.extname)(fullPath).toLowerCase();
     const contentType = MIME_TYPES[ext] ?? "application/octet-stream";
-    const content = (0, import_node_fs9.readFileSync)(fullPath);
+    const content = (0, import_node_fs10.readFileSync)(fullPath);
     const cacheControl = ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable";
     res.writeHead(200, {
       "Content-Type": contentType,
@@ -2212,7 +2369,7 @@ data: ${JSON.stringify({ id: clientId })}
 
 // src/daemon.ts
 function sleep2(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function resolveAdbPath() {
   try {
@@ -2221,8 +2378,8 @@ function resolveAdbPath() {
   } catch {
   }
   const candidates = [
-    (0, import_node_path5.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
-    (0, import_node_path5.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
+    (0, import_node_path6.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    (0, import_node_path6.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
   ];
   for (const p of candidates) {
     try {
@@ -2275,6 +2432,7 @@ var Daemon = class _Daemon {
   memory;
   activity;
   battery;
+  registry;
   dashboard = null;
   healthTimer = null;
   memoryTimer = null;
@@ -2303,6 +2461,8 @@ var Daemon = class _Daemon {
     );
     this.activity = new ActivityDetector(this.log);
     this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
+    const registryPath = (0, import_node_path6.join)((0, import_node_path6.dirname)(this.config.orchestrator.state_file), "registry.json");
+    this.registry = new Registry(registryPath);
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
       (cmd) => this.handleIpcCommand(cmd),
@@ -2316,18 +2476,18 @@ var Daemon = class _Daemon {
    */
   preflight() {
     const { log_dir, state_file, socket } = this.config.orchestrator;
-    if (!(0, import_node_fs10.existsSync)(log_dir)) {
-      (0, import_node_fs10.mkdirSync)(log_dir, { recursive: true });
+    if (!(0, import_node_fs11.existsSync)(log_dir)) {
+      (0, import_node_fs11.mkdirSync)(log_dir, { recursive: true });
       this.log.debug(`Created log directory: ${log_dir}`);
     }
-    const stateDir = (0, import_node_path5.dirname)(state_file);
-    if (!(0, import_node_fs10.existsSync)(stateDir)) {
-      (0, import_node_fs10.mkdirSync)(stateDir, { recursive: true });
+    const stateDir = (0, import_node_path6.dirname)(state_file);
+    if (!(0, import_node_fs11.existsSync)(stateDir)) {
+      (0, import_node_fs11.mkdirSync)(stateDir, { recursive: true });
       this.log.debug(`Created state directory: ${stateDir}`);
     }
-    const socketDir = (0, import_node_path5.dirname)(socket);
-    if (!(0, import_node_fs10.existsSync)(socketDir)) {
-      (0, import_node_fs10.mkdirSync)(socketDir, { recursive: true });
+    const socketDir = (0, import_node_path6.dirname)(socket);
+    if (!(0, import_node_fs11.existsSync)(socketDir)) {
+      (0, import_node_fs11.mkdirSync)(socketDir, { recursive: true });
       this.log.debug(`Created socket directory: ${socketDir}`);
     }
     const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
@@ -2345,6 +2505,7 @@ var Daemon = class _Daemon {
       wake_policy: this.config.orchestrator.wake_lock_policy
     });
     this.state.resetDaemonStart();
+    this.mergeRegistrySessions();
     this.state.initFromConfig(this.config.sessions);
     this.adoptExistingSessions();
     await this.ipc.start();
@@ -2354,11 +2515,11 @@ var Daemon = class _Daemon {
     this.startBatteryTimer();
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
-    await new Promise((resolve) => {
+    await new Promise((resolve2) => {
       const check = setInterval(() => {
         if (!this.running) {
           clearInterval(check);
-          resolve();
+          resolve2();
         }
       }, 1e3);
     });
@@ -2437,6 +2598,7 @@ var Daemon = class _Daemon {
       });
       await Promise.all(stopPromises);
     }
+    this.registry.flush();
     this.wake.forceRelease();
     if (this.dashboard) {
       this.dashboard.stop();
@@ -2928,6 +3090,118 @@ var Daemon = class _Daemon {
       notify("tmx memory", `${pressure} memory pressure \u2014 no sessions to shed`);
     }
   }
+  // -- Session registry ---------------------------------------------------------
+  /** Merge registry sessions into config (config takes precedence) */
+  mergeRegistrySessions() {
+    const pruned = this.registry.prune(30);
+    if (pruned > 0) this.log.info(`Pruned ${pruned} stale registry entries`);
+    const configNames = new Set(this.config.sessions.map((s) => s.name));
+    const registryConfigs = this.registry.toSessionConfigs();
+    for (const rc of registryConfigs) {
+      if (configNames.has(rc.name)) {
+        this.log.warn(`Registry session '${rc.name}' conflicts with config \u2014 skipping`, { session: rc.name });
+        continue;
+      }
+      this.config.sessions.push(rc);
+      this.log.info(`Merged registry session '${rc.name}' (${rc.path})`, { session: rc.name });
+    }
+  }
+  /** Open command — register and start a new dynamic Claude session */
+  async cmdOpen(path, name, autoGo = false, priority = 50) {
+    if (!(0, import_node_fs11.existsSync)(path)) {
+      return { ok: false, error: `Path does not exist: ${path}` };
+    }
+    const sessionName = name ?? deriveName(path);
+    if (!isValidName(sessionName)) {
+      return { ok: false, error: `Invalid session name '${sessionName}' \u2014 must match [a-z0-9-]+` };
+    }
+    const configMatch = this.config.sessions.find((s) => s.name === sessionName);
+    if (configMatch) {
+      const regMatch = this.registry.find(sessionName);
+      if (regMatch) {
+        return { ok: true, data: `Session '${sessionName}' already registered` };
+      }
+      return { ok: false, error: `Name '${sessionName}' conflicts with a config session` };
+    }
+    const pathMatch = this.registry.findByPath(path);
+    if (pathMatch) {
+      return { ok: true, data: `Path already registered as '${pathMatch.name}'` };
+    }
+    const entry = this.registry.add({ name: sessionName, path, priority, auto_go: autoGo });
+    if (!entry) {
+      return { ok: false, error: `Failed to register session '${sessionName}'` };
+    }
+    const sessionConfig = {
+      name: sessionName,
+      type: "claude",
+      path: entry.path,
+      command: void 0,
+      auto_go: autoGo,
+      priority,
+      depends_on: [],
+      headless: false,
+      env: {},
+      health: void 0,
+      max_restarts: 3,
+      restart_backoff_s: 5,
+      enabled: true
+    };
+    this.config.sessions.push(sessionConfig);
+    this.state.initFromConfig(this.config.sessions);
+    const started = await this.startSession(sessionName);
+    this.log.info(`Opened session '${sessionName}' at ${entry.path}`, { session: sessionName });
+    return {
+      ok: true,
+      data: `Opened '${sessionName}' (${entry.path})${started ? " \u2014 started" : " \u2014 registered but not started"}`
+    };
+  }
+  /** Close command — stop and unregister a dynamic session */
+  async cmdClose(name) {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const regEntry = this.registry.find(resolved);
+    if (!regEntry) {
+      return { ok: false, error: `'${resolved}' is a config session \u2014 use 'tmx stop' instead` };
+    }
+    await this.stopSessionByName(resolved);
+    this.registry.remove(resolved);
+    this.config.sessions = this.config.sessions.filter((s) => s.name !== resolved);
+    this.log.info(`Closed session '${resolved}'`, { session: resolved });
+    return { ok: true, data: `Closed '${resolved}'` };
+  }
+  /** Recent command — parse history.jsonl for recently active projects */
+  cmdRecent(count = 20) {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = (0, import_node_path6.join)(home, ".claude", "history.jsonl");
+    const rawProjects = parseRecentProjects(historyPath, 1e3);
+    const configNames = new Set(this.config.sessions.map((s) => s.name));
+    const runningNames = /* @__PURE__ */ new Set();
+    for (const s of Object.values(this.state.getState().sessions)) {
+      if (s.status === "running" || s.status === "degraded" || s.status === "starting") {
+        runningNames.add(s.name);
+      }
+    }
+    const results = rawProjects.slice(0, count).map((p) => {
+      const matchedConfig = this.config.sessions.find((s) => s.path === p.path);
+      const matchedName = matchedConfig?.name ?? p.name;
+      let status = "untracked";
+      if (runningNames.has(matchedName)) {
+        status = "running";
+      } else if (this.registry.find(matchedName) || this.registry.findByPath(p.path)) {
+        status = "registered";
+      } else if (configNames.has(matchedName) || matchedConfig) {
+        status = "config";
+      }
+      return {
+        name: matchedName,
+        path: p.path,
+        last_active: p.last_active,
+        session_id: p.session_id,
+        status
+      };
+    });
+    return { ok: true, data: results };
+  }
   // -- Battery monitoring ------------------------------------------------------
   /** Start periodic battery monitoring timer */
   startBatteryTimer() {
@@ -2939,7 +3213,7 @@ var Daemon = class _Daemon {
     this.batteryTimer = setInterval(() => {
       this.batteryPoll();
     }, intervalMs);
-    this.batteryPoll();
+    setTimeout(() => this.batteryPoll(), 5e3);
   }
   /** Poll battery status, take action if critically low */
   batteryPoll() {
@@ -2961,7 +3235,7 @@ var Daemon = class _Daemon {
       return;
     }
     const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
-    const staticDir = (0, import_node_path5.join)(scriptDir, "..", "dashboard", "dist");
+    const staticDir = (0, import_node_path6.join)(scriptDir, "..", "dashboard", "dist");
     this.dashboard = new DashboardServer(
       port,
       staticDir,
@@ -3259,7 +3533,7 @@ var Daemon = class _Daemon {
   }
   /** Initiate ADB wireless connection using the adbc script */
   adbWirelessConnect() {
-    const script = (0, import_node_path5.join)(
+    const script = (0, import_node_path6.join)(
       process.env.HOME ?? "/data/data/com.termux/files/home",
       "git/termux-tools/tools/adb-wireless-connect.sh"
     );
@@ -3382,6 +3656,12 @@ var Daemon = class _Daemon {
         return { ok: true, data: this.config };
       case "memory":
         return this.cmdMemory();
+      case "open":
+        return this.cmdOpen(cmd.path, cmd.name, cmd.auto_go, cmd.priority);
+      case "close":
+        return this.cmdClose(cmd.name);
+      case "recent":
+        return this.cmdRecent(cmd.count);
       default:
         return { ok: false, error: `Unknown command: ${cmd.cmd}` };
     }
@@ -3535,12 +3815,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs11 = require("node:fs");
+var import_node_fs12 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs11.existsSync)(filePath)) {
+  if (!(0, import_node_fs12.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs11.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs12.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -3633,7 +3913,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs11.existsSync) ?? null;
+  return candidates.find(import_node_fs12.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -3662,11 +3942,11 @@ function resolveBunPath() {
   }
   const home = process.env.HOME ?? "/data/data/com.termux/files/home";
   const candidates = [
-    (0, import_node_path6.join)(home, ".bun", "bin", "bun"),
-    (0, import_node_path6.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
+    (0, import_node_path7.join)(home, ".bun", "bin", "bun"),
+    (0, import_node_path7.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
   ];
   for (const p of candidates) {
-    if ((0, import_node_fs12.existsSync)(p)) return p;
+    if ((0, import_node_fs13.existsSync)(p)) return p;
   }
   return process.argv[0];
 }
@@ -3689,6 +3969,8 @@ async function main() {
       return runMigrate();
     case "logs":
       return runLogs();
+    case "recent":
+      return runRecentOrIpc();
     case "--help":
     case "-h":
     case "help":
@@ -3707,6 +3989,8 @@ async function main() {
     case "go":
     case "send":
     case "tabs":
+    case "open":
+    case "close":
       return runIpcCommand();
     default:
       return runIpcCommand();
@@ -3732,16 +4016,16 @@ async function runBoot() {
     } catch {
       logDir = `${process.env.HOME}/.local/share/tmx/logs`;
     }
-    (0, import_node_fs12.mkdirSync)(logDir, { recursive: true });
+    (0, import_node_fs13.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
-    const stderrFd = (0, import_node_fs12.openSync)(stderrPath, "a");
+    const stderrFd = (0, import_node_fs13.openSync)(stderrPath, "a");
     const bunPath = resolveBunPath();
     const child = (0, import_node_child_process8.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd]
     });
     child.unref();
-    (0, import_node_fs12.closeSync)(stderrFd);
+    (0, import_node_fs13.closeSync)(stderrFd);
     for (let i = 0; i < 20; i++) {
       await sleep3(500);
       if (await client.isRunning()) break;
@@ -3753,7 +4037,8 @@ async function runBoot() {
     }
     console.log(`${GREEN}Daemon started${RESET2}`);
   }
-  const resp = await client.send({ cmd: "boot" });
+  const bootTimeoutMs = 9e4;
+  const resp = await client.send({ cmd: "boot" }, bootTimeoutMs);
   if (resp.ok) {
     console.log(`${GREEN}Boot sequence initiated${RESET2}`);
   } else {
@@ -3764,8 +4049,8 @@ async function runBoot() {
 function printStartupDiagnostics(logDir, stderrPath) {
   console.error();
   try {
-    if ((0, import_node_fs12.existsSync)(stderrPath)) {
-      const stderr = (0, import_node_fs12.readFileSync)(stderrPath, "utf-8").trim();
+    if ((0, import_node_fs13.existsSync)(stderrPath)) {
+      const stderr = (0, import_node_fs13.readFileSync)(stderrPath, "utf-8").trim();
       if (stderr) {
         const lines = stderr.split("\n").slice(-20);
         console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET2}`);
@@ -3779,8 +4064,8 @@ function printStartupDiagnostics(logDir, stderrPath) {
   }
   try {
     const logFile = `${logDir}/tmx.jsonl`;
-    if ((0, import_node_fs12.existsSync)(logFile)) {
-      const content = (0, import_node_fs12.readFileSync)(logFile, "utf-8").trim();
+    if ((0, import_node_fs13.existsSync)(logFile)) {
+      const content = (0, import_node_fs13.readFileSync)(logFile, "utf-8").trim();
       if (content) {
         const entries = content.split("\n").slice(-10);
         console.error(`${YELLOW}Recent log entries:${RESET2}`);
@@ -3869,15 +4154,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs12.existsSync)(outDir)) {
-    (0, import_node_fs12.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs13.existsSync)(outDir)) {
+    (0, import_node_fs13.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs12.existsSync)(outPath)) {
+  if ((0, import_node_fs13.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs12.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs13.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs12.writeFileSync)(outPath, toml);
+    (0, import_node_fs13.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -3908,6 +4193,31 @@ function runLogs() {
   } catch (err) {
     console.error(`${RED}${err.message}${RESET2}`);
     process.exit(1);
+  }
+}
+async function runRecentOrIpc() {
+  const configPath = getConfigFlag();
+  const client = getClient(configPath);
+  const count = subArgs[0] ? parseInt(subArgs[0], 10) : 20;
+  if (await client.isRunning()) {
+    const resp = await client.send({ cmd: "recent", count });
+    if (resp.ok) {
+      formatOutput("recent", resp.data);
+      return;
+    }
+  }
+  const home = process.env.HOME ?? "";
+  const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+  const projects = parseRecentProjects(historyPath, 1e3);
+  if (projects.length === 0) {
+    console.log(`${DIM2}No recent projects found${RESET2}`);
+    return;
+  }
+  console.log(`${BOLD}Recent projects${RESET2} ${DIM2}(daemon not running \u2014 status unavailable)${RESET2}`);
+  for (const p of projects.slice(0, count)) {
+    const shortPath = p.path.startsWith(home) ? "~" + p.path.slice(home.length) : p.path;
+    const ago = timeSince(p.last_active);
+    console.log(`  ${p.name.padEnd(20)} ${shortPath.padEnd(40)} ${DIM2}${ago} ago${RESET2}`);
   }
 }
 async function runIpcCommand() {
@@ -3958,6 +4268,29 @@ async function runIpcCommand() {
     case "tabs":
       cmd = { cmd: "tabs", names: subArgs.length ? subArgs : void 0 };
       break;
+    case "open":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx open <path> [--name <n>] [--auto-go] [--priority N]`);
+        process.exit(1);
+      }
+      cmd = {
+        cmd: "open",
+        path: subArgs[0],
+        name: getFlag(subArgs, "--name"),
+        auto_go: subArgs.includes("--auto-go"),
+        priority: getFlag(subArgs, "--priority") ? parseInt(getFlag(subArgs, "--priority"), 10) : void 0
+      };
+      break;
+    case "close":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx close <name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "close", name: subArgs[0] };
+      break;
+    case "recent":
+      cmd = { cmd: "recent", count: subArgs[0] ? parseInt(subArgs[0], 10) : void 0 };
+      break;
     default:
       cmd = { cmd: "status", name: command };
       break;
@@ -4001,6 +4334,25 @@ function formatOutput(cmd, data) {
     }
     case "memory": {
       formatMemory(data);
+      break;
+    }
+    case "recent": {
+      if (Array.isArray(data)) {
+        const projects = data;
+        if (projects.length === 0) {
+          console.log(`${DIM2}No recent projects found${RESET2}`);
+          break;
+        }
+        console.log(`${BOLD}Recent projects${RESET2}`);
+        const home = process.env.HOME ?? "";
+        for (const p of projects) {
+          const shortPath = p.path.startsWith(home) ? "~" + p.path.slice(home.length) : p.path;
+          const statusColor = p.status === "running" ? GREEN : p.status === "registered" ? CYAN : p.status === "config" ? DIM2 : YELLOW;
+          const statusLabel = `${statusColor}${p.status}${RESET2}`;
+          const ago = timeSince(p.last_active);
+          console.log(`  ${p.name.padEnd(20)} ${shortPath.padEnd(40)} [${statusLabel}] ${DIM2}${ago} ago${RESET2}`);
+        }
+      }
       break;
     }
     default:
@@ -4140,7 +4492,12 @@ function getConfigFlag() {
   return void 0;
 }
 function sleep3(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
+}
+function getFlag(args2, flag) {
+  const idx = args2.indexOf(flag);
+  if (idx >= 0 && args2[idx + 1]) return args2[idx + 1];
+  return void 0;
 }
 function printHelp() {
   console.log(`${BOLD}tmx${RESET2} \u2014 Tmux session orchestrator for Termux
@@ -4160,6 +4517,9 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}tabs${RESET2} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET2}                Validate and print resolved config
   ${CYAN}migrate${RESET2} [path]        Convert repos.conf to tmx.toml
+  ${CYAN}open${RESET2} <path> [opts]     Register and start a dynamic Claude session
+  ${CYAN}close${RESET2} <name>          Stop and unregister a dynamic session
+  ${CYAN}recent${RESET2} [count]        Show recently active Claude projects
   ${CYAN}go${RESET2} <name>             Send "go" to a Claude session
   ${CYAN}send${RESET2} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET2}                Start daemon (foreground)
@@ -4181,7 +4541,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs12.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs13.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

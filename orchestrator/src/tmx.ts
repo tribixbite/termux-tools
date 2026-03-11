@@ -186,8 +186,10 @@ async function runBoot(): Promise<void> {
     console.log(`${GREEN}Daemon started${RESET}`);
   }
 
-  // Send boot command
-  const resp = await client.send({ cmd: "boot" });
+  // Send boot command — use extended timeout because boot runs ADB connect
+  // (spawnSync, up to 50s) which blocks the event loop before the response is flushed.
+  const bootTimeoutMs = 90_000;
+  const resp = await client.send({ cmd: "boot" }, bootTimeoutMs);
   if (resp.ok) {
     console.log(`${GREEN}Boot sequence initiated${RESET}`);
   } else {
