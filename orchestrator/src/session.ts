@@ -309,15 +309,32 @@ export function getAttachedClients(name: string): number {
 }
 
 /**
- * Bring a tmux session to the visible Termux foreground.
+ * Create an attach script in $PREFIX/tmp for TermuxService to execute.
+ * The script sets the terminal title (for the Termux tab label) and execs
+ * into tmux attach for the target session.
+ */
+function ensureAttachScript(): string {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const scriptPath = join(prefix, "tmp", "tmx-attach.sh");
+  try {
+    writeFileSync(scriptPath, [
+      `#!/data/data/com.termux/files/usr/bin/bash`,
+      `printf '\\033]0;%s\\007' "$1"`,
+      `exec tmux attach -t "$1"`,
+      "",
+    ].join("\n"), { mode: 0o755 });
+  } catch { /* best effort — may already exist */ }
+  return scriptPath;
+}
+
+/**
+ * Create a new Termux tab attached to a tmux session.
  *
- * Strategy: find any existing tmux client and switch it to the target session
- * via `tmux switch-client`. With `set-titles on` (global), tmux automatically
- * updates the outer terminal title to the session name (#S).
+ * Primary strategy: TermuxService with service_execute action creates a real
+ * Termux tab that runs our attach script. This works on Android 16 because
+ * TermuxService is already a foreground service (started by the Termux app).
  *
- * RunCommandService tab creation is unreliable on Android 15+ (foreground
- * service restrictions silently block new session creation from background
- * contexts), so we avoid it entirely.
+ * Fallback: switch-client reuses an existing tmux client (single-tab mode).
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
   const env = amEnv();
@@ -326,24 +343,38 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
   tmux("set-option", "-g", "set-titles", "on");
   tmux("set-option", "-g", "set-titles-string", "#S");
 
-  // Check if there's already a client on this exact session
+  // Skip if there's already a client on this exact session
   const targetClients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
   if (targetClients && targetClients.trim().length > 0) {
-    log.info(`Session '${sessionName}' already attached, bringing Termux to foreground`, { session: sessionName });
+    log.info(`Session '${sessionName}' already has a client, skipping tab creation`, { session: sessionName });
     // Write title escape to ensure tab label is correct
     const clientTty = targetClients.trim().split("\n")[0];
     try { writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`); } catch { /* ignore */ }
-    const actArgs = ["start", "-a", "android.intent.action.MAIN",
-      "-c", "android.intent.category.LAUNCHER",
-      "-n", "com.termux/com.termux.app.TermuxActivity"];
-    spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
     return true;
   }
 
-  // Switch an existing tmux client to view this session.
-  // NOTE: TIOCSTI is blocked on Linux 6.2+ (Android 15+) so we cannot inject
-  // input into standalone PTYs. RunCommandService is also broken on Android 16.
-  // switch-client is the only viable approach — it replaces the current view.
+  // Primary: create a new Termux tab via TermuxService service_execute.
+  // This sends an intent to the running TermuxService which creates a new
+  // terminal session, opens a new Termux tab, and runs the attach script.
+  const scriptPath = ensureAttachScript();
+  const svcResult = spawnSync(AM_BIN, [
+    "startservice",
+    "-n", "com.termux/.app.TermuxService",
+    "-a", "com.termux.service_execute",
+    "-d", `file://${scriptPath}`,
+    "--esa", "com.termux.execute.arguments", sessionName,
+    "--ei", "com.termux.execute.session_action", "0",
+    "--es", "com.termux.execute.shell_name", sessionName,
+  ], { timeout: 5000, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8", env });
+
+  if (svcResult.status === 0) {
+    log.info(`Created Termux tab for '${sessionName}' via TermuxService`, { session: sessionName });
+    return true;
+  }
+
+  // Fallback: switch an existing tmux client to this session.
+  // Only works when at least one tmux client exists (e.g. from watchdog.sh).
+  log.debug(`TermuxService failed for '${sessionName}', trying switch-client fallback`, { session: sessionName });
   const allClients = tmux("list-clients", "-F", "#{client_name}:#{client_tty}");
   if (allClients && allClients.trim().length > 0) {
     const firstClient = allClients.trim().split("\n")[0];
@@ -355,28 +386,13 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
     if (switched !== null) {
       log.info(`Switched client '${clientName}' to session '${sessionName}'`, { session: sessionName });
       tmux("refresh-client", "-c", clientName);
-    } else {
-      log.warn(`Failed to switch client to '${sessionName}'`, { session: sessionName });
     }
 
-    // Write OSC title escape directly to the client's PTY.
-    // Termux reads \033]0;title\007 and updates the tab label.
-    try {
-      writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`);
-      log.debug(`Wrote title escape to ${clientTty}`, { session: sessionName });
-    } catch {
-      log.debug(`Could not write title to ${clientTty}`, { session: sessionName });
-    }
+    // Write OSC title escape for Termux tab label
+    try { writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`); } catch { /* ignore */ }
   } else {
     log.warn(`No tmux clients found — open Termux and run: tmux attach -t ${sessionName}`, { session: sessionName });
   }
-
-  // Bring Termux to foreground
-  const actArgs = ["start", "-a", "android.intent.action.MAIN",
-    "-c", "android.intent.category.LAUNCHER",
-    "-n", "com.termux/com.termux.app.TermuxActivity"];
-  spawnSync(AM_BIN, actArgs, { timeout: 3000, stdio: "ignore", env });
-  log.info(`Brought Termux to foreground for '${sessionName}'`, { session: sessionName });
 
   return true;
 }

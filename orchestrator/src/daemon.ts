@@ -260,9 +260,8 @@ export class Daemon {
     this.startCron();
 
     // Step 4: Restore Termux tabs for non-headless running sessions.
-    // The watchdog.sh handles the initial tmux attach (exec tmux attach),
-    // but switch-client needs a client to exist first. Run after a brief
-    // delay so the watchdog has time to attach.
+    // Uses TermuxService service_execute intent to create real Termux tabs
+    // that attach to tmux sessions. Brief delay to let sessions stabilize.
     setTimeout(() => {
       try {
         const tabResult = this.cmdTabs();
@@ -1819,7 +1818,8 @@ export class Daemon {
     let restored = 0;
     let skipped = 0;
 
-    for (const name of targetSessions) {
+    for (let i = 0; i < targetSessions.length; i++) {
+      const name = targetSessions[i];
       if (!sessionExists(name)) {
         skipped++;
         continue;
@@ -1831,8 +1831,11 @@ export class Daemon {
         skipped++;
       }
 
-      // Stagger to avoid UI race conditions (same as restore-tabs.sh)
-      // This is synchronous within the loop
+      // Stagger tab creation to avoid Termux UI race conditions.
+      // TermuxService processes intents async — give each tab 1.5s to initialize.
+      if (i < targetSessions.length - 1) {
+        spawnSync("sleep", ["1.5"], { timeout: 3000 });
+      }
     }
 
     return { ok: true, data: { restored, skipped, total: targetSessions.length } };

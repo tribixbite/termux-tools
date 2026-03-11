@@ -196,6 +196,26 @@ async function runBoot(): Promise<void> {
     console.error(`${RED}Boot failed: ${resp.error}${RESET}`);
     process.exit(1);
   }
+
+  // --attach: exec into tmux after boot so this terminal becomes a tmux client.
+  // Used by watchdog.sh to make its Termux tab interactive after boot.
+  // The daemon's auto-tabs create dedicated tabs via TermuxService; this flag
+  // makes the watchdog's own tab usable as an additional tmux client.
+  if (subArgs.includes("--attach")) {
+    // Brief delay for daemon's auto-tabs setTimeout(3s) to fire
+    await sleep(1000);
+    // Replace this process with tmux attach (first non-headless session)
+    const tmuxBin = join(
+      process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "tmux"
+    );
+    const { execSync: execSyncLocal } = await import("node:child_process");
+    try {
+      // exec replaces this process — doesn't return
+      execSyncLocal(`exec "${tmuxBin}" attach`, { stdio: "inherit" });
+    } catch {
+      // tmux attach exited (user detached or daemon shut down) — normal exit
+    }
+  }
 }
 
 /** Print diagnostic info when daemon fails to start */
