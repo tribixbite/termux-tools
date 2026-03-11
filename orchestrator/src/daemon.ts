@@ -1025,7 +1025,8 @@ export class Daemon {
       "--priority", "low",
       "--title", title,
       "--content", content,
-      "--action", "open:http://localhost:18970",
+      "--icon", "dashboard",
+      "--action", "termux-open-url http://localhost:18970",
     ]);
   }
 
