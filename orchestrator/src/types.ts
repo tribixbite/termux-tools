@@ -218,7 +218,10 @@ export type IpcCommand =
   | { cmd: "send"; name: string; text: string }
   | { cmd: "tabs"; names?: string[] }
   | { cmd: "config" }
-  | { cmd: "memory" };
+  | { cmd: "memory" }
+  | { cmd: "open"; path: string; name?: string; auto_go?: boolean; priority?: number }
+  | { cmd: "close"; name: string }
+  | { cmd: "recent"; count?: number };
 
 /** Response from daemon to CLI */
 export interface IpcResponse {

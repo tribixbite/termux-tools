@@ -1,0 +1,253 @@
+/**
+ * registry.ts — Dynamic session registry for non-config Claude sessions
+ *
+ * Persists "dynamically opened" Claude sessions in registry.json alongside
+ * the static tmx.toml config. Both sources merge on boot so all sessions
+ * survive OOM/crash/reboot. Also provides `recent` command by parsing
+ * Claude Code's ~/.claude/history.jsonl.
+ */
+
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
+import type { SessionConfig, SessionType } from "./types.js";
+
+/** A dynamically registered Claude session */
+export interface RegistryEntry {
+  /** Session name (unique, lowercase, matches [a-z0-9-]+) */
+  name: string;
+  /** Absolute path to the project directory */
+  path: string;
+  /** ISO timestamp when first opened */
+  opened_at: string;
+  /** ISO timestamp of last known activity */
+  last_active: string;
+  /** Start priority (default 50 — lower than config sessions) */
+  priority: number;
+  /** Auto-send "go" after startup */
+  auto_go: boolean;
+}
+
+/** Persisted registry data */
+interface RegistryData {
+  version: number;
+  sessions: RegistryEntry[];
+}
+
+/** Entry from ~/.claude/history.jsonl */
+export interface HistoryEntry {
+  display: string;
+  timestamp: number;
+  project: string;
+  sessionId: string;
+}
+
+/** Recent project info returned by `tmx recent` */
+export interface RecentProject {
+  /** Derived name (basename of path) */
+  name: string;
+  /** Project path */
+  path: string;
+  /** Most recent timestamp */
+  last_active: string;
+  /** Claude session ID from history */
+  session_id: string;
+  /** Status: running in tmx, registered in registry, in config, or untracked */
+  status: "running" | "registered" | "config" | "untracked";
+}
+
+const CURRENT_VERSION = 1;
+const NAME_PATTERN = /^[a-z0-9-]+$/;
+
+export class Registry {
+  private data: RegistryData;
+  private filePath: string;
+
+  constructor(filePath: string) {
+    this.filePath = filePath;
+    this.data = this.load();
+  }
+
+  /** Get all registry entries */
+  entries(): RegistryEntry[] {
+    return this.data.sessions;
+  }
+
+  /** Find an entry by name */
+  find(name: string): RegistryEntry | undefined {
+    return this.data.sessions.find((e) => e.name === name);
+  }
+
+  /** Find an entry by path */
+  findByPath(path: string): RegistryEntry | undefined {
+    const abs = resolve(path);
+    return this.data.sessions.find((e) => e.path === abs);
+  }
+
+  /** Add a new entry. Returns the entry, or null if name conflict. */
+  add(entry: Omit<RegistryEntry, "opened_at" | "last_active">): RegistryEntry | null {
+    if (this.find(entry.name)) return null; // duplicate name
+
+    const full: RegistryEntry = {
+      ...entry,
+      path: resolve(entry.path),
+      opened_at: new Date().toISOString(),
+      last_active: new Date().toISOString(),
+    };
+    this.data.sessions.push(full);
+    this.save();
+    return full;
+  }
+
+  /** Remove an entry by name. Returns true if found and removed. */
+  remove(name: string): boolean {
+    const before = this.data.sessions.length;
+    this.data.sessions = this.data.sessions.filter((e) => e.name !== name);
+    if (this.data.sessions.length < before) {
+      this.save();
+      return true;
+    }
+    return false;
+  }
+
+  /** Update last_active timestamp for a session */
+  updateActivity(name: string): void {
+    const entry = this.find(name);
+    if (entry) {
+      entry.last_active = new Date().toISOString();
+      // Don't save on every poll — save periodically or on shutdown
+    }
+  }
+
+  /** Save current registry state (call on shutdown or after mutations) */
+  flush(): void {
+    this.save();
+  }
+
+  /** Remove entries older than maxAgeDays */
+  prune(maxAgeDays = 30): number {
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    const before = this.data.sessions.length;
+    this.data.sessions = this.data.sessions.filter((e) => {
+      return new Date(e.last_active).getTime() > cutoff;
+    });
+    const pruned = before - this.data.sessions.length;
+    if (pruned > 0) this.save();
+    return pruned;
+  }
+
+  /** Convert registry entries to SessionConfig[] for merging with config */
+  toSessionConfigs(): SessionConfig[] {
+    return this.data.sessions.map((e): SessionConfig => ({
+      name: e.name,
+      type: "claude" as SessionType,
+      path: e.path,
+      command: undefined,
+      auto_go: e.auto_go,
+      priority: e.priority,
+      depends_on: [],
+      headless: false,
+      env: {},
+      health: undefined,
+      max_restarts: 3,
+      restart_backoff_s: 5,
+      enabled: true,
+    }));
+  }
+
+  // -- Persistence ------------------------------------------------------------
+
+  private load(): RegistryData {
+    try {
+      if (existsSync(this.filePath)) {
+        const content = readFileSync(this.filePath, "utf-8");
+        const parsed = JSON.parse(content) as RegistryData;
+        if (parsed.version === CURRENT_VERSION && Array.isArray(parsed.sessions)) {
+          return parsed;
+        }
+      }
+    } catch { /* start fresh */ }
+    return { version: CURRENT_VERSION, sessions: [] };
+  }
+
+  private save(): void {
+    try {
+      const dir = dirname(this.filePath);
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const tmp = `${this.filePath}.tmp`;
+      writeFileSync(tmp, JSON.stringify(this.data, null, 2) + "\n");
+      renameSync(tmp, this.filePath);
+    } catch { /* best effort */ }
+  }
+}
+
+// -- History parsing ----------------------------------------------------------
+
+/**
+ * Parse ~/.claude/history.jsonl to find recently active projects.
+ * Reads the tail of the file (last `maxLines` lines) for performance.
+ * Deduplicates by project path, keeping the most recent entry.
+ */
+export function parseRecentProjects(historyPath: string, maxLines = 1000): Array<{
+  name: string;
+  path: string;
+  last_active: string;
+  session_id: string;
+}> {
+  if (!existsSync(historyPath)) return [];
+
+  try {
+    const content = readFileSync(historyPath, "utf-8");
+    const lines = content.trim().split("\n");
+    // Take last N lines
+    const tail = lines.slice(-maxLines);
+
+    // Deduplicate by project path, keeping latest timestamp
+    const byPath = new Map<string, { timestamp: number; sessionId: string }>();
+    for (const line of tail) {
+      try {
+        const entry = JSON.parse(line) as HistoryEntry;
+        if (!entry.project || !entry.timestamp) continue;
+        const existing = byPath.get(entry.project);
+        if (!existing || entry.timestamp > existing.timestamp) {
+          byPath.set(entry.project, {
+            timestamp: entry.timestamp,
+            sessionId: entry.sessionId,
+          });
+        }
+      } catch { /* skip malformed lines */ }
+    }
+
+    // Convert to sorted array (most recent first)
+    const results: Array<{
+      name: string;
+      path: string;
+      last_active: string;
+      session_id: string;
+    }> = [];
+
+    for (const [path, info] of byPath) {
+      results.push({
+        name: deriveName(path),
+        path,
+        last_active: new Date(info.timestamp).toISOString(),
+        session_id: info.sessionId,
+      });
+    }
+
+    results.sort((a, b) => b.last_active.localeCompare(a.last_active));
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+/** Derive a session name from a path (basename, lowercased, sanitized) */
+export function deriveName(path: string): string {
+  const base = basename(path).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  return base || "unnamed";
+}
+
+/** Validate a session name */
+export function isValidName(name: string): boolean {
+  return NAME_PATTERN.test(name);
+}

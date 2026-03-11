@@ -24,6 +24,8 @@ import { runHealthSweep } from "./health.js";
 import { MemoryMonitor } from "./memory.js";
 import { ActivityDetector } from "./activity.js";
 import { BatteryMonitor } from "./battery.js";
+import { Registry, parseRecentProjects, deriveName, isValidName } from "./registry.js";
+import type { RecentProject } from "./registry.js";
 import { DashboardServer } from "./http.js";
 import {
   createSession,
@@ -108,6 +110,7 @@ export class Daemon {
   private memory: MemoryMonitor;
   private activity: ActivityDetector;
   private battery: BatteryMonitor;
+  private registry: Registry;
   private dashboard: DashboardServer | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
@@ -137,6 +140,10 @@ export class Daemon {
     );
     this.activity = new ActivityDetector(this.log);
     this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
+
+    // Load dynamic session registry
+    const registryPath = join(dirname(this.config.orchestrator.state_file), "registry.json");
+    this.registry = new Registry(registryPath);
 
     // Wire up IPC handler
     this.ipc = new IpcServer(
@@ -191,8 +198,9 @@ export class Daemon {
       wake_policy: this.config.orchestrator.wake_lock_policy,
     });
 
-    // Initialize state from config
+    // Initialize state from config + registry
     this.state.resetDaemonStart();
+    this.mergeRegistrySessions();
     this.state.initFromConfig(this.config.sessions);
 
     // Adopt existing tmux sessions
@@ -327,6 +335,9 @@ export class Daemon {
       });
       await Promise.all(stopPromises);
     }
+
+    // Flush registry with final activity timestamps
+    this.registry.flush();
 
     // Release wake lock
     this.wake.forceRelease();
@@ -985,6 +996,157 @@ export class Daemon {
     }
   }
 
+  // -- Session registry ---------------------------------------------------------
+
+  /** Merge registry sessions into config (config takes precedence) */
+  private mergeRegistrySessions(): void {
+    // Prune stale entries (>30 days inactive)
+    const pruned = this.registry.prune(30);
+    if (pruned > 0) this.log.info(`Pruned ${pruned} stale registry entries`);
+
+    const configNames = new Set(this.config.sessions.map((s) => s.name));
+    const registryConfigs = this.registry.toSessionConfigs();
+
+    for (const rc of registryConfigs) {
+      if (configNames.has(rc.name)) {
+        this.log.warn(`Registry session '${rc.name}' conflicts with config — skipping`, { session: rc.name });
+        continue;
+      }
+      this.config.sessions.push(rc);
+      this.log.info(`Merged registry session '${rc.name}' (${rc.path})`, { session: rc.name });
+    }
+  }
+
+  /** Open command — register and start a new dynamic Claude session */
+  private async cmdOpen(path: string, name?: string, autoGo = false, priority = 50): Promise<IpcResponse> {
+    // Validate path
+    if (!existsSync(path)) {
+      return { ok: false, error: `Path does not exist: ${path}` };
+    }
+
+    // Derive name if not provided
+    const sessionName = name ?? deriveName(path);
+    if (!isValidName(sessionName)) {
+      return { ok: false, error: `Invalid session name '${sessionName}' — must match [a-z0-9-]+` };
+    }
+
+    // Check for conflicts with config sessions
+    const configMatch = this.config.sessions.find((s) => s.name === sessionName);
+    if (configMatch) {
+      // If it's already a registry session that was merged, treat as "already open"
+      const regMatch = this.registry.find(sessionName);
+      if (regMatch) {
+        return { ok: true, data: `Session '${sessionName}' already registered` };
+      }
+      return { ok: false, error: `Name '${sessionName}' conflicts with a config session` };
+    }
+
+    // Check for duplicate path
+    const pathMatch = this.registry.findByPath(path);
+    if (pathMatch) {
+      return { ok: true, data: `Path already registered as '${pathMatch.name}'` };
+    }
+
+    // Add to registry
+    const entry = this.registry.add({ name: sessionName, path, priority, auto_go: autoGo });
+    if (!entry) {
+      return { ok: false, error: `Failed to register session '${sessionName}'` };
+    }
+
+    // Create SessionConfig and merge into live config
+    const sessionConfig: SessionConfig = {
+      name: sessionName,
+      type: "claude",
+      path: entry.path,
+      command: undefined,
+      auto_go: autoGo,
+      priority,
+      depends_on: [],
+      headless: false,
+      env: {},
+      health: undefined,
+      max_restarts: 3,
+      restart_backoff_s: 5,
+      enabled: true,
+    };
+    this.config.sessions.push(sessionConfig);
+    this.state.initFromConfig(this.config.sessions);
+
+    // Start the session
+    const started = await this.startSession(sessionName);
+    this.log.info(`Opened session '${sessionName}' at ${entry.path}`, { session: sessionName });
+
+    return {
+      ok: true,
+      data: `Opened '${sessionName}' (${entry.path})${started ? " — started" : " — registered but not started"}`,
+    };
+  }
+
+  /** Close command — stop and unregister a dynamic session */
+  private async cmdClose(name: string): Promise<IpcResponse> {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+
+    // Verify it's a registry session, not config
+    const regEntry = this.registry.find(resolved);
+    if (!regEntry) {
+      return { ok: false, error: `'${resolved}' is a config session — use 'tmx stop' instead` };
+    }
+
+    // Stop the session
+    await this.stopSessionByName(resolved);
+
+    // Remove from registry
+    this.registry.remove(resolved);
+
+    // Remove from live config
+    this.config.sessions = this.config.sessions.filter((s) => s.name !== resolved);
+
+    this.log.info(`Closed session '${resolved}'`, { session: resolved });
+    return { ok: true, data: `Closed '${resolved}'` };
+  }
+
+  /** Recent command — parse history.jsonl for recently active projects */
+  private cmdRecent(count = 20): IpcResponse {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = join(home, ".claude", "history.jsonl");
+    const rawProjects = parseRecentProjects(historyPath, 1000);
+
+    // Enrich with running/registered/config status
+    const configNames = new Set(this.config.sessions.map((s) => s.name));
+    const runningNames = new Set<string>();
+    for (const s of Object.values(this.state.getState().sessions)) {
+      if (s.status === "running" || s.status === "degraded" || s.status === "starting") {
+        runningNames.add(s.name);
+      }
+    }
+
+    const results: RecentProject[] = rawProjects.slice(0, count).map((p) => {
+      // Try to match by derived name or by path
+      const matchedConfig = this.config.sessions.find((s) => s.path === p.path);
+      const matchedName = matchedConfig?.name ?? p.name;
+
+      let status: RecentProject["status"] = "untracked";
+      if (runningNames.has(matchedName)) {
+        status = "running";
+      } else if (this.registry.find(matchedName) || this.registry.findByPath(p.path)) {
+        status = "registered";
+      } else if (configNames.has(matchedName) || matchedConfig) {
+        status = "config";
+      }
+
+      return {
+        name: matchedName,
+        path: p.path,
+        last_active: p.last_active,
+        session_id: p.session_id,
+        status,
+      };
+    });
+
+    return { ok: true, data: results };
+  }
+
   // -- Battery monitoring ------------------------------------------------------
 
   /** Start periodic battery monitoring timer */
@@ -1511,6 +1673,15 @@ export class Daemon {
 
       case "memory":
         return this.cmdMemory();
+
+      case "open":
+        return this.cmdOpen(cmd.path, cmd.name, cmd.auto_go, cmd.priority);
+
+      case "close":
+        return this.cmdClose(cmd.name);
+
+      case "recent":
+        return this.cmdRecent(cmd.count);
 
       default:
         return { ok: false, error: `Unknown command: ${(cmd as { cmd: string }).cmd}` };

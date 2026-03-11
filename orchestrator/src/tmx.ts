@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { IpcClient } from "./ipc.js";
 import { Daemon } from "./daemon.js";
 import { loadConfig, findConfigPath, validateConfigFile } from "./config.js";
@@ -15,6 +15,8 @@ import { Logger } from "./log.js";
 import { parseReposConf, generateToml, findReposConf } from "./migrate.js";
 import type { IpcCommand, HealthResult } from "./types.js";
 import type { DaemonStatusData, SessionDetailData, ConfigSessionRow, MemoryData } from "./display-types.js";
+import { parseRecentProjects } from "./registry.js";
+import type { RecentProject } from "./registry.js";
 
 // -- ANSI helpers -------------------------------------------------------------
 
@@ -91,6 +93,9 @@ async function main(): Promise<void> {
     case "logs":
       return runLogs();
 
+    case "recent":
+      return runRecentOrIpc();
+
     case "--help":
     case "-h":
     case "help":
@@ -111,6 +116,8 @@ async function main(): Promise<void> {
     case "go":
     case "send":
     case "tabs":
+    case "open":
+    case "close":
       return runIpcCommand();
 
     default:
@@ -367,6 +374,39 @@ function runLogs(): void {
   }
 }
 
+/** Show recent projects — works with or without daemon */
+async function runRecentOrIpc(): Promise<void> {
+  const configPath = getConfigFlag();
+  const client = getClient(configPath);
+  const count = subArgs[0] ? parseInt(subArgs[0], 10) : 20;
+
+  // Try daemon first (has enriched status info)
+  if (await client.isRunning()) {
+    const resp = await client.send({ cmd: "recent", count });
+    if (resp.ok) {
+      formatOutput("recent", resp.data);
+      return;
+    }
+  }
+
+  // Fallback: parse history.jsonl directly (no running/registered status)
+  const home = process.env.HOME ?? "";
+  const historyPath = join(home, ".claude", "history.jsonl");
+  const projects = parseRecentProjects(historyPath, 1000);
+
+  if (projects.length === 0) {
+    console.log(`${DIM}No recent projects found${RESET}`);
+    return;
+  }
+
+  console.log(`${BOLD}Recent projects${RESET} ${DIM}(daemon not running — status unavailable)${RESET}`);
+  for (const p of projects.slice(0, count)) {
+    const shortPath = p.path.startsWith(home) ? "~" + p.path.slice(home.length) : p.path;
+    const ago = timeSince(p.last_active);
+    console.log(`  ${p.name.padEnd(20)} ${shortPath.padEnd(40)} ${DIM}${ago} ago${RESET}`);
+  }
+}
+
 /** Send a command to the daemon via IPC */
 async function runIpcCommand(): Promise<void> {
   const configPath = getConfigFlag();
@@ -419,6 +459,29 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "tabs":
       cmd = { cmd: "tabs", names: subArgs.length ? subArgs : undefined };
+      break;
+    case "open":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx open <path> [--name <n>] [--auto-go] [--priority N]`);
+        process.exit(1);
+      }
+      cmd = {
+        cmd: "open",
+        path: subArgs[0],
+        name: getFlag(subArgs, "--name"),
+        auto_go: subArgs.includes("--auto-go"),
+        priority: getFlag(subArgs, "--priority") ? parseInt(getFlag(subArgs, "--priority")!, 10) : undefined,
+      };
+      break;
+    case "close":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx close <name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "close", name: subArgs[0] };
+      break;
+    case "recent":
+      cmd = { cmd: "recent", count: subArgs[0] ? parseInt(subArgs[0], 10) : undefined };
       break;
     default:
       // Try as fuzzy session name → status
@@ -477,6 +540,29 @@ function formatOutput(cmd: string, data: unknown): void {
 
     case "memory": {
       formatMemory(data as MemoryData);
+      break;
+    }
+
+    case "recent": {
+      if (Array.isArray(data)) {
+        const projects = data as RecentProject[];
+        if (projects.length === 0) {
+          console.log(`${DIM}No recent projects found${RESET}`);
+          break;
+        }
+        console.log(`${BOLD}Recent projects${RESET}`);
+        const home = process.env.HOME ?? "";
+        for (const p of projects) {
+          const shortPath = p.path.startsWith(home) ? "~" + p.path.slice(home.length) : p.path;
+          const statusColor = p.status === "running" ? GREEN
+            : p.status === "registered" ? CYAN
+            : p.status === "config" ? DIM
+            : YELLOW;
+          const statusLabel = `${statusColor}${p.status}${RESET}`;
+          const ago = timeSince(p.last_active);
+          console.log(`  ${p.name.padEnd(20)} ${shortPath.padEnd(40)} [${statusLabel}] ${DIM}${ago} ago${RESET}`);
+        }
+      }
       break;
     }
 
@@ -666,6 +752,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Extract a flag value from args (e.g., --name foo → "foo") */
+function getFlag(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx >= 0 && args[idx + 1]) return args[idx + 1];
+  return undefined;
+}
+
 function printHelp(): void {
   console.log(`${BOLD}tmx${RESET} — Tmux session orchestrator for Termux
 
@@ -684,6 +777,9 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}tabs${RESET} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET}                Validate and print resolved config
   ${CYAN}migrate${RESET} [path]        Convert repos.conf to tmx.toml
+  ${CYAN}open${RESET} <path> [opts]     Register and start a dynamic Claude session
+  ${CYAN}close${RESET} <name>          Stop and unregister a dynamic session
+  ${CYAN}recent${RESET} [count]        Show recently active Claude projects
   ${CYAN}go${RESET} <name>             Send "go" to a Claude session
   ${CYAN}send${RESET} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET}                Start daemon (foreground)
