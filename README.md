@@ -1,364 +1,114 @@
 # Termux Tools
 
-Collection of tools, scripts, and configurations for enhancing Termux productivity on Android.
+Tools, automation, and infrastructure for running Claude Code sessions on Android with Termux.
 
-## 🚀 Features
+## Components
 
-### 1. Tmux Multi-Instance Manager
+### TMX Orchestrator (`orchestrator/`)
 
-Automatically start and manage multiple project sessions in **separate tmux instances** that persist across device reboots.
+TypeScript daemon that manages tmux session lifecycle — replaces the old bash boot scripts
+with dependency-ordered startup, health monitoring, battery management, and a web dashboard.
 
-**What it does:**
-- Creates separate tmux instance for each project on boot
-- Automatically sends 'go' command to flagged projects (like cleverkeys)
-- Provides fuzzy-search commands to switch between instances
-- Easy repo management with automation flags
-- Supports custom bot sessions (e.g., discord-irc bot with Bun runtime)
-
-### 2. ADB Wireless Connection Automation
-
-Keeps ADB wireless debugging connected automatically for seamless Android development.
-
-**What it does:**
-- Auto-detects and connects to ADB over WiFi
-- Scans ports in reverse order (highest first) for faster connection
-- Remembers last successful connection for instant reconnect
-- Monitors and maintains connection via cron (every 5 minutes)
-- Supports APK installation over wireless connection
-
-### 3. Tasker Crash Recovery
-
-Automatically restarts Termux and restores all sessions when it crashes or runs out of RAM.
-
-**What it does:**
-- Monitors for absence of "Termux Boot" notification
-- Detects when Termux crashes or sessions fail to start
-- Automatically relaunches Termux
-- Runs boot script to restore all tmux sessions
-- Health check verifies sessions are actually running
-- No manual intervention needed
-
-**Quick Setup (ADB-Automated):**
 ```bash
-cd ~/git/termux-tools
-
-# Fully automated setup via ADB (recommended)
-bash tasker/auto-setup-tasker.sh
-
-# OR interactive setup with health checks
-bash tasker/setup-tasker-simple.sh
-
-# See docs/TASKER_ADB_SETUP.md for manual setup and troubleshooting
+tmx boot              # Start daemon + boot all sessions + create Termux tabs
+tmx status            # Show daemon status, all sessions, battery, memory
+tmx health            # Run health checks
+tmx tabs              # Recreate Termux tabs for tmux sessions
+tmx recent            # List recent Claude projects from history
+tmx open ~/git/foo    # Open a new Claude session dynamically
+tmx go termux-tools   # Send Enter to a waiting Claude session
+tmx memory            # Show system + per-session memory usage
+tmx shutdown          # Graceful shutdown
 ```
 
-**How it works:**
-- Runs health check every 10 minutes (adjustable)
-- If unhealthy → launches Termux + runs startup script
-- Much more robust than "App Closed" event detection
+**Features:**
+- Config-driven sessions via `~/.config/tmx/tmx.toml`
+- Dependency-ordered parallel startup (topological sort)
+- Health checks (tmux_alive, http, process, custom) with auto-restart
+- Battery monitoring — disables radios below threshold when not charging
+- Memory pressure detection with OOM shedding (stops idle sessions)
+- Dynamic session registry — `tmx open`/`tmx close` survive daemon restarts
+- Web dashboard on port 18970 (Astro 5 + Svelte 5 + SSE real-time updates)
+- Watchdog bash loop survives Android OOM kills
+- Termux tab creation via TermuxService intents (Android 16 compatible)
 
-**Primary Commands:**
+### CFC Bridge (`bridge/`)
+
+WebSocket bridge connecting Chrome extension to Claude Code CLI. Enables browser
+automation tools (screenshots, navigation, form fill) as MCP tools in Claude sessions.
+
 ```bash
-# Switch to a tmux instance (fuzzy search)
-tm clev        # Attach to cleverkeys (or any partial match)
-tm un          # Attach to Unexpected-Keyboard
-tm newproject  # Creates new instance if repo exists in ~/git/
-
-# Send 'go' to an instance without switching
-tmgo clev      # Send 'go' to cleverkeys, stay in current session
-tmgo un        # Send 'go' to Unexpected-Keyboard
-
-# List and manage instances
-tmbs           # List all tmux sessions
-tmbi           # Show detailed instance info
-tmbr           # Restart all instances
+npx claude-chrome-android          # Start bridge server
+npx claude-chrome-android --mcp    # MCP relay mode (spawned by Claude Code)
+npx claude-chrome-android --setup  # Register MCP server + install extension
 ```
 
-**Quick Start:**
+Published as `claude-chrome-android` on npm.
+
+### Landing Page (`site/`)
+
+Static site at [termux.party](https://termux.party) — Astro 5 + Svelte 5 + Tailwind v4.
+Deployed via GitHub Pages on push to main.
+
+### ADB Wireless Automation (`tools/`)
+
 ```bash
-# Install required packages
-pkg install tmux termux-api termux-boot
+tools/adb-wireless-connect.sh     # Scan and connect ADB over WiFi
+tools/restore-tabs.sh             # Recreate Termux tabs for tmux sessions
+tools/fix-after-update.sh         # Apply phantom process killer fix
+```
 
-# Install Termux:Boot app from F-Droid
-# https://f-droid.org/packages/com.termux.boot/
+ADB auto-reconnects every 5 minutes via cron.
 
-# Copy example configs (XDG-compliant structure)
-mkdir -p ~/.termux/boot ~/.config/termux-boot
-cp examples/startup.sh.example ~/.termux/boot/startup.sh
-cp examples/repos.conf.example ~/.config/termux-boot/repos.conf
-cp examples/bash_aliases.example ~/.bash_aliases
+## Quick Start
+
+```bash
+# Install dependencies
+pkg install tmux termux-api termux-boot bun
+
+# Clone and build
+git clone https://github.com/tribixbite/termux-tools ~/git/termux-tools
+cd ~/git/termux-tools/orchestrator
+bun install && bun run build
+
+# Symlink CLI
+mkdir -p ~/.local/bin
+ln -sf ~/git/termux-tools/orchestrator/dist/tmx.js ~/.local/bin/tmx
+
+# Create config
+mkdir -p ~/.config/tmx
+# Edit ~/.config/tmx/tmx.toml (see orchestrator/examples/)
+
+# Install watchdog as boot script
+cp orchestrator/watchdog.sh ~/.termux/boot/startup.sh
 chmod +x ~/.termux/boot/startup.sh
 
-# Source aliases in ~/.bashrc
-echo 'if [ -f ~/.bash_aliases ]; then . ~/.bash_aliases; fi' >> ~/.bashrc
-source ~/.bashrc
-
-# Edit repos in repos.conf (add auto_go flags)
-vim ~/.termux/boot/repos.conf
-
-# Test it
-~/.termux/boot/startup.sh
-tmbs  # List all instances
-tm clev  # Attach to cleverkeys
+# Boot
+tmx boot
 ```
 
-## 📚 Documentation
+## Architecture
 
-- **[BOOT_ARCHITECTURE.md](docs/BOOT_ARCHITECTURE.md)** - ⭐ Boot system architecture, wake locks, error handling, logging
-- **[TASKER_ADB_SETUP.md](docs/TASKER_ADB_SETUP.md)** - ⭐ Automated Tasker setup via ADB for crash recovery
-- **[SUMMARY.md](docs/SUMMARY.md)** - Quick overview of features
-- **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command cheat sheet
-- **[TM_COMMAND.md](docs/TM_COMMAND.md)** - Deep dive on tm command
-- **[TMGO_COMMAND.md](docs/TMGO_COMMAND.md)** - Deep dive on tmgo command
-- **[WORKFLOWS.md](docs/WORKFLOWS.md)** - Real-world usage patterns
-- **[TERMUX_BOOT_SETUP.md](docs/TERMUX_BOOT_SETUP.md)** - Complete boot configuration guide
-- **[TMUX_ALIASES_GUIDE.md](docs/TMUX_ALIASES_GUIDE.md)** - Comprehensive alias reference
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system diagram,
+module map, boot sequence, and component details.
 
-## 🛠️ Configuration Files
+## Documentation
 
-### `~/.config/termux-boot/repos.conf`
+| Doc | Description |
+|-----|-------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, module map, boot sequence |
+| [ADB_WIRELESS_GUIDE.md](docs/ADB_WIRELESS_GUIDE.md) | ADB wireless setup and troubleshooting |
+| [QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) | Command cheat sheet |
+| [specs/claude-chrome-bridge.md](docs/specs/claude-chrome-bridge.md) | CFC Bridge protocol spec |
 
-Defines repositories and automation flags. (Fallback: `~/.termux/boot/repos.conf`)
+## Requirements
 
-**Example:**
-```bash
-# Format: REPOS["path"]="auto_go:enabled"
-# auto_go: 1 = auto-send 'go', 0 = just start cc
-# enabled: 1 = start on boot, 0 = skip
+- Android device with Termux (0.118+)
+- Termux:Boot, Termux:API apps (F-Droid)
+- Bun runtime (`pkg install bun`)
+- tmux (`pkg install tmux`)
+- Optional: Termux:Widget, Termux:Tasker for shortcuts
 
-REPOS["$HOME/git/swype/cleverkeys"]="1:1"  # Auto-go enabled
-REPOS["$HOME/git/swype/CustomCamera"]="0:1"
-REPOS["$HOME/git/pop/popcorn-mobile"]="0:1"
-```
+## License
 
-See [examples/repos.conf.example](examples/repos.conf.example) for full configuration.
-
-### `~/.termux/boot/startup.sh`
-
-Reads repos.conf and creates separate tmux instance for each enabled project.
-
-See [examples/startup.sh.example](examples/startup.sh.example) for implementation.
-
-### `~/.bash_aliases`
-
-Provides convenient aliases for tmux session management.
-
-**Key commands:**
-- `tm <search>` - **PRIMARY: Smart fuzzy window switcher (works in cc!)**
-- `tmgo <search>` - **Send 'go' to window without switching (works in cc!)**
-- `tmb` - Attach to boot session
-- `tmb0-5` - Switch to specific window
-- `tmba <repo>` - Add repo temporarily
-- `tmbp <repo>` - Add repo permanently
-- `tmbr` - Restart session
-- `tmbi` - Show session info
-
-See [examples/bash_aliases.example](examples/bash_aliases.example) for full aliases.
-
-## 🎯 Common Commands
-
-```bash
-# PRIMARY: Smart Window Switcher (works inside cc/claude!)
-tm clev      # Switch to cleverkeys (partial match)
-tm un        # Switch to Unexpected-Keyboard
-tm bun       # Creates window if repo exists in ~/git/
-
-# Send 'go' to Window (works inside cc/claude!)
-tmgo clev    # Send 'go' to cleverkeys without switching
-tmgo 0       # Send 'go' to window 0
-tmgo un      # Send 'go' to Unexpected-Keyboard
-
-# Session Management
-tmb          # Attach to boot session
-tmbi         # Show session info
-tmbr         # Restart session
-tmbk         # Kill session
-
-# Navigation (when not inside cc)
-tmb0         # Switch to window 0
-tmb1         # Switch to window 1
-tmbw camera  # Find window by name (fuzzy)
-
-# Adding Repos
-tmba my-project      # Add temporarily to current session
-tmbp my-project      # Add permanently to startup.sh
-```
-
-### Why `tm` and `tmgo` are Primary
-
-**The Real Workflow:**
-
-When you're actively inside Claude Code (`cc`) - meaning you're in a conversation with Claude - you can't directly type bash commands. But you CAN:
-
-1. **Ask Claude to run commands for you**: "tm clev", "tmgo custom"
-2. **Or use these commands from a shell in another tmux pane/window**
-
-Traditional tmux shortcuts (Ctrl+b) don't work because you're in Claude's interface.
-
-**Use cases:**
-- **Split pane workflow**: One pane with `cc` running, another pane with bash where you use `tm`/`tmgo`
-- **Ask Claude**: Tell Claude "run tmgo 0" and Claude executes it for you
-- **Between sessions**: Use `tm` to switch projects when NOT actively talking to Claude
-
-## 📦 Installation
-
-### Method 1: Manual Installation
-
-1. Copy example files to your home directory:
-   ```bash
-   cp examples/startup.sh.example ~/.termux/boot/startup.sh
-   cp examples/bash_aliases.example ~/.bash_aliases
-   chmod +x ~/.termux/boot/startup.sh
-   ```
-
-2. Add to `~/.bashrc`:
-   ```bash
-   if [ -f ~/.bash_aliases ]; then
-       . ~/.bash_aliases
-   fi
-   ```
-
-3. Edit `~/.termux/boot/startup.sh` to add your repos
-
-4. Reload configuration:
-   ```bash
-   source ~/.bashrc
-   ```
-
-5. Test it:
-   ```bash
-   ~/.termux/boot/startup.sh
-   tmb
-   ```
-
-### Method 2: Quick Install Script
-
-```bash
-# TODO: Create install.sh script
-```
-
-## 🔧 Customization
-
-### Change Command Run in Windows
-
-Edit `~/.termux/boot/startup.sh`:
-
-```bash
-# Change from 'cc' to your command
-tmux send-keys -t boot-session:0 "cd '$repo' && your-command" C-m
-```
-
-### Add More Repos
-
-**Temporary:**
-```bash
-tmba ~/git/new-project
-```
-
-**Permanent:**
-```bash
-tmbp new-project
-tmbr  # Restart to apply
-```
-
-**Manual:**
-```bash
-vim ~/.termux/boot/startup.sh
-# Add to repos array: "$HOME/git/new-project"
-tmbr  # Restart
-```
-
-### Modify Window Aliases
-
-Edit `~/.bash_aliases` to add more window shortcuts:
-```bash
-alias tmb6='tmux select-window -t boot-session:6'
-alias tmb7='tmux select-window -t boot-session:7'
-```
-
-## 🐛 Troubleshooting
-
-### Boot Session Not Starting
-
-1. Verify Termux:Boot is installed:
-   ```bash
-   pm list packages | grep termux.boot
-   ```
-
-2. Check startup script is executable:
-   ```bash
-   ls -l ~/.termux/boot/startup.sh
-   chmod +x ~/.termux/boot/startup.sh
-   ```
-
-3. Test manually:
-   ```bash
-   ~/.termux/boot/startup.sh
-   ```
-
-4. Check logs:
-   ```bash
-   cat ~/.termux/boot.log
-   ```
-
-### Aliases Not Working
-
-```bash
-# Reload bash configuration
-source ~/.bashrc
-
-# Or start new shell
-exec bash
-
-# Verify aliases loaded
-alias | grep tmb
-```
-
-### tmux Session Not Found
-
-```bash
-# Check if session exists
-tmux ls
-
-# Create session
-~/.termux/boot/startup.sh
-
-# Or use quick attach (auto-creates)
-tmbb
-```
-
-## 📋 Requirements
-
-- Termux (latest version)
-- tmux: `pkg install tmux`
-- termux-api: `pkg install termux-api`
-- Termux:Boot app (from F-Droid)
-- Termux:API app (from F-Droid, for wake-lock)
-
-## 🤝 Contributing
-
-Contributions welcome! Feel free to:
-- Report bugs
-- Suggest features
-- Submit pull requests
-- Improve documentation
-
-## 📄 License
-
-MIT License - feel free to use and modify as needed.
-
-## 🔗 Related Projects
-
-- [bun-on-termux](https://github.com/yourusername/bun-on-termux) - Run Bun JavaScript runtime on Termux
-- [termux-desktop](https://github.com/yourusername/termux-desktop) - Desktop environment setup for Termux
-
-## 📞 Support
-
-- GitHub Issues: Report bugs or request features
-- Documentation: See docs above for detailed guides
-- Termux Wiki: https://wiki.termux.com/
-
-## 🎉 Credits
-
-Built for the Termux community to make mobile development more productive.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+MIT
