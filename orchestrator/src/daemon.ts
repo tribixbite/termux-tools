@@ -9,7 +9,7 @@
  * loop to survive OOM kills.
  */
 
-import { execSync, spawnSync } from "node:child_process";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
@@ -80,43 +80,44 @@ function termuxApiEnv(): NodeJS.ProcessEnv {
 
 const TERMUX_NOTIFICATION_BIN = resolveTermuxBin("termux-notification");
 
-/** Send a Termux notification (one-shot) */
+/**
+ * Spawn a Termux:API command non-blocking with a hard kill timeout.
+ * termux-notification can hang indefinitely when Termux:API service is
+ * unresponsive — using spawnSync would freeze the daemon's event loop.
+ */
+function spawnTermuxApi(bin: string, args: string[], timeoutMs = 8000): void {
+  try {
+    const child = spawn(bin, args, {
+      stdio: "ignore",
+      env: termuxApiEnv(),
+      detached: true,
+    });
+    // Hard kill if it hasn't exited after timeout
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch { /* already dead */ }
+    }, timeoutMs);
+    child.on("exit", () => clearTimeout(timer));
+    child.on("error", () => clearTimeout(timer));
+    // Detach so it doesn't keep the daemon alive
+    child.unref();
+  } catch {
+    // Non-fatal
+  }
+}
+
+/** Send a Termux notification (one-shot, non-blocking) */
 function notify(title: string, content: string): void {
-  try {
-    spawnSync(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content], {
-      timeout: 5000,
-      stdio: "ignore",
-      env: termuxApiEnv(),
-    });
-  } catch {
-    // Non-fatal
-  }
+  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content]);
 }
 
-/** Send a Termux notification with arbitrary extra args (for --ongoing, --id, etc.) */
+/** Send a Termux notification with arbitrary extra args (non-blocking) */
 function notifyWithArgs(args: string[]): void {
-  try {
-    spawnSync(TERMUX_NOTIFICATION_BIN, args, {
-      timeout: 5000,
-      stdio: "ignore",
-      env: termuxApiEnv(),
-    });
-  } catch {
-    // Non-fatal
-  }
+  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, args);
 }
 
-/** Remove a Termux notification by ID */
+/** Remove a Termux notification by ID (non-blocking) */
 function removeNotification(id: string): void {
-  try {
-    spawnSync(resolveTermuxBin("termux-notification-remove"), [id], {
-      timeout: 5000,
-      stdio: "ignore",
-      env: termuxApiEnv(),
-    });
-  } catch {
-    // Non-fatal
-  }
+  spawnTermuxApi(resolveTermuxBin("termux-notification-remove"), [id]);
 }
 
 /** Resolve this device's local IP address (for ADB self-identification) */
