@@ -1,6 +1,7 @@
-// Launch bridge via navigator.share() → Termux.
+// Launch bridge — tries daemon API first, falls back to navigator.share() → Termux.
 // Browser intent: URIs add CATEGORY_BROWSABLE which Termux doesn't declare,
-// so navigator.share() (native OS share, no BROWSABLE) is the only path.
+// so navigator.share() (native OS share, no BROWSABLE) is the only path
+// when the daemon isn't running.
 
 const btn = document.getElementById("share-btn");
 const status = document.getElementById("status");
@@ -17,14 +18,53 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
-// Check initial bridge state
-chrome.runtime.sendMessage({ type: "get_state" }, (resp) => {
-  if (resp?.state === "connected") {
-    status.textContent = "Bridge is already connected";
-    btn.textContent = "Already Running";
-    btn.disabled = true;
+// On load: try daemon API first — may start bridge without share sheet
+(async () => {
+  // Check if already connected
+  chrome.runtime.sendMessage({ type: "get_state" }, (resp) => {
+    if (resp?.state === "connected") {
+      status.textContent = "Bridge is already connected";
+      btn.textContent = "Already Running";
+      btn.disabled = true;
+    }
+  });
+
+  // Try starting via daemon HTTP API (works when Termux is running)
+  status.textContent = "Trying daemon...";
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const resp = await fetch("http://127.0.0.1:18970/api/bridge", {
+      method: "POST",
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.status === "starting" || data.status === "already_running") {
+        status.textContent = `Bridge ${data.status} via daemon — waiting for connection...`;
+        btn.textContent = "Starting...";
+        btn.disabled = true;
+        // Tell background to start polling
+        chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
+        // Auto-close timeout
+        setTimeout(() => {
+          if (status.textContent.includes("waiting")) {
+            status.textContent = "Bridge didn't respond — try share button below";
+            btn.textContent = "Share to Termux";
+            btn.disabled = false;
+          }
+        }, 12000);
+        return; // Daemon handled it
+      }
+    }
+  } catch {
+    // Daemon not reachable — Termux may not be running
   }
-});
+
+  // Daemon didn't work — show share button
+  status.textContent = "Tap below to share to Termux and start the bridge";
+})();
 
 btn.addEventListener("click", async () => {
   btn.textContent = "Opening share sheet...";

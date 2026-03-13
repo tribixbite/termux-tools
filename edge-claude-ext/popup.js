@@ -111,16 +111,34 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
 });
 
 document.getElementById("btn-launch-bridge").addEventListener("click", () => {
-  // Navigate the active tab to launcher.html (chrome.tabs.create dies with popup).
-  // Launcher has a "Share to Termux" button using navigator.share().
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
-    } else {
-      chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
+  const launchBtn = document.getElementById("btn-launch-bridge");
+  launchBtn.textContent = "Starting...";
+  launchBtn.disabled = true;
+
+  // Try daemon API first — if Termux is running, bridge starts instantly
+  chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
+    if (response?.ok && response.method !== "needs_deeplink") {
+      // Daemon handled it — no need for share sheet
+      launchBtn.textContent = "Starting via daemon...";
+      // Wait for connection state update to flip the UI
+      setTimeout(() => {
+        launchBtn.disabled = false;
+        launchBtn.textContent = "Launch Bridge";
+      }, 5000);
+      return;
     }
+
+    // Daemon unavailable — fall back to launcher page (share-to-Termux)
+    launchBtn.disabled = false;
+    launchBtn.textContent = "Launch Bridge";
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
+      } else {
+        chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
+      }
+    });
   });
-  chrome.runtime.sendMessage({ type: "launch_bridge" });
 });
 
 // --- Stop Bridge button ------------------------------------------------------
