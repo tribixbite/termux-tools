@@ -1144,6 +1144,27 @@ async function launchBridge() {
     addLog("info", "Bridge not responding — popup will fire deep-link");
   }
 
+  // Try starting bridge via tmx daemon HTTP API (always-on, no share sheet needed)
+  try {
+    const daemonCtrl = new AbortController();
+    const daemonTimer = setTimeout(() => daemonCtrl.abort(), 3000);
+    const daemonResp = await fetch("http://127.0.0.1:18970/api/bridge", {
+      method: "POST",
+      signal: daemonCtrl.signal,
+    });
+    clearTimeout(daemonTimer);
+    if (daemonResp.ok) {
+      const data = await daemonResp.json();
+      addLog("info", `Bridge start via daemon: ${data.status}`, data);
+      if (data.status === "starting" || data.status === "already_running") {
+        pollForBridgeStartup();
+        return { ok: true, method: "daemon", detail: data.status };
+      }
+    }
+  } catch {
+    addLog("info", "Daemon not reachable — falling back to deep-link");
+  }
+
   // Deep-link is fired from popup.js (needs user gesture context for intent: URI).
   // Start background polling so we auto-connect when bridge comes up.
   pollForBridgeStartup();

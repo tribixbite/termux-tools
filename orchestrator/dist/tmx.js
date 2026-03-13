@@ -2418,35 +2418,35 @@ function termuxApiEnv2() {
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 var TERMUX_NOTIFICATION_BIN = resolveTermuxBin3("termux-notification");
-function notify(title, content) {
+function spawnTermuxApi(bin, args2, timeoutMs = 8e3) {
   try {
-    (0, import_node_child_process7.spawnSync)(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content], {
-      timeout: 5e3,
+    const child = (0, import_node_child_process7.spawn)(bin, args2, {
       stdio: "ignore",
-      env: termuxApiEnv2()
+      env: termuxApiEnv2(),
+      detached: true
     });
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+    }, timeoutMs);
+    child.on("exit", () => clearTimeout(timer));
+    child.on("error", () => clearTimeout(timer));
+    child.unref();
   } catch {
   }
+}
+function notify(title, content, id) {
+  const args2 = ["--title", title, "--content", content];
+  if (id) args2.push("--id", id, "--alert-once");
+  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, args2);
 }
 function notifyWithArgs(args2) {
-  try {
-    (0, import_node_child_process7.spawnSync)(TERMUX_NOTIFICATION_BIN, args2, {
-      timeout: 5e3,
-      stdio: "ignore",
-      env: termuxApiEnv2()
-    });
-  } catch {
-  }
+  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, args2);
 }
 function removeNotification(id) {
-  try {
-    (0, import_node_child_process7.spawnSync)(resolveTermuxBin3("termux-notification-remove"), [id], {
-      timeout: 5e3,
-      stdio: "ignore",
-      env: termuxApiEnv2()
-    });
-  } catch {
-  }
+  spawnTermuxApi(resolveTermuxBin3("termux-notification-remove"), [id]);
 }
 function resolveLocalIp() {
   try {
@@ -2604,10 +2604,10 @@ var Daemon = class _Daemon {
     const runningCount = Object.values(this.state.getState().sessions).filter((s) => s.status === "running").length;
     if (timedOut) {
       this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`);
+      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "tmx-boot");
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
     }
     this.updateStatusNotification();
   }
@@ -2656,6 +2656,12 @@ var Daemon = class _Daemon {
     }
     this.ipc.stop();
     removeNotification("tmx-status");
+    removeNotification("tmx-budget");
+    removeNotification("tmx-boot");
+    removeNotification("tmx-memory");
+    for (const session of this.config.sessions) {
+      removeNotification(`tmx-fail-${session.name}`);
+    }
     this.running = false;
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
@@ -2717,7 +2723,7 @@ var Daemon = class _Daemon {
     if (!this.budget.canStartSession()) {
       this.log.error(`Cannot start '${name}' \u2014 process budget critical`, { session: name });
       this.state.transition(name, "failed", "Process budget critical");
-      notify("tmx budget", `Cannot start '${name}' \u2014 process budget critical`);
+      notify("tmx budget", `Cannot start '${name}' \u2014 process budget critical`, "tmx-budget");
       return false;
     }
     const depsReady = sessionConfig.depends_on.every((dep) => {
@@ -2914,7 +2920,7 @@ var Daemon = class _Daemon {
       if (result.status !== 0) {
         this.log.warn("ADB connection failed", { stderr: result.stderr?.trim() });
         this.state.setAdbFixed(false);
-        notify("tmx boot", "ADB fix failed \u2014 processes may be killed");
+        notify("tmx boot", "ADB fix failed \u2014 processes may be killed", "tmx-boot");
         this.startAdbRetryTimer();
         return false;
       }
@@ -3016,7 +3022,7 @@ var Daemon = class _Daemon {
           "failed",
           `Exceeded max restarts (${session.max_restarts})`
         );
-        notify("tmx", `Session '${session.name}' failed \u2014 max restarts exceeded`);
+        notify("tmx", `Session '${session.name}' failed \u2014 max restarts exceeded`, `tmx-fail-${session.name}`);
         continue;
       }
       const backoffMs = session.restart_backoff_s * Math.pow(2, s.restart_count) * 1e3;
@@ -3044,7 +3050,7 @@ var Daemon = class _Daemon {
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
       this.log.error("Process budget critical", budgetStatus);
-      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`);
+      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`, "tmx-budget");
     }
   }
   // -- Memory monitoring & OOM shedding ----------------------------------------
@@ -3132,8 +3138,10 @@ var Daemon = class _Daemon {
       title,
       "--content",
       content,
+      "--icon",
+      "dashboard",
       "--action",
-      "open:http://localhost:18970"
+      "termux-open-url http://localhost:18970"
     ]);
   }
   /**
@@ -3174,13 +3182,13 @@ var Daemon = class _Daemon {
         activity: candidate.activity,
         priority: candidate.priority
       });
-      notify("tmx memory", `Shedding '${candidate.name}' \u2014 ${pressure} memory pressure`);
+      notify("tmx memory", `Shedding '${candidate.name}' \u2014 ${pressure} memory pressure`, "tmx-memory");
       await this.stopSessionByName(candidate.name);
       shedCount++;
     }
     if (shedCount === 0) {
       this.log.warn("No sessions available to shed");
-      notify("tmx memory", `${pressure} memory pressure \u2014 no sessions to shed`);
+      notify("tmx memory", `${pressure} memory pressure \u2014 no sessions to shed`, "tmx-memory");
     }
   }
   // -- Session registry ---------------------------------------------------------
@@ -3387,6 +3395,59 @@ var Daemon = class _Daemon {
           }
           break;
         case "bridge": {
+          if (method === "POST") {
+            try {
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 2e3);
+              const hResp = await fetch("http://127.0.0.1:18963/health", { signal: ctrl.signal });
+              clearTimeout(t);
+              if (hResp.ok) {
+                return { status: 200, data: { status: "already_running" } };
+              }
+            } catch {
+            }
+            const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+            const bridgeCandidates = [
+              (0, import_node_path6.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              (0, import_node_path6.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              (0, import_node_path6.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
+            ];
+            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs11.existsSync)(p));
+            if (!bridgeScript) {
+              return { status: 500, data: { error: "Bridge script not found" } };
+            }
+            let runtime = "";
+            const bunPath = (0, import_node_path6.join)(home, ".bun/bin/bun");
+            if ((0, import_node_fs11.existsSync)(bunPath)) runtime = bunPath;
+            else {
+              try {
+                const which = (0, import_node_child_process7.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
+                if (which.stdout?.trim()) runtime = which.stdout.trim();
+              } catch {
+              }
+            }
+            if (!runtime) {
+              try {
+                const which = (0, import_node_child_process7.spawnSync)("which", ["node"], { encoding: "utf-8", timeout: 3e3 });
+                if (which.stdout?.trim()) runtime = which.stdout.trim();
+              } catch {
+              }
+            }
+            if (!runtime) {
+              return { status: 500, data: { error: "No runtime (bun/node) found" } };
+            }
+            const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+            const logPath = (0, import_node_path6.join)(prefix, "tmp/bridge.log");
+            const logFd = (0, import_node_fs11.openSync)(logPath, "a");
+            const child = (0, import_node_child_process7.spawn)(runtime, [bridgeScript], {
+              detached: true,
+              stdio: ["ignore", logFd, logFd]
+            });
+            child.unref();
+            (0, import_node_fs11.closeSync)(logFd);
+            this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
+            return { status: 200, data: { status: "starting", pid: child.pid } };
+          }
           try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 3e3);
@@ -4075,6 +4136,8 @@ async function main() {
     case "--version":
     case "-v":
       return printVersion();
+    case "upgrade":
+      return runUpgrade();
     // Commands that proxy to daemon via IPC
     case "status":
     case "start":
@@ -4155,6 +4218,68 @@ async function runBoot() {
     } catch {
     }
   }
+}
+async function runUpgrade() {
+  const configPath = getConfigFlag();
+  const client = getClient(configPath);
+  console.log(`${CYAN}Building...${RESET2}`);
+  const buildResult = (0, import_node_child_process8.spawnSync)("bun", ["run", "build"], {
+    cwd: (0, import_node_path7.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+    encoding: "utf-8",
+    timeout: 3e4,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (buildResult.status !== 0) {
+    console.error(`${RED}Build failed:${RESET2}`);
+    console.error(buildResult.stderr?.trim() || buildResult.stdout?.trim());
+    process.exit(1);
+  }
+  console.log(`${GREEN}Build OK${RESET2}`);
+  const running = await client.isRunning();
+  if (!running) {
+    console.log(`${DIM2}Daemon not running \u2014 nothing to restart${RESET2}`);
+    return;
+  }
+  console.log(`${CYAN}Shutting down daemon...${RESET2}`);
+  try {
+    await client.send({ cmd: "shutdown" }, 1e4);
+  } catch {
+  }
+  for (let i = 0; i < 10; i++) {
+    await sleep3(500);
+    if (!await client.isRunning()) break;
+  }
+  if (await client.isRunning()) {
+    console.error(`${RED}Daemon didn't stop cleanly${RESET2}`);
+    process.exit(1);
+  }
+  console.log(`${GREEN}Daemon stopped${RESET2}`);
+  const watchdogCheck = (0, import_node_child_process8.spawnSync)("pgrep", ["-f", "watchdog.sh"], {
+    timeout: 3e3,
+    stdio: "ignore"
+  });
+  if (watchdogCheck.status === 0) {
+    console.log(`${DIM2}Watchdog detected \u2014 daemon will auto-restart${RESET2}`);
+    for (let i = 0; i < 20; i++) {
+      await sleep3(1e3);
+      if (await client.isRunning()) {
+        console.log(`${GREEN}Daemon restarted by watchdog${RESET2}`);
+        return;
+      }
+    }
+    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s \u2014 try 'tmx boot'${RESET2}`);
+    return;
+  }
+  console.log(`${CYAN}No watchdog \u2014 restarting daemon directly...${RESET2}`);
+  const bootArgs = ["boot"];
+  if (configPath) bootArgs.push("--config", configPath);
+  const bunPath = resolveBunPath();
+  const bootResult = (0, import_node_child_process8.spawnSync)(bunPath, [process.argv[1], ...bootArgs], {
+    encoding: "utf-8",
+    timeout: 12e4,
+    stdio: "inherit"
+  });
+  process.exit(bootResult.status ?? 1);
 }
 function printStartupDiagnostics(logDir, stderrPath) {
   console.error();
@@ -4634,6 +4759,7 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}send${RESET2} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET2}                Start daemon (foreground)
   ${CYAN}shutdown${RESET2}              Stop everything + release wake lock + exit daemon
+  ${CYAN}upgrade${RESET2}               Rebuild, shutdown daemon, let watchdog auto-restart
 
 ${BOLD}OPTIONS${RESET2}
   -c, --config <path>  Config file path (default: ~/.config/tmx/tmx.toml)

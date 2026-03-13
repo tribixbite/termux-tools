@@ -200,7 +200,8 @@ echo "[\$(date +%H:%M:%S)] termux-url-opener: $url" >> "$PREFIX/tmp/url-opener.l
 case "$url" in
   *cfcbridge*/start*)
     BRIDGE_LOG="$PREFIX/tmp/bridge.log"
-    if pgrep -f "(bun|node).*claude-chrome" > /dev/null 2>&1; then
+    # Health-check the bridge directly — avoids pgrep self-match
+    if curl -sf --connect-timeout 2 http://127.0.0.1:18963/health > /dev/null 2>&1; then
       echo "[\$(date +%H:%M:%S)] bridge already running" >> "$PREFIX/tmp/url-opener.log"
       exit 0
     fi

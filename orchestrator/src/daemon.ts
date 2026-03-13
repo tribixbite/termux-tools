@@ -10,7 +10,7 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
@@ -105,9 +105,14 @@ function spawnTermuxApi(bin: string, args: string[], timeoutMs = 8000): void {
   }
 }
 
-/** Send a Termux notification (one-shot, non-blocking) */
-function notify(title: string, content: string): void {
-  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, ["--title", title, "--content", content]);
+/**
+ * Send a Termux notification (non-blocking).
+ * Pass an id to update an existing notification in place (prevents spam).
+ */
+function notify(title: string, content: string, id?: string): void {
+  const args = ["--title", title, "--content", content];
+  if (id) args.push("--id", id, "--alert-once");
+  spawnTermuxApi(TERMUX_NOTIFICATION_BIN, args);
 }
 
 /** Send a Termux notification with arbitrary extra args (non-blocking) */
@@ -329,10 +334,10 @@ export class Daemon {
 
     if (timedOut) {
       this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`);
+      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "tmx-boot");
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`);
+      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
     }
 
     // Initial persistent status notification
@@ -398,8 +403,15 @@ export class Daemon {
     // Stop IPC server
     this.ipc.stop();
 
-    // Remove persistent status notification
+    // Remove persistent notifications
     removeNotification("tmx-status");
+    removeNotification("tmx-budget");
+    removeNotification("tmx-boot");
+    removeNotification("tmx-memory");
+    // Clean up per-session failure notifications
+    for (const session of this.config.sessions) {
+      removeNotification(`tmx-fail-${session.name}`);
+    }
 
     this.running = false;
     this.log.info("Shutdown complete");
@@ -485,7 +497,7 @@ export class Daemon {
     if (!this.budget.canStartSession()) {
       this.log.error(`Cannot start '${name}' — process budget critical`, { session: name });
       this.state.transition(name, "failed", "Process budget critical");
-      notify("tmx budget", `Cannot start '${name}' — process budget critical`);
+      notify("tmx budget", `Cannot start '${name}' — process budget critical`, "tmx-budget");
       return false;
     }
 
@@ -746,7 +758,7 @@ export class Daemon {
       if (result.status !== 0) {
         this.log.warn("ADB connection failed", { stderr: result.stderr?.trim() });
         this.state.setAdbFixed(false);
-        notify("tmx boot", "ADB fix failed — processes may be killed");
+        notify("tmx boot", "ADB fix failed — processes may be killed", "tmx-boot");
 
         // Set up retry timer
         this.startAdbRetryTimer();
@@ -876,7 +888,7 @@ export class Daemon {
       if (s.restart_count >= session.max_restarts) {
         this.state.transition(session.name, "failed",
           `Exceeded max restarts (${session.max_restarts})`);
-        notify("tmx", `Session '${session.name}' failed — max restarts exceeded`);
+        notify("tmx", `Session '${session.name}' failed — max restarts exceeded`, `tmx-fail-${session.name}`);
         continue;
       }
 
@@ -912,7 +924,7 @@ export class Daemon {
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
       this.log.error("Process budget critical", budgetStatus as unknown as Record<string, unknown>);
-      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`);
+      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`, "tmx-budget");
     }
   }
 
@@ -1081,14 +1093,14 @@ export class Daemon {
         priority: candidate.priority,
       });
 
-      notify("tmx memory", `Shedding '${candidate.name}' — ${pressure} memory pressure`);
+      notify("tmx memory", `Shedding '${candidate.name}' — ${pressure} memory pressure`, "tmx-memory");
       await this.stopSessionByName(candidate.name);
       shedCount++;
     }
 
     if (shedCount === 0) {
       this.log.warn("No sessions available to shed");
-      notify("tmx memory", `${pressure} memory pressure — no sessions to shed`);
+      notify("tmx memory", `${pressure} memory pressure — no sessions to shed`, "tmx-memory");
     }
   }
 
@@ -1357,7 +1369,67 @@ export class Daemon {
           }
           break;
         case "bridge": {
-          // Proxy to CFC bridge health endpoint
+          if (method === "POST") {
+            // POST /api/bridge/start — spawn bridge process
+            try {
+              // Check if already running first
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 2000);
+              const hResp = await fetch("http://127.0.0.1:18963/health", { signal: ctrl.signal });
+              clearTimeout(t);
+              if (hResp.ok) {
+                return { status: 200, data: { status: "already_running" } };
+              }
+            } catch { /* bridge is down — proceed to start */ }
+
+            // Find the bridge script
+            const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+            const bridgeCandidates = [
+              join(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              join(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              join(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js"),
+            ];
+            const bridgeScript = bridgeCandidates.find(p => existsSync(p));
+            if (!bridgeScript) {
+              return { status: 500, data: { error: "Bridge script not found" } };
+            }
+
+            // Resolve runtime (bun preferred)
+            let runtime = "";
+            const bunPath = join(home, ".bun/bin/bun");
+            if (existsSync(bunPath)) runtime = bunPath;
+            else {
+              try {
+                const which = spawnSync("which", ["bun"], { encoding: "utf-8", timeout: 3000 });
+                if (which.stdout?.trim()) runtime = which.stdout.trim();
+              } catch { /* fall through */ }
+            }
+            if (!runtime) {
+              try {
+                const which = spawnSync("which", ["node"], { encoding: "utf-8", timeout: 3000 });
+                if (which.stdout?.trim()) runtime = which.stdout.trim();
+              } catch { /* fall through */ }
+            }
+            if (!runtime) {
+              return { status: 500, data: { error: "No runtime (bun/node) found" } };
+            }
+
+            // Spawn bridge detached
+            const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+            const logPath = join(prefix, "tmp/bridge.log");
+            const logFd = openSync(logPath, "a");
+            const child = spawn(runtime, [bridgeScript], {
+              detached: true,
+              stdio: ["ignore", logFd, logFd],
+            });
+            child.unref();
+            closeSync(logFd);
+
+            this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
+            return { status: 200, data: { status: "starting", pid: child.pid } };
+          }
+
+          // GET /api/bridge — proxy to CFC bridge health endpoint
           try {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 3000);

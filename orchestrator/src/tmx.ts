@@ -105,6 +105,9 @@ async function main(): Promise<void> {
     case "-v":
       return printVersion();
 
+    case "upgrade":
+      return runUpgrade();
+
     // Commands that proxy to daemon via IPC
     case "status":
     case "start":
@@ -216,6 +219,90 @@ async function runBoot(): Promise<void> {
       // tmux attach exited (user detached or daemon shut down) — normal exit
     }
   }
+}
+
+/**
+ * Upgrade: rebuild dist, shut down the running daemon, let watchdog auto-restart.
+ * If no watchdog is running, restart the daemon directly.
+ */
+async function runUpgrade(): Promise<void> {
+  const configPath = getConfigFlag();
+  const client = getClient(configPath);
+
+  // Step 1: Build
+  console.log(`${CYAN}Building...${RESET}`);
+  const buildResult = spawnSync("bun", ["run", "build"], {
+    cwd: join(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+    encoding: "utf-8",
+    timeout: 30_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (buildResult.status !== 0) {
+    console.error(`${RED}Build failed:${RESET}`);
+    console.error(buildResult.stderr?.trim() || buildResult.stdout?.trim());
+    process.exit(1);
+  }
+  console.log(`${GREEN}Build OK${RESET}`);
+
+  // Step 2: Check if daemon is running
+  const running = await client.isRunning();
+  if (!running) {
+    console.log(`${DIM}Daemon not running — nothing to restart${RESET}`);
+    return;
+  }
+
+  // Step 3: Send shutdown — watchdog will auto-restart with new build
+  console.log(`${CYAN}Shutting down daemon...${RESET}`);
+  try {
+    await client.send({ cmd: "shutdown" }, 10_000);
+  } catch {
+    // May timeout because daemon exits before responding — that's fine
+  }
+
+  // Step 4: Wait for daemon to die
+  for (let i = 0; i < 10; i++) {
+    await sleep(500);
+    if (!(await client.isRunning())) break;
+  }
+
+  if (await client.isRunning()) {
+    console.error(`${RED}Daemon didn't stop cleanly${RESET}`);
+    process.exit(1);
+  }
+  console.log(`${GREEN}Daemon stopped${RESET}`);
+
+  // Step 5: Check if watchdog is running — if so, it will auto-restart
+  const watchdogCheck = spawnSync("pgrep", ["-f", "watchdog.sh"], {
+    timeout: 3000,
+    stdio: "ignore",
+  });
+  if (watchdogCheck.status === 0) {
+    console.log(`${DIM}Watchdog detected — daemon will auto-restart${RESET}`);
+    // Wait for the watchdog to restart the daemon
+    for (let i = 0; i < 20; i++) {
+      await sleep(1000);
+      if (await client.isRunning()) {
+        console.log(`${GREEN}Daemon restarted by watchdog${RESET}`);
+        return;
+      }
+    }
+    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s — try 'tmx boot'${RESET}`);
+    return;
+  }
+
+  // No watchdog — restart daemon directly
+  console.log(`${CYAN}No watchdog — restarting daemon directly...${RESET}`);
+  const bootArgs = ["boot"];
+  if (configPath) bootArgs.push("--config", configPath);
+
+  // Re-use runBoot logic by running tmx boot as a subprocess
+  const bunPath = resolveBunPath();
+  const bootResult = spawnSync(bunPath, [process.argv[1], ...bootArgs], {
+    encoding: "utf-8",
+    timeout: 120_000,
+    stdio: "inherit",
+  });
+  process.exit(bootResult.status ?? 1);
 }
 
 /** Print diagnostic info when daemon fails to start */
@@ -806,6 +893,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}send${RESET} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET}                Start daemon (foreground)
   ${CYAN}shutdown${RESET}              Stop everything + release wake lock + exit daemon
+  ${CYAN}upgrade${RESET}               Rebuild, shutdown daemon, let watchdog auto-restart
 
 ${BOLD}OPTIONS${RESET}
   -c, --config <path>  Config file path (default: ~/.config/tmx/tmx.toml)
