@@ -18,6 +18,7 @@ tmx recent            # List recent Claude projects from history
 tmx open ~/git/foo    # Open a new Claude session dynamically
 tmx go termux-tools   # Send Enter to a waiting Claude session
 tmx memory            # Show system + per-session memory usage
+tmx upgrade           # Rebuild, shutdown daemon, let watchdog auto-restart
 tmx shutdown          # Graceful shutdown
 ```
 
@@ -27,10 +28,15 @@ tmx shutdown          # Graceful shutdown
 - Health checks (tmux_alive, http, process, custom) with auto-restart
 - Battery monitoring — disables radios below threshold when not charging
 - Memory pressure detection with OOM shedding (stops idle sessions)
+- Persistent status bar notification — shows active/idle session counts, taps open dashboard
+- Phantom process count is informational only (phantom killer disabled via `device_config`)
+- `tmx upgrade` — rebuilds, shuts down daemon, watchdog auto-restarts with new build
 - Dynamic session registry — `tmx open`/`tmx close` survive daemon restarts
 - Web dashboard on port 18970 (Astro 5 + Svelte 5 + SSE real-time updates)
 - Watchdog bash loop survives Android OOM kills
 - Termux tab creation via TermuxService intents (Android 16 compatible)
+
+**Managed sessions:** termux-tools, stoatally, cleverkeys, craftmatic, torch, torch-template, digr (Claude sessions), plus termux-x11 and playwright (headless services).
 
 ### CFC Bridge (`bridge/`)
 
