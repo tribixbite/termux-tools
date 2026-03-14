@@ -229,6 +229,32 @@ async function runUpgrade(): Promise<void> {
   const configPath = getConfigFlag();
   const client = getClient(configPath);
 
+  // Safety: warn if running inside a daemon-managed tmux session
+  const callerSession = process.env.TMUX
+    ? spawnSync("tmux", ["display-message", "-p", "#{session_name}"], {
+        encoding: "utf-8", timeout: 3000, stdio: ["ignore", "pipe", "ignore"],
+      }).stdout?.trim()
+    : undefined;
+  if (callerSession) {
+    // Check if this session is managed by the daemon
+    try {
+      const running = await client.isRunning();
+      if (running) {
+        const resp = await client.send({ cmd: "status" } as IpcCommand, 5000);
+        const sessions = (resp as { sessions?: Array<{ name: string }> })?.sessions ?? [];
+        if (sessions.some((s: { name: string }) => s.name === callerSession)) {
+          console.error(
+            `${RED}Cannot upgrade from inside managed session '${callerSession}'.${RESET}\n` +
+            `${DIM}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'tmx upgrade'${RESET}`
+          );
+          process.exit(1);
+        }
+      }
+    } catch {
+      // Can't reach daemon — safe to proceed
+    }
+  }
+
   // Step 1: Build
   console.log(`${CYAN}Building...${RESET}`);
   const buildResult = spawnSync("bun", ["run", "build"], {

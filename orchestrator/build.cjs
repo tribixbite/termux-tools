@@ -13,7 +13,7 @@ build({
   target: "node18",
   outfile: resolve(__dirname, "dist/tmx.js"),
   format: "cjs",
-  banner: { js: "#!/usr/bin/env bun" },
+  banner: { js: `#!${process.env.PREFIX || "/data/data/com.termux/files/usr"}/bin/env bun` },
   external: [],
   // Replace import.meta references with CJS equivalents
   define: {

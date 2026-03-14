@@ -493,12 +493,9 @@ export class Daemon {
       return false;
     }
 
-    // Check process budget
+    // Check process budget — warn only, never block session starts
     if (!this.budget.canStartSession()) {
-      this.log.error(`Cannot start '${name}' — process budget critical`, { session: name });
-      this.state.transition(name, "failed", "Process budget critical");
-      notify("tmx budget", `Cannot start '${name}' — process budget critical`, "tmx-budget");
-      return false;
+      this.log.warn(`Process budget over threshold when starting '${name}'`, { session: name });
     }
 
     // Check dependencies
@@ -920,11 +917,10 @@ export class Daemon {
       this.restartTimers.add(timer);
     }
 
-    // Check process budget
+    // Check process budget — informational only, never blocks or kills
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
-      this.log.error("Process budget critical", budgetStatus as unknown as Record<string, unknown>);
-      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`, "tmx-budget");
+      this.log.warn("Process budget over threshold", budgetStatus as unknown as Record<string, unknown>);
     }
   }
 
@@ -978,9 +974,10 @@ export class Daemon {
       });
     }
 
-    if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
-      this.shedIdleSessions(sysMem.pressure);
-    }
+    // Memory shedding disabled — warn only, never auto-kill sessions
+    // if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
+    //   this.shedIdleSessions(sysMem.pressure);
+    // }
 
     // Push SSE update with combined state+memory
     this.pushSseState();

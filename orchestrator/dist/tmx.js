@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/data/data/com.termux/files/usr/bin/env bun
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -2721,10 +2721,7 @@ var Daemon = class _Daemon {
       return false;
     }
     if (!this.budget.canStartSession()) {
-      this.log.error(`Cannot start '${name}' \u2014 process budget critical`, { session: name });
-      this.state.transition(name, "failed", "Process budget critical");
-      notify("tmx budget", `Cannot start '${name}' \u2014 process budget critical`, "tmx-budget");
-      return false;
+      this.log.warn(`Process budget over threshold when starting '${name}'`, { session: name });
     }
     const depsReady = sessionConfig.depends_on.every((dep) => {
       const depState = this.state.getSession(dep);
@@ -3049,8 +3046,7 @@ var Daemon = class _Daemon {
     }
     const budgetStatus = this.budget.check();
     if (budgetStatus.mode === "critical") {
-      this.log.error("Process budget critical", budgetStatus);
-      notify("tmx budget", `Critical: ${budgetStatus.total_procs}/${budgetStatus.budget} processes`, "tmx-budget");
+      this.log.warn("Process budget over threshold", budgetStatus);
     }
   }
   // -- Memory monitoring & OOM shedding ----------------------------------------
@@ -3086,9 +3082,6 @@ var Daemon = class _Daemon {
         total_mb: sysMem.total_mb,
         pressure: sysMem.pressure
       });
-    }
-    if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
-      this.shedIdleSessions(sysMem.pressure);
     }
     this.pushSseState();
     this.updateStatusNotification();
@@ -4275,6 +4268,28 @@ async function runBoot() {
 async function runUpgrade() {
   const configPath = getConfigFlag();
   const client = getClient(configPath);
+  const callerSession = process.env.TMUX ? (0, import_node_child_process8.spawnSync)("tmux", ["display-message", "-p", "#{session_name}"], {
+    encoding: "utf-8",
+    timeout: 3e3,
+    stdio: ["ignore", "pipe", "ignore"]
+  }).stdout?.trim() : void 0;
+  if (callerSession) {
+    try {
+      const running2 = await client.isRunning();
+      if (running2) {
+        const resp = await client.send({ cmd: "status" }, 5e3);
+        const sessions = resp?.sessions ?? [];
+        if (sessions.some((s) => s.name === callerSession)) {
+          console.error(
+            `${RED}Cannot upgrade from inside managed session '${callerSession}'.${RESET2}
+${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'tmx upgrade'${RESET2}`
+          );
+          process.exit(1);
+        }
+      }
+    } catch {
+    }
+  }
   console.log(`${CYAN}Building...${RESET2}`);
   const buildResult = (0, import_node_child_process8.spawnSync)("bun", ["run", "build"], {
     cwd: (0, import_node_path7.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
