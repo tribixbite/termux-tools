@@ -15,6 +15,9 @@ tabBtns.forEach((btn) => {
     // Load panel data
     if (btn.dataset.panel === "logs") refreshLogs();
     if (btn.dataset.panel === "tabs") refreshTabs();
+    if (btn.dataset.panel === "network") refreshNetwork();
+    if (btn.dataset.panel === "console") refreshConsole();
+    if (btn.dataset.panel === "storage") refreshStorage();
   });
 });
 
@@ -110,34 +113,54 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", () => {
+document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
   const launchBtn = document.getElementById("btn-launch-bridge");
   launchBtn.textContent = "Starting...";
   launchBtn.disabled = true;
 
-  // Try daemon API first — if Termux is running, bridge starts instantly
-  chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
-    if (response?.ok && response.method !== "needs_deeplink") {
-      // Daemon handled it — no need for share sheet
-      launchBtn.textContent = "Starting via daemon...";
-      // Wait for connection state update to flip the UI
-      setTimeout(() => {
-        launchBtn.disabled = false;
-        launchBtn.textContent = "Launch Bridge";
-      }, 5000);
-      return;
-    }
+  // Tier 1 & 2: Try daemon API + TermuxService (handled in background.js launchBridge)
+  const response = await new Promise((resolve) => {
+    chrome.runtime.sendMessage({ type: "launch_bridge" }, (r) => resolve(r));
+  });
 
-    // Daemon unavailable — fall back to launcher page (share-to-Termux)
-    launchBtn.disabled = false;
-    launchBtn.textContent = "Launch Bridge";
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]) {
-        chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
-      } else {
-        chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
-      }
+  if (response?.ok && response.method !== "needs_deeplink") {
+    // Daemon or TermuxService handled it
+    launchBtn.textContent = `Starting via ${response.method}...`;
+    setTimeout(() => {
+      launchBtn.disabled = false;
+      launchBtn.textContent = "Launch Bridge";
+    }, 5000);
+    return;
+  }
+
+  // Tier 3: Try navigator.share() directly from popup context
+  try {
+    await navigator.share({
+      title: "Start CFC Bridge",
+      text: "termux-start-bridge",
+      url: "https://termux.party/start-bridge",
     });
+    // Share completed — user chose Termux
+    launchBtn.textContent = "Waiting for bridge...";
+    chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
+    setTimeout(() => {
+      launchBtn.disabled = false;
+      launchBtn.textContent = "Launch Bridge";
+    }, 12000);
+    return;
+  } catch {
+    // navigator.share() failed or was cancelled — fall through to tier 4
+  }
+
+  // Tier 4: Last resort — open launcher page in active tab
+  launchBtn.disabled = false;
+  launchBtn.textContent = "Launch Bridge";
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]) {
+      chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
+    } else {
+      chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
+    }
   });
 });
 
@@ -383,4 +406,202 @@ function refreshTabs() {
       list.appendChild(el);
     }
   });
+}
+
+// --- Network panel -----------------------------------------------------------
+
+let networkRefreshTimer = null;
+
+function refreshNetwork() {
+  chrome.runtime.sendMessage({ type: "get_network" }, (response) => {
+    const container = document.getElementById("network-list");
+    if (!container) return;
+    container.innerHTML = "";
+
+    const entries = response?.entries || [];
+    const filter = (document.getElementById("network-filter")?.value || "").toLowerCase();
+
+    const filtered = filter
+      ? entries.filter((e) => e.url.toLowerCase().includes(filter) || (e.type || "").toLowerCase().includes(filter))
+      : entries;
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div style="color:#484f58;padding:8px;font-size:10px">No network requests captured</div>';
+      return;
+    }
+
+    for (const entry of filtered) {
+      const el = document.createElement("div");
+      el.className = "net-entry";
+      const statusClass = entry.statusCode < 300 ? "s2xx" : entry.statusCode < 400 ? "s3xx" : entry.statusCode < 500 ? "s4xx" : "s5xx";
+      const ts = new Date(entry.timestamp).toTimeString().slice(0, 8);
+      // Truncate URL to last path segment + query
+      let shortUrl = entry.url;
+      try {
+        const u = new URL(entry.url);
+        shortUrl = u.pathname + u.search;
+        if (shortUrl.length > 60) shortUrl = "..." + shortUrl.slice(-57);
+      } catch {}
+      el.innerHTML = `
+        <span class="net-status ${statusClass}">${entry.statusCode}</span>
+        <span class="net-method">${escHtml(entry.method || "GET")}</span>
+        <span class="net-type">${escHtml(entry.type || "")}</span>
+        <span class="net-url" title="${escHtml(entry.url)}">${escHtml(shortUrl)}</span>
+        <span class="net-ts">${ts}</span>
+      `;
+      container.appendChild(el);
+    }
+    container.scrollTop = container.scrollHeight;
+  });
+
+  // Auto-refresh while panel is visible
+  clearInterval(networkRefreshTimer);
+  networkRefreshTimer = setInterval(() => {
+    const panel = document.getElementById("panel-network");
+    if (panel?.classList.contains("active")) refreshNetwork();
+    else clearInterval(networkRefreshTimer);
+  }, 3000);
+}
+
+document.getElementById("btn-clear-network")?.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "clear_network" }, () => refreshNetwork());
+});
+
+document.getElementById("network-filter")?.addEventListener("input", () => refreshNetwork());
+
+// --- Console panel -----------------------------------------------------------
+
+function refreshConsole() {
+  chrome.runtime.sendMessage({ type: "get_console" }, (response) => {
+    const container = document.getElementById("console-list");
+    if (!container) return;
+    container.innerHTML = "";
+
+    const entries = response?.result || [];
+    const filter = (document.getElementById("console-filter")?.value || "").toLowerCase();
+
+    const filtered = filter
+      ? entries.filter((e) => (e.message || "").toLowerCase().includes(filter) || (e.level || "").toLowerCase().includes(filter))
+      : entries;
+
+    if (filtered.length === 0) {
+      container.innerHTML = '<div style="color:#484f58;padding:8px;font-size:10px">No console messages captured</div>';
+      return;
+    }
+
+    for (const entry of filtered) {
+      const el = document.createElement("div");
+      el.className = "con-entry";
+      const ts = new Date(entry.timestamp).toTimeString().slice(0, 8);
+      el.innerHTML = `
+        <span class="log-ts">${ts}</span>
+        <span class="con-lvl ${escHtml(entry.level || "log")}">${escHtml(entry.level || "log")}</span>
+        <span class="con-msg">${escHtml(entry.message || "")}</span>
+      `;
+      container.appendChild(el);
+    }
+    container.scrollTop = container.scrollHeight;
+  });
+}
+
+document.getElementById("btn-clear-console")?.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "clear_console" }, () => refreshConsole());
+});
+
+document.getElementById("console-filter")?.addEventListener("input", () => refreshConsole());
+
+// --- Storage panel -----------------------------------------------------------
+
+function refreshStorage() {
+  const sectionsEl = document.getElementById("storage-sections");
+  if (!sectionsEl) return;
+  sectionsEl.innerHTML = '<div style="color:#484f58;padding:8px;font-size:10px">Loading...</div>';
+
+  // Fetch cookies and storage in parallel
+  let cookieData = [];
+  let storageData = { localStorage: [], sessionStorage: [] };
+  let pending = 2;
+
+  function renderWhenReady() {
+    if (--pending > 0) return;
+    sectionsEl.innerHTML = "";
+    renderStorageSection(sectionsEl, "Cookies", cookieData, "cookie");
+    renderStorageSection(sectionsEl, "Local Storage", storageData.localStorage || [], "local");
+    renderStorageSection(sectionsEl, "Session Storage", storageData.sessionStorage || [], "session");
+  }
+
+  chrome.runtime.sendMessage({ type: "get_cookies" }, (response) => {
+    cookieData = (response?.cookies || []).map((c) => ({ key: c.name, value: c.value, domain: c.domain, path: c.path }));
+    renderWhenReady();
+  });
+
+  chrome.runtime.sendMessage({ type: "get_storage" }, (response) => {
+    if (response?.result) storageData = response.result;
+    renderWhenReady();
+  });
+}
+
+function renderStorageSection(parent, title, items, storageType) {
+  const section = document.createElement("div");
+  section.className = "storage-section";
+
+  const hasError = items.length === 1 && items[0]?.error;
+  const displayItems = hasError ? [] : items;
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "storage-header";
+  header.innerHTML = `
+    <span class="storage-chevron">&#9654;</span>
+    <span>${escHtml(title)}</span>
+    <span class="storage-count">${displayItems.length}</span>
+  `;
+  section.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "storage-body";
+
+  if (hasError) {
+    body.innerHTML = `<div class="storage-empty">${escHtml(items[0].error)}</div>`;
+  } else if (displayItems.length === 0) {
+    body.innerHTML = '<div class="storage-empty">Empty</div>';
+  } else {
+    for (const item of displayItems) {
+      const row = document.createElement("div");
+      row.className = "storage-row";
+      row.innerHTML = `
+        <span class="storage-key" title="${escHtml(item.key)}">${escHtml(item.key)}</span>
+        <span class="storage-val" title="${escHtml(item.value || "")}">${escHtml(item.value || "")}</span>
+        <button class="storage-del" title="Delete">&times;</button>
+      `;
+      // Delete handler
+      row.querySelector(".storage-del").addEventListener("click", (e) => {
+        e.stopPropagation();
+        const msg = { type: "delete_storage_item", storageType, key: item.key };
+        if (storageType === "cookie") {
+          msg.domain = item.domain;
+          msg.path = item.path;
+        }
+        chrome.runtime.sendMessage(msg, () => {
+          row.remove();
+          // Update count
+          const countEl = header.querySelector(".storage-count");
+          if (countEl) countEl.textContent = String(parseInt(countEl.textContent) - 1);
+        });
+      });
+      body.appendChild(row);
+    }
+  }
+
+  section.appendChild(body);
+
+  // Toggle
+  header.addEventListener("click", () => {
+    const chevron = header.querySelector(".storage-chevron");
+    const isOpen = body.classList.toggle("open");
+    chevron.classList.toggle("open", isOpen);
+  });
+
+  parent.appendChild(section);
 }

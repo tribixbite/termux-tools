@@ -186,7 +186,7 @@ async function handleBridgeMessage(msg) {
 // --- Tool Request Dispatch ---------------------------------------------------
 
 async function handleToolRequest(msg) {
-  const { method, params } = msg;
+  const { method, params, requestId } = msg;
   stats.toolRequestsReceived++;
 
   // Unwrap execute_tool wrapper from MCP server
@@ -269,12 +269,17 @@ async function handleToolRequest(msg) {
     // CRITICAL: Do NOT include `method` in response — cli.js response classifier
     // M7z() checks `"method" in A` first and misclassifies as notification,
     // causing handleResponse() to never fire and the tool call to timeout.
-    sendMessage({ type: "tool_response", result });
+    // Include requestId for parallel dispatch (bridge matches response to caller)
+    const response = { type: "tool_response", result };
+    if (requestId) response.requestId = requestId;
+    sendMessage(response);
   } catch (err) {
     const elapsed = Date.now() - startTime;
     stats.toolErrors++;
     addLog("error", `← ${method} FAIL (${elapsed}ms)`, { error: err.message });
-    sendMessage({ type: "tool_response", error: err.message || String(err) });
+    const errResponse = { type: "tool_response", error: err.message || String(err) };
+    if (requestId) errResponse.requestId = requestId;
+    sendMessage(errResponse);
   }
 }
 
@@ -957,6 +962,106 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  // --- Dev tool panel handlers -------------------------------------------------
+
+  if (msg.type === "get_network") {
+    const tabs = [];
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) { sendResponse({ entries: [], count: 0 }); return; }
+      const entries = networkRequests.get(tid) || [];
+      sendResponse({ entries: entries.slice(-200), count: entries.length });
+    });
+    return true;
+  }
+
+  if (msg.type === "clear_network") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (tid) networkRequests.set(tid, []);
+      sendResponse({ ok: true });
+    });
+    return true;
+  }
+
+  if (msg.type === "get_console") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) { sendResponse({ result: [], count: 0 }); return; }
+      executeViaContentScript(tid, "read_console", {})
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ result: [], error: err.message }));
+    });
+    return true;
+  }
+
+  if (msg.type === "clear_console") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) { sendResponse({ ok: false }); return; }
+      executeViaContentScript(tid, "clear_console", {})
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ error: err.message }));
+    });
+    return true;
+  }
+
+  if (msg.type === "get_storage") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) { sendResponse({ result: { localStorage: [], sessionStorage: [] } }); return; }
+      executeViaContentScript(tid, "get_storage", {})
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ error: err.message }));
+    });
+    return true;
+  }
+
+  if (msg.type === "get_cookies") {
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tabUrl = activeTabs[0]?.url;
+      if (!tabUrl || tabUrl.startsWith("chrome://") || tabUrl.startsWith("edge://")) {
+        sendResponse({ cookies: [] });
+        return;
+      }
+      chrome.cookies.getAll({ url: tabUrl }, (cookies) => {
+        sendResponse({
+          cookies: (cookies || []).map((c) => ({
+            name: c.name,
+            value: c.value.length > 200 ? c.value.slice(0, 200) + "..." : c.value,
+            domain: c.domain,
+            path: c.path,
+            secure: c.secure,
+            httpOnly: c.httpOnly,
+            expirationDate: c.expirationDate,
+          })),
+        });
+      });
+    });
+    return true;
+  }
+
+  if (msg.type === "delete_storage_item") {
+    const { storageType, key, domain, path, url } = msg;
+    if (storageType === "cookie") {
+      // Delete cookie via chrome.cookies API
+      const cookieUrl = url || `https://${domain}${path || "/"}`;
+      chrome.cookies.remove({ url: cookieUrl, name: key }, (details) => {
+        sendResponse(details ? { ok: true } : { error: "Cookie not found" });
+      });
+      return true;
+    }
+    // Delegate to content script for localStorage/sessionStorage
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) { sendResponse({ error: "No active tab" }); return; }
+      executeViaContentScript(tid, "delete_storage_item", { storageType, key })
+        .then((result) => sendResponse(result))
+        .catch((err) => sendResponse({ error: err.message }));
+    });
+    return true;
+  }
+
   // Launcher page notifies us after the share completes — we poll as single source of truth
   if (msg.type === "bridge_launch_initiated") {
     addLog("info", "Bridge launch initiated via share");
@@ -1163,6 +1268,27 @@ async function launchBridge() {
     }
   } catch {
     addLog("info", "Daemon not reachable — falling back to deep-link");
+  }
+
+  // Try TermuxService intent via daemon (creates a real Termux tab running the bridge)
+  try {
+    const tsCtrl = new AbortController();
+    const tsTimer = setTimeout(() => tsCtrl.abort(), 5000);
+    const tsResp = await fetch("http://127.0.0.1:18970/api/bridge/termux-service", {
+      method: "POST",
+      signal: tsCtrl.signal,
+    });
+    clearTimeout(tsTimer);
+    if (tsResp.ok) {
+      const data = await tsResp.json();
+      addLog("info", `Bridge start via TermuxService: ${data.status}`, data);
+      if (data.status === "starting") {
+        pollForBridgeStartup();
+        return { ok: true, method: "termux_service", detail: data.status };
+      }
+    }
+  } catch {
+    addLog("info", "TermuxService API not reachable — falling back to deep-link");
   }
 
   // Deep-link is fired from popup.js (needs user gesture context for intent: URI).

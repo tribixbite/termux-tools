@@ -130,6 +130,12 @@ async function handleAction(action, params) {
       return takeScreenshot(params);
     case "read_console":
       return readConsole(params);
+    case "clear_console":
+      return clearConsole();
+    case "get_storage":
+      return getStorage();
+    case "delete_storage_item":
+      return deleteStorageItem(params);
     case "get_page_text":
       return getPageText(params);
     case "drag":
@@ -720,6 +726,58 @@ async function takeScreenshot(_params) {
             ", Body text length: " + document.body.innerText.length,
     note: "captureVisibleTab unavailable on mobile, html2canvas not loaded",
   };
+}
+
+// --- clear_console -----------------------------------------------------------
+
+function clearConsole() {
+  const count = capturedConsole.length;
+  capturedConsole.length = 0;
+  return { result: `Console cleared (${count} entries removed)` };
+}
+
+// --- get_storage / delete_storage_item ---------------------------------------
+
+function getStorage() {
+  const result = { localStorage: [], sessionStorage: [] };
+  try {
+    for (const [key, value] of Object.entries(localStorage)) {
+      result.localStorage.push({
+        key,
+        value: value.length > 500 ? value.slice(0, 500) + "..." : value,
+      });
+    }
+  } catch (e) {
+    result.localStorage = [{ error: e.message || "Access denied" }];
+  }
+  try {
+    for (const [key, value] of Object.entries(sessionStorage)) {
+      result.sessionStorage.push({
+        key,
+        value: value.length > 500 ? value.slice(0, 500) + "..." : value,
+      });
+    }
+  } catch (e) {
+    result.sessionStorage = [{ error: e.message || "Access denied" }];
+  }
+  return { result };
+}
+
+function deleteStorageItem(params) {
+  const { storageType, key } = params;
+  try {
+    if (storageType === "local") {
+      localStorage.removeItem(key);
+      return { result: `Removed '${key}' from localStorage` };
+    }
+    if (storageType === "session") {
+      sessionStorage.removeItem(key);
+      return { result: `Removed '${key}' from sessionStorage` };
+    }
+    return { error: `Unknown storageType: ${storageType}` };
+  } catch (e) {
+    return { error: e.message || "Storage access denied" };
+  }
 }
 
 // --- read_console ------------------------------------------------------------

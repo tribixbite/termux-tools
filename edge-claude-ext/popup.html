@@ -54,15 +54,18 @@
     .status-text { flex: 1; font-weight: 500; }
     .status-detail { font-size: 11px; color: #8b949e; font-family: monospace; }
 
-    /* Tabs */
+    /* Tabs — scrollable for 7 tabs */
     .tab-bar {
       display: flex;
       background: #161b22;
       border-bottom: 1px solid #21262d;
+      overflow-x: auto;
+      scrollbar-width: none;
     }
+    .tab-bar::-webkit-scrollbar { display: none; }
     .tab-btn {
-      flex: 1;
-      padding: 8px 4px;
+      flex: 0 0 auto;
+      padding: 8px 10px;
       background: none;
       border: none;
       border-bottom: 2px solid transparent;
@@ -71,6 +74,7 @@
       font-weight: 500;
       cursor: pointer;
       text-align: center;
+      white-space: nowrap;
     }
     .tab-btn:hover { color: #c9d1d9; }
     .tab-btn.active {
@@ -225,6 +229,92 @@
       margin: 12px 0 8px;
     }
     .section-title:first-child { margin-top: 0; }
+
+    /* Network entries */
+    .net-entry {
+      display: flex; align-items: center; gap: 6px;
+      padding: 3px 8px;
+      border-bottom: 1px solid #21262d0a;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 10px; line-height: 1.5;
+    }
+    .net-entry:hover { background: #161b2240; }
+    .net-status {
+      min-width: 28px; text-align: center; font-weight: 700;
+      border-radius: 3px; padding: 1px 4px;
+    }
+    .net-status.s2xx { color: #3fb950; }
+    .net-status.s3xx { color: #d29922; }
+    .net-status.s4xx, .net-status.s5xx { color: #f85149; }
+    .net-method {
+      min-width: 32px; font-weight: 600; color: #58a6ff;
+      font-size: 9px; text-transform: uppercase;
+    }
+    .net-type { min-width: 40px; color: #8b949e; font-size: 9px; }
+    .net-url { flex: 1; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .net-ts { color: #484f58; min-width: 55px; text-align: right; flex-shrink: 0; }
+
+    /* Console entries */
+    .con-entry {
+      display: flex; gap: 6px;
+      padding: 2px 8px;
+      border-bottom: 1px solid #21262d0a;
+      font-family: "SF Mono", "Fira Code", monospace;
+      font-size: 10px; line-height: 1.6;
+    }
+    .con-entry:hover { background: #161b2240; }
+    .con-lvl { min-width: 36px; font-weight: 600; flex-shrink: 0; }
+    .con-lvl.log, .con-lvl.info { color: #58a6ff; }
+    .con-lvl.warn { color: #d29922; }
+    .con-lvl.error { color: #f85149; }
+    .con-lvl.debug { color: #8b949e; }
+    .con-msg { color: #c9d1d9; word-break: break-all; }
+
+    /* Storage sections */
+    .storage-section {
+      background: #161b22; border: 1px solid #21262d;
+      border-radius: 6px; margin-bottom: 8px; overflow: hidden;
+    }
+    .storage-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 10px; cursor: pointer;
+      font-size: 11px; font-weight: 600; color: #c9d1d9;
+    }
+    .storage-header:hover { background: #1c2333; }
+    .storage-chevron { transition: transform 0.15s; font-size: 10px; color: #8b949e; }
+    .storage-chevron.open { transform: rotate(90deg); }
+    .storage-count {
+      font-size: 9px; color: #8b949e; font-weight: 400;
+      background: #21262d; border-radius: 10px; padding: 1px 6px;
+    }
+    .storage-body { display: none; }
+    .storage-body.open { display: block; }
+    .storage-row {
+      display: flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      border-top: 1px solid #21262d;
+      font-size: 10px; font-family: monospace;
+    }
+    .storage-row:hover { background: #1c233340; }
+    .storage-key { color: #58a6ff; min-width: 80px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .storage-val { flex: 1; color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .storage-del {
+      background: none; border: none; color: #f85149; cursor: pointer;
+      font-size: 12px; padding: 0 4px; flex-shrink: 0; opacity: 0.6;
+    }
+    .storage-del:hover { opacity: 1; }
+    .storage-empty { padding: 8px 10px; color: #484f58; font-size: 10px; border-top: 1px solid #21262d; }
+
+    /* Filter row for panels */
+    .panel-toolbar {
+      display: flex; gap: 8px; margin-bottom: 8px; align-items: center;
+    }
+    .panel-filter {
+      flex: 1; padding: 5px 8px; border-radius: 4px;
+      border: 1px solid #30363d; background: #0d1117;
+      color: #c9d1d9; font-size: 11px; font-family: monospace;
+    }
+    .panel-filter::placeholder { color: #484f58; }
   </style>
 </head>
 <body>
@@ -251,6 +341,9 @@
     <button class="tab-btn" data-panel="tests">Tests</button>
     <button class="tab-btn" data-panel="logs">Logs</button>
     <button class="tab-btn" data-panel="tabs">Tabs</button>
+    <button class="tab-btn" data-panel="network">Network</button>
+    <button class="tab-btn" data-panel="console">Console</button>
+    <button class="tab-btn" data-panel="storage">Storage</button>
   </div>
 
   <!-- Dashboard panel -->
@@ -314,6 +407,29 @@
   <div class="panel" id="panel-tabs">
     <div class="section-title">MCP Tab Group</div>
     <div class="tab-info-list" id="tab-info-list"></div>
+  </div>
+
+  <!-- Network panel -->
+  <div class="panel" id="panel-network">
+    <div class="panel-toolbar">
+      <input class="panel-filter" id="network-filter" type="text" placeholder="Filter by URL or type...">
+      <button class="btn" id="btn-clear-network" style="padding:4px 10px;font-size:11px">Clear</button>
+    </div>
+    <div class="log-container" id="network-list" style="max-height:340px"></div>
+  </div>
+
+  <!-- Console panel -->
+  <div class="panel" id="panel-console">
+    <div class="panel-toolbar">
+      <input class="panel-filter" id="console-filter" type="text" placeholder="Filter messages...">
+      <button class="btn" id="btn-clear-console" style="padding:4px 10px;font-size:11px">Clear</button>
+    </div>
+    <div class="log-container" id="console-list" style="max-height:340px"></div>
+  </div>
+
+  <!-- Storage panel -->
+  <div class="panel" id="panel-storage">
+    <div id="storage-sections"></div>
   </div>
 
   <script src="popup.js"></script>
