@@ -15,7 +15,6 @@ state_file = "$HOME/.local/share/tmx/state.json"
 log_dir = "$HOME/.local/share/tmx/logs"
 health_interval_s = 30
 boot_timeout_s = 120
-process_budget = 128
 wake_lock_policy = "active_sessions"
 dashboard_port = 18970
 memory_warning_mb = 1024
@@ -81,6 +80,17 @@ Newline-delimited JSON over Unix socket.
 | `close` | `name` | Stop + remove registry session |
 | `recent` | `count?` | Recent projects from history |
 
+### CLI-Only Commands
+
+| Command | Description |
+|---------|-------------|
+| `upgrade` | Rebuild dist, shutdown daemon, let watchdog auto-restart |
+
+`tmx upgrade` runs `bun run build` in the orchestrator directory, then sends
+a `shutdown` IPC command. The watchdog loop detects the exit and restarts the
+daemon with the new build. Safety guard: refuses to run from inside a
+daemon-managed tmux session.
+
 ## Session Lifecycle
 
 ### State Machine
@@ -131,14 +141,33 @@ Alternatives tried and failed on Android 16:
 
 ## Monitoring
 
+### Phantom Process Counter
+
+`ProcessCount` tracks descendants of `TERMUX_APP_PID` (`/proc/<pid>/task/*/children`
+walk). Purely informational — the daemon never blocks or kills sessions based on
+this count. The old `BudgetTracker` with critical/warning/normal modes has been
+removed; `BudgetMode` and `BudgetStatus` types are replaced by:
+
+```ts
+interface ProcessCount {
+  phantom_procs: number;
+}
+```
+
+The count is included in `DaemonStatusData.procs` (IPC) and displayed on the
+dashboard and CLI status output.
+
 ### Memory Pressure Levels
 
 | Level | Condition | Action |
 |-------|-----------|--------|
 | normal | available > warning_mb | — |
 | warning | available < warning_mb | Log warning |
-| critical | available < critical_mb | Shed idle sessions |
-| emergency | available < emergency_mb | Shed all non-essential |
+| critical | available < critical_mb | Log warning (shedding disabled) |
+| emergency | available < emergency_mb | Log warning (shedding disabled) |
+
+`shedIdleSessions()` exists but is commented out — the daemon never auto-kills
+sessions regardless of memory pressure.
 
 ### Battery
 
@@ -149,6 +178,22 @@ Polls `termux-battery-status` every `poll_interval_s`. When below
 - Send notification + toast
 
 Auto-restores at threshold + 5% hysteresis when charging resumes.
+
+### Notifications
+
+All notifications use `termux-notification` via async spawn with 8s timeout.
+Persistent status notification uses `--ongoing --alert-once --id tmx-status` and
+shows "tmx (play) N/M" with active/idle session names. Every recurring
+notification uses `--id <tag>` to replace in-place and prevent spam:
+
+| ID | Purpose |
+|----|---------|
+| `tmx-status` | Persistent daemon status (ongoing) |
+| `tmx-boot` | Boot progress |
+| `tmx-memory` | Memory pressure warnings |
+| `tmx-fail-<name>` | Per-session failure alerts |
+
+All notification IDs are cleaned up on `shutdown`.
 
 ### Session Registry
 
@@ -189,6 +234,12 @@ Astro 5 static site with Svelte 5 islands, served on port 18970.
 | `/api/adb/disconnect` | POST | Disconnect ADB |
 | `/api/logs` | GET | Recent log entries (JSON) |
 | `/api/events` | GET | SSE stream for real-time state |
+
+### Dashboard Types
+
+`DaemonStatus` uses `procs: ProcessCount` (not the former `budget: BudgetStatus`).
+The `BudgetGauge` component is simplified to display "Procs: N phantom" — no gauge
+arc, no mode indicator.
 
 ### Session Control (via SSE actions)
 
