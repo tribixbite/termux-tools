@@ -228,7 +228,9 @@ class NativeMessageDecoder {
 /** Port used for ADB forward to Edge's DevTools socket */
 const CDP_PORT = parseInt(process.env.CDP_PORT ?? "9223", 10);
 /** How often to re-check Edge PID for reconnection (ms) */
-const CDP_PID_CHECK_INTERVAL_MS = 60_000;
+const CDP_PID_CHECK_INTERVAL_MS = 30_000;
+/** Max exponential backoff reconnect attempts before falling back to PID timer */
+const CDP_MAX_BACKOFF_ATTEMPTS = 10;
 /** CDP target cache staleness threshold (ms) */
 const CDP_TARGET_CACHE_TTL_MS = 10_000;
 /** CDP WebSocket message timeout (ms) */
@@ -266,6 +268,10 @@ class CdpManager {
   private pidCheckTimer: ReturnType<typeof setInterval> | null = null;
   /** Reconnect interval handle (active when disconnected) */
   private reconnectTimer: ReturnType<typeof setInterval> | null = null;
+  /** Exponential backoff reconnect attempts counter */
+  private reconnectBackoffAttempts = 0;
+  /** Exponential backoff timer handle */
+  private backoffTimer: ReturnType<typeof setTimeout> | null = null;
   /** Sessions where Network domain has been enabled */
   private networkEnabledSessions = new Set<string>();
   /** Network request events per sessionId */
@@ -289,24 +295,41 @@ class CdpManager {
       // Step 2: set up ADB port forward and verify via /json/version
       // Edge Android uses `chrome_devtools_remote` (no PID suffix) unlike Chrome which uses `_$PID`.
       // `adb forward` returns exit code 0 even for non-existent sockets, so we must verify each attempt.
+      // Skip redundant adb forward if an existing forward to the right PID is still active
+      const existingForward = this.checkExistingForward();
       const socketCandidates = [
         `chrome_devtools_remote_${this.edgePid}`, // Chrome convention (PID-suffixed)
         "chrome_devtools_remote",                  // Edge Android convention (plain)
       ];
       let versionData: Record<string, string> | null = null;
-      for (const socketName of socketCandidates) {
-        const fwdResult = runSync(
-          adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
-        );
-        if (fwdResult.exitCode !== 0) continue;
+
+      if (existingForward) {
+        // Verify the existing forward is still working
         try {
           const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
           versionData = await resp.json() as Record<string, string>;
-          log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
-          break;
+          log("debug", `CDP: reusing existing ADB forward on port ${CDP_PORT}`);
         } catch {
-          // This socket didn't work — remove forward and try next
+          // Existing forward stale — remove and re-establish below
           runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
+        }
+      }
+
+      if (!versionData) {
+        for (const socketName of socketCandidates) {
+          const fwdResult = runSync(
+            adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
+          );
+          if (fwdResult.exitCode !== 0) continue;
+          try {
+            const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+            versionData = await resp.json() as Record<string, string>;
+            log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
+            break;
+          } catch {
+            // This socket didn't work — remove forward and try next
+            runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
+          }
         }
       }
       if (!versionData) {
@@ -322,7 +345,9 @@ class CdpManager {
 
       await this.connectWebSocket(wsUrl);
 
-      // Connection succeeded — stop reconnect timer, start PID recheck
+      // Connection succeeded — reset backoff, stop reconnect timer, start PID recheck
+      this.reconnectBackoffAttempts = 0;
+      this.cancelBackoff();
       this.stopReconnectTimer();
       if (!this.pidCheckTimer) {
         this.pidCheckTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
@@ -365,6 +390,8 @@ class CdpManager {
         this.ws = null;
         this.sessionMap.clear();
         this.tabTargetMap.clear();
+        // Auto-reconnect with exponential backoff
+        this.scheduleExpBackoff();
       });
 
       this.ws.addEventListener("message", (ev) => {
@@ -405,8 +432,15 @@ class CdpManager {
     });
   }
 
-  /** Send a CDP command and await its response */
-  sendCommand(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
+  /** Send a CDP command and await its response. Tries one reconnect if disconnected. */
+  async sendCommand(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<unknown> {
+    // Pre-command health check — try one reconnect if not connected
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      log("debug", `CDP: sendCommand(${method}) — not connected, attempting reconnect`);
+      const ok = await this.connect();
+      if (!ok) throw new Error("CDP not connected");
+    }
+
     return new Promise((resolve, reject) => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
         reject(new Error("CDP not connected"));
@@ -821,6 +855,47 @@ class CdpManager {
     };
   }
 
+  /** Schedule exponential backoff reconnect: 2s, 4s, 8s, 16s, max 30s */
+  private scheduleExpBackoff(): void {
+    if (this.backoffTimer) return; // already scheduled
+    if (this.reconnectBackoffAttempts >= CDP_MAX_BACKOFF_ATTEMPTS) {
+      log("info", `CDP: backoff exhausted (${CDP_MAX_BACKOFF_ATTEMPTS} attempts), falling back to PID timer`);
+      this.reconnectBackoffAttempts = 0;
+      this.startReconnectTimer();
+      return;
+    }
+    const delay = Math.min(2000 * Math.pow(2, this.reconnectBackoffAttempts), 30_000);
+    this.reconnectBackoffAttempts++;
+    log("debug", `CDP: backoff reconnect in ${delay}ms (attempt ${this.reconnectBackoffAttempts}/${CDP_MAX_BACKOFF_ATTEMPTS})`);
+    this.backoffTimer = setTimeout(async () => {
+      this.backoffTimer = null;
+      const ok = await this.connect();
+      if (!ok && this.state === "disconnected") {
+        // connect() failed — schedule next attempt
+        this.scheduleExpBackoff();
+      }
+    }, delay);
+  }
+
+  /** Cancel pending backoff timer */
+  private cancelBackoff(): void {
+    if (this.backoffTimer) {
+      clearTimeout(this.backoffTimer);
+      this.backoffTimer = null;
+    }
+  }
+
+  /** Check if an ADB forward for our CDP port already exists */
+  private checkExistingForward(): boolean {
+    try {
+      const result = runSync(adb("forward", "--list"));
+      const lines = result.stdout.toString().trim().split("\n");
+      return lines.some((l: string) => l.includes(`tcp:${CDP_PORT}`));
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Get Edge PID — tries local `pidof` first (works on-device without ADB),
    * falls back to `adb shell pidof` if local fails.
@@ -886,13 +961,15 @@ class CdpManager {
     }
   }
 
-  /** Stop reconnect timer for final shutdown (cleanup restarts it, but shutdown shouldn't) */
+  /** Stop reconnect timer and cancel backoff for final shutdown */
   stopReconnectForShutdown(): void {
     this.stopReconnectTimer();
+    this.cancelBackoff();
   }
 
   /** Clean up CDP connection and ADB forward, restart reconnect timer */
   cleanup(): void {
+    this.cancelBackoff();
     if (this.pidCheckTimer) {
       clearInterval(this.pidCheckTimer);
       this.pidCheckTimer = null;
@@ -1245,16 +1322,29 @@ function encodeGIF(
 // --- HTTP Tool Execution (MCP bypass) ----------------------------------------
 
 /**
- * Queue of pending HTTP /tool requests. Tool calls from multiple MCP server
- * instances are serialized — the extension processes one tool at a time, so
- * we queue requests and drain them in FIFO order. Each entry is resolved
- * when the extension sends the corresponding tool_response.
+ * Parallel HTTP /tool dispatch. Requests to different tabs run concurrently;
+ * requests to the same tab serialize (prevents focus/DOM conflicts).
+ *
+ * Each request gets a unique `requestId` — the extension echoes it back in the
+ * tool_response so we can match responses to the correct HTTP caller.
  */
-const pendingToolQueue: Array<{
+let toolRequestCounter = 0;
+
+/** Pending HTTP /tool requests keyed by requestId */
+const pendingToolMap = new Map<string, {
+  resolve: (result: unknown) => void;
+  timeout: ReturnType<typeof setTimeout>;
+  tabId: number;
+}>();
+
+/** Per-tab serialization queue — requests for busy tabs wait here */
+const busyTabs = new Map<number, Array<{
   requestJson: string;
   resolve: (result: unknown) => void;
   timeout: ReturnType<typeof setTimeout>;
-}> = [];
+  requestId: string;
+  tabId: number;
+}>>();
 
 /** Tool call timeout for HTTP /tool endpoint (ms) */
 const HTTP_TOOL_TIMEOUT_MS = 30_000;
@@ -1263,13 +1353,28 @@ const HTTP_TOOL_TIMEOUT_MS = 30_000;
 let lastToolName: string | null = null;
 let lastToolTime: string | null = null;
 
-/** Send the next queued tool request to the extension (if any) */
-function drainToolQueue(): void {
-  if (pendingToolQueue.length === 0) return;
-  const next = pendingToolQueue[0];
+/** Send a tool request to all connected WS clients */
+function sendToolRequest(requestId: string, requestJson: string): void {
   for (const client of wsClients) {
-    try { client.send(next.requestJson); } catch {}
+    try { client.send(requestJson); } catch {}
   }
+}
+
+/** Drain the next queued request for a tab after the current one completes */
+function drainTabQueue(tabId: number): void {
+  const queue = busyTabs.get(tabId);
+  if (!queue || queue.length === 0) {
+    busyTabs.delete(tabId);
+    return;
+  }
+  const next = queue.shift()!;
+  if (queue.length === 0) busyTabs.delete(tabId);
+  pendingToolMap.set(next.requestId, {
+    resolve: next.resolve,
+    timeout: next.timeout,
+    tabId: next.tabId,
+  });
+  sendToolRequest(next.requestId, next.requestJson);
 }
 
 // --- Child Process Management ------------------------------------------------
@@ -1733,8 +1838,7 @@ const server: BridgeServer = createBridgeServer({
 
     // Tool execution endpoint — POST /tool
     // Sends a tool_request to the extension via WS, waits for tool_response.
-    // Requests are queued — multiple MCP server instances can call concurrently
-    // and the extension processes them in FIFO order.
+    // Different tabs process concurrently; same-tab requests serialize.
     if (url.pathname === "/tool" && req.method === "POST") {
       if (wsClients.size === 0) {
         return new Response(
@@ -1748,32 +1852,50 @@ const server: BridgeServer = createBridgeServer({
           method: string;
           params?: Record<string, unknown>;
         };
+        const requestId = `req_${++toolRequestCounter}_${Date.now()}`;
+        const tabId = (body.params?.tabId as number) || 0; // 0 = default/unspecified tab
         const toolRequest = JSON.stringify({
           type: "tool_request",
           method: body.method,
           params: body.params ?? {},
+          requestId,
         });
 
-        const queuePos = pendingToolQueue.length;
         lastToolName = body.method;
         lastToolTime = new Date().toISOString();
-        log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
+
+        // Check if this tab is already processing a request
+        const tabBusy = [...pendingToolMap.values()].some((e) => e.tabId === tabId);
+        log("info", `HTTP /tool: ${body.method} [${requestId}] tab=${tabId} busy=${tabBusy} pending=${pendingToolMap.size}`);
 
         // Enqueue and wait — resolved by WS message handler on tool_response
         const result = await new Promise<unknown>((resolve) => {
           const timeout = setTimeout(() => {
-            const idx = pendingToolQueue.findIndex((e) => e.resolve === resolve);
-            const wasHead = idx === 0;
-            if (idx !== -1) pendingToolQueue.splice(idx, 1);
+            // Timeout: clean up from pendingToolMap or busyTabs
+            if (pendingToolMap.has(requestId)) {
+              pendingToolMap.delete(requestId);
+              drainTabQueue(tabId);
+            } else {
+              // Remove from tab queue
+              const queue = busyTabs.get(tabId);
+              if (queue) {
+                const idx = queue.findIndex((e) => e.requestId === requestId);
+                if (idx !== -1) queue.splice(idx, 1);
+                if (queue.length === 0) busyTabs.delete(tabId);
+              }
+            }
             resolve({ type: "tool_response", error: "Tool call timed out (30s)" });
-            // If the timed-out entry was head, send next queued request
-            if (wasHead) drainToolQueue();
           }, HTTP_TOOL_TIMEOUT_MS);
 
-          pendingToolQueue.push({ requestJson: toolRequest, resolve, timeout });
-
-          // Send immediately if this is the only item (head of queue)
-          if (pendingToolQueue.length === 1) drainToolQueue();
+          if (tabBusy) {
+            // Same tab already in-flight — queue for later
+            if (!busyTabs.has(tabId)) busyTabs.set(tabId, []);
+            busyTabs.get(tabId)!.push({ requestJson: toolRequest, resolve, timeout, requestId, tabId });
+          } else {
+            // Tab is free — send immediately
+            pendingToolMap.set(requestId, { resolve, timeout, tabId });
+            sendToolRequest(requestId, toolRequest);
+          }
         });
 
         return new Response(
@@ -1847,19 +1969,37 @@ const server: BridgeServer = createBridgeServer({
           }
         }
 
-        // Route tool_response to pending HTTP /tool caller (FIFO queue head)
-        if (parsed.type === "tool_response" && pendingToolQueue.length > 0) {
-          const { resolve, timeout } = pendingToolQueue.shift()!;
-          clearTimeout(timeout);
+        // Route tool_response to pending HTTP /tool caller via requestId
+        if (parsed.type === "tool_response" && pendingToolMap.size > 0) {
+          let matched = false;
 
-          // Strip method field (same fix as native host path)
-          if ("method" in parsed) delete parsed.method;
-          log("debug", `HTTP /tool response (${pendingToolQueue.length} queued): ${json.slice(0, 200)}`);
-          resolve(parsed);
+          if (parsed.requestId && pendingToolMap.has(parsed.requestId)) {
+            // requestId match — parallel dispatch
+            const entry = pendingToolMap.get(parsed.requestId)!;
+            pendingToolMap.delete(parsed.requestId);
+            clearTimeout(entry.timeout);
+            if ("method" in parsed) delete parsed.method;
+            log("debug", `HTTP /tool response [${parsed.requestId}] (${pendingToolMap.size} pending): ${json.slice(0, 200)}`);
+            entry.resolve(parsed);
+            // Drain next request for this tab
+            drainTabQueue(entry.tabId);
+            matched = true;
+          } else if (!parsed.requestId) {
+            // Backward compat: no requestId — resolve oldest entry (FIFO fallback)
+            const firstKey = pendingToolMap.keys().next().value;
+            if (firstKey) {
+              const entry = pendingToolMap.get(firstKey)!;
+              pendingToolMap.delete(firstKey);
+              clearTimeout(entry.timeout);
+              if ("method" in parsed) delete parsed.method;
+              log("debug", `HTTP /tool response (FIFO fallback, ${pendingToolMap.size} pending): ${json.slice(0, 200)}`);
+              entry.resolve(parsed);
+              drainTabQueue(entry.tabId);
+              matched = true;
+            }
+          }
 
-          // Send next queued request to extension
-          drainToolQueue();
-          return;
+          if (matched) return;
         }
 
         // Fix tool_response: strip `method` field so cli.js response classifier
