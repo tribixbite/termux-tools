@@ -26,7 +26,7 @@ TypeScript daemon that manages tmux session lifecycle on Termux/Android.
 
 ### Runtime
 
-- **Binary**: `~/.local/bin/tmx` → `orchestrator/dist/tmx.js` (shebang `#!/usr/bin/env bun`)
+- **Binary**: `~/.local/bin/tmx` → `orchestrator/dist/tmx.js` (shebang `#!/$PREFIX/bin/env bun`)
 - **Config**: `~/.config/tmx/tmx.toml` (TOML with `$VAR` expansion, schema validation)
 - **State**: `~/.local/share/tmx/state.json` (restart counts, uptimes, errors)
 - **Registry**: `~/.local/share/tmx/registry.json` (dynamically opened sessions)
@@ -39,7 +39,8 @@ TypeScript daemon that manages tmux session lifecycle on Termux/Android.
 ```
 Termux:Boot → watchdog.sh → tmx boot → daemon spawned (detached)
                                          ├── preflight checks (dirs, config)
-                                         ├── ADB fix (boot_delay_s wait + phantom killer)
+                                         ├── ADB fix (boot_delay_s wait + disable phantom killer)
+                                         ├── persistent notification ("tmx ▶ N/M")
                                          ├── startAllSessions (topological order)
                                          │   ├── batch by dependency depth
                                          │   ├── parallel within batch
@@ -71,7 +72,7 @@ pending → waiting → starting → running ⇄ degraded → failed
 
 | Module | Purpose |
 |--------|---------|
-| `daemon.ts` | Main daemon — lifecycle, IPC dispatch, boot, shutdown, OOM shedding |
+| `daemon.ts` | Main daemon — lifecycle, IPC dispatch, boot, shutdown, notifications |
 | `tmx.ts` | CLI entry point — command router, output formatting |
 | `session.ts` | Tmux operations — create, stop, readiness poll, tab creation |
 | `config.ts` | TOML parsing with validation and env expansion |
@@ -83,7 +84,7 @@ pending → waiting → starting → running ⇄ degraded → failed
 | `health.ts` | Health checks — tmux_alive, http, process, custom |
 | `memory.ts` | /proc/meminfo parsing, per-process RSS, pressure levels |
 | `activity.ts` | CPU tick-based idle/active detection via /proc/PID/stat |
-| `budget.ts` | Android process count tracking with budget modes |
+| `budget.ts` | Phantom process counter (informational only, no enforcement) |
 | `battery.ts` | Battery monitoring — low-power radio cutoff, notifications |
 | `deps.ts` | Topological sort for dependency-ordered startup |
 | `wake.ts` | Termux wake lock management (always/active_sessions/boot_only/never) |
@@ -111,6 +112,7 @@ pending → waiting → starting → running ⇄ degraded → failed
 | `tmx close <name>` | Stop + remove a registry-only session |
 | `tmx logs` | Tail daemon log file |
 | `tmx shutdown` | Graceful daemon shutdown |
+| `tmx upgrade` | Rebuild, shutdown daemon, let watchdog auto-restart |
 | `tmx migrate` | Convert legacy repos.conf to tmx.toml |
 
 ### Tab Creation (Android 16)
@@ -134,22 +136,34 @@ RunCommandService requires a signature-level permission that only Termux plugins
 
 - **Health sweeps**: configurable interval, per-session check type override
 - **Memory monitoring**: /proc/meminfo → pressure levels (normal/warning/critical/emergency)
-- **OOM shedding**: stops idle, low-priority sessions when memory is critical
+- **Auto-kill disabled**: `shedIdleSessions()` is completely disabled — the daemon never auto-kills sessions. Memory pressure levels are reported but never acted on.
 - **Battery monitoring**: polls termux-battery-status, disables radios below threshold
 - **Activity detection**: CPU ticks from /proc/PID/stat classify idle vs active
-- **Process budget**: tracks Android process count against configurable limit
+- **Phantom process counter**: informational only — counts descendants of `TERMUX_APP_PID` matching what Android's `PhantomProcessList` tracks. The phantom killer itself is disabled on the device via `device_config put activity_manager max_phantom_processes 2147483647` (applied by the daemon on ADB connect). Budget checks never block session starts.
+- **Notifications**: persistent Android status bar notification (`termux-notification --ongoing --id tmx-status`) showing "tmx ▶ N/M" (running/total sessions). Tapping opens the dashboard at `http://localhost:18970`. All recurring notifications use `--id` + `--alert-once` to prevent stacking. Notification spawns are async to avoid blocking the event loop.
 
 ### Dashboard
 
 Astro 5 + Svelte 5 + Tailwind v4 static site served by the daemon on port 18970.
 
 **Pages:**
-- **Overview** — session table, system gauges (memory, budget, CFC bridge, ADB)
+- **Overview** — session table, system gauges (memory, phantom procs, CFC bridge, ADB)
 - **Memory** — per-session RSS, Android app process manager (force-stop)
 - **Logs** — real-time log tail via SSE
 
 **API endpoints:** `/api/status`, `/api/health`, `/api/memory`, `/api/processes`,
 `/api/kill/:pkg`, `/api/tab/:name`, `/api/adb/*`, `/api/logs`, `/api/events` (SSE)
+
+### Upgrade
+
+`tmx upgrade` rebuilds the daemon bundle (`bun run build`), shuts down the running
+daemon, and relies on the watchdog loop to auto-restart with the new code. Safety
+guard: refuses to run from inside a managed tmux session (detected by matching
+`$TMUX` pane against known session names) to avoid killing itself mid-upgrade.
+
+### Service Notes
+
+- **termux-x11**: the x11 service command includes `rm -f $PREFIX/tmp/.X1-lock $PREFIX/tmp/.X11-unix/X1 2>/dev/null;` before launching Xwayland to prevent stale lock segfaults from previous crashes.
 
 ### Watchdog
 
