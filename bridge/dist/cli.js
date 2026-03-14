@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -32,6 +33,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url;
 var init_import_meta_shim = __esm({
   "src/import-meta-shim.js"() {
+    "use strict";
     import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "";
   }
 });
@@ -3934,6 +3936,7 @@ function createNodeServer(config) {
 var import_promises, import_node_fs, import_node_stream, cp, http, IS_BUN;
 var init_compat = __esm({
   "../compat.ts"() {
+    "use strict";
     init_import_meta_shim();
     import_promises = require("node:fs/promises");
     import_node_fs = require("node:fs");
@@ -3947,8 +3950,35 @@ var init_compat = __esm({
 
 // ../claude-chrome-bridge.ts
 var claude_chrome_bridge_exports = {};
+function getAdbSerial() {
+  const now = Date.now();
+  if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
+  _adbSerialTs = now;
+  try {
+    const result = runSync([ADB_PATH, "devices"]);
+    const lines = result.stdout.toString().trim().split("\n").filter((l) => l.endsWith("	device"));
+    if (lines.length <= 1) {
+      _adbSerial = "";
+      return _adbSerial;
+    }
+    for (const line of lines) {
+      const serial = line.split("	")[0];
+      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      if (check.exitCode === 0 && check.stdout.toString().trim()) {
+        _adbSerial = serial;
+        return _adbSerial;
+      }
+    }
+    _adbSerial = lines[0]?.split("	")[0] ?? "";
+    return _adbSerial;
+  } catch {
+    _adbSerial = "";
+    return _adbSerial;
+  }
+}
 function adb(...args2) {
-  return ADB_SERIAL ? [ADB_PATH, "-s", ADB_SERIAL, ...args2] : [ADB_PATH, ...args2];
+  const serial = getAdbSerial();
+  return serial ? [ADB_PATH, "-s", serial, ...args2] : [ADB_PATH, ...args2];
 }
 function adbNotify(tag, title, text) {
   try {
@@ -4293,15 +4323,28 @@ function encodeGIF(frames, delayMs) {
   }
   return result;
 }
-function drainToolQueue() {
-  if (pendingToolQueue.length === 0) return;
-  const next = pendingToolQueue[0];
+function sendToolRequest(requestId, requestJson) {
   for (const client of wsClients) {
     try {
-      client.send(next.requestJson);
+      client.send(requestJson);
     } catch {
     }
   }
+}
+function drainTabQueue(tabId) {
+  const queue = busyTabs.get(tabId);
+  if (!queue || queue.length === 0) {
+    busyTabs.delete(tabId);
+    return;
+  }
+  const next = queue.shift();
+  if (queue.length === 0) busyTabs.delete(tabId);
+  pendingToolMap.set(next.requestId, {
+    resolve: next.resolve,
+    timeout: next.timeout,
+    tabId: next.tabId
+  });
+  sendToolRequest(next.requestId, next.requestJson);
 }
 function spawnNativeHost() {
   if (nativeHost) {
@@ -4597,9 +4640,10 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, ADB_SERIAL, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, pendingToolQueue, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
+    "use strict";
     init_import_meta_shim();
     import_path = require("path");
     import_node_zlib = require("node:zlib");
@@ -4624,21 +4668,9 @@ var init_claude_chrome_bridge = __esm({
     TERMUX_PREFIX = "/data/data/com.termux/files/usr";
     TERMUX_BIN = `${TERMUX_PREFIX}/bin`;
     ADB_PATH = `${TERMUX_BIN}/adb`;
-    ADB_SERIAL = (() => {
-      try {
-        const result = runSync([ADB_PATH, "devices"]);
-        const lines = result.stdout.toString().trim().split("\n").filter((l) => l.endsWith("	device"));
-        if (lines.length <= 1) return "";
-        for (const line of lines) {
-          const serial = line.split("	")[0];
-          const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
-          if (check.exitCode === 0 && check.stdout.toString().trim()) return serial;
-        }
-        return lines[0]?.split("	")[0] ?? "";
-      } catch {
-        return "";
-      }
-    })();
+    _adbSerial = "";
+    _adbSerialTs = 0;
+    ADB_SERIAL_TTL_MS = 3e4;
     REPO_CLI = (0, import_path.resolve)(SCRIPT_DIR, "cli.js");
     BUN_GLOBAL_CLI = (0, import_path.resolve)(
       process.env.HOME ?? "~",
@@ -4688,7 +4720,8 @@ var init_claude_chrome_bridge = __esm({
       }
     };
     CDP_PORT = parseInt(process.env.CDP_PORT ?? "9223", 10);
-    CDP_PID_CHECK_INTERVAL_MS = 6e4;
+    CDP_PID_CHECK_INTERVAL_MS = 3e4;
+    CDP_MAX_BACKOFF_ATTEMPTS = 10;
     CDP_TARGET_CACHE_TTL_MS = 1e4;
     CDP_TIMEOUT_MS = 15e3;
     CdpManager = class {
@@ -4712,6 +4745,10 @@ var init_claude_chrome_bridge = __esm({
       pidCheckTimer = null;
       /** Reconnect interval handle (active when disconnected) */
       reconnectTimer = null;
+      /** Exponential backoff reconnect attempts counter */
+      reconnectBackoffAttempts = 0;
+      /** Exponential backoff timer handle */
+      backoffTimer = null;
       /** Sessions where Network domain has been enabled */
       networkEnabledSessions = /* @__PURE__ */ new Set();
       /** Network request events per sessionId */
@@ -4728,6 +4765,7 @@ var init_claude_chrome_bridge = __esm({
             this.state = "disconnected";
             return false;
           }
+          const existingForward = this.checkExistingForward();
           const socketCandidates = [
             `chrome_devtools_remote_${this.edgePid}`,
             // Chrome convention (PID-suffixed)
@@ -4735,18 +4773,29 @@ var init_claude_chrome_bridge = __esm({
             // Edge Android convention (plain)
           ];
           let versionData = null;
-          for (const socketName of socketCandidates) {
-            const fwdResult = runSync(
-              adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
-            );
-            if (fwdResult.exitCode !== 0) continue;
+          if (existingForward) {
             try {
               const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
               versionData = await resp.json();
-              log("info", `CDP: Edge version \u2014 ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
-              break;
+              log("debug", `CDP: reusing existing ADB forward on port ${CDP_PORT}`);
             } catch {
               runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
+            }
+          }
+          if (!versionData) {
+            for (const socketName of socketCandidates) {
+              const fwdResult = runSync(
+                adb("forward", `tcp:${CDP_PORT}`, `localabstract:${socketName}`)
+              );
+              if (fwdResult.exitCode !== 0) continue;
+              try {
+                const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+                versionData = await resp.json();
+                log("info", `CDP: Edge version \u2014 ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
+                break;
+              } catch {
+                runSync(adb("forward", "--remove", `tcp:${CDP_PORT}`));
+              }
             }
           }
           if (!versionData) {
@@ -4756,6 +4805,8 @@ var init_claude_chrome_bridge = __esm({
           }
           const wsUrl = versionData.webSocketDebuggerUrl?.replace(/^ws:\/\/[^/]+/, `ws://127.0.0.1:${CDP_PORT}`) ?? `ws://127.0.0.1:${CDP_PORT}/devtools/browser`;
           await this.connectWebSocket(wsUrl);
+          this.reconnectBackoffAttempts = 0;
+          this.cancelBackoff();
           this.stopReconnectTimer();
           if (!this.pidCheckTimer) {
             this.pidCheckTimer = setInterval(() => this.recheckPid(), CDP_PID_CHECK_INTERVAL_MS);
@@ -4792,6 +4843,7 @@ var init_claude_chrome_bridge = __esm({
             this.ws = null;
             this.sessionMap.clear();
             this.tabTargetMap.clear();
+            this.scheduleExpBackoff();
           });
           this.ws.addEventListener("message", (ev) => {
             try {
@@ -4828,8 +4880,13 @@ var init_claude_chrome_bridge = __esm({
           });
         });
       }
-      /** Send a CDP command and await its response */
-      sendCommand(method, params = {}, sessionId) {
+      /** Send a CDP command and await its response. Tries one reconnect if disconnected. */
+      async sendCommand(method, params = {}, sessionId) {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          log("debug", `CDP: sendCommand(${method}) \u2014 not connected, attempting reconnect`);
+          const ok = await this.connect();
+          if (!ok) throw new Error("CDP not connected");
+        }
         return new Promise((resolve3, reject) => {
           if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             reject(new Error("CDP not connected"));
@@ -5232,6 +5289,43 @@ var init_claude_chrome_bridge = __esm({
           targets: this.cachedTargets.filter((t) => t.type === "page").length
         };
       }
+      /** Schedule exponential backoff reconnect: 2s, 4s, 8s, 16s, max 30s */
+      scheduleExpBackoff() {
+        if (this.backoffTimer) return;
+        if (this.reconnectBackoffAttempts >= CDP_MAX_BACKOFF_ATTEMPTS) {
+          log("info", `CDP: backoff exhausted (${CDP_MAX_BACKOFF_ATTEMPTS} attempts), falling back to PID timer`);
+          this.reconnectBackoffAttempts = 0;
+          this.startReconnectTimer();
+          return;
+        }
+        const delay = Math.min(2e3 * Math.pow(2, this.reconnectBackoffAttempts), 3e4);
+        this.reconnectBackoffAttempts++;
+        log("debug", `CDP: backoff reconnect in ${delay}ms (attempt ${this.reconnectBackoffAttempts}/${CDP_MAX_BACKOFF_ATTEMPTS})`);
+        this.backoffTimer = setTimeout(async () => {
+          this.backoffTimer = null;
+          const ok = await this.connect();
+          if (!ok && this.state === "disconnected") {
+            this.scheduleExpBackoff();
+          }
+        }, delay);
+      }
+      /** Cancel pending backoff timer */
+      cancelBackoff() {
+        if (this.backoffTimer) {
+          clearTimeout(this.backoffTimer);
+          this.backoffTimer = null;
+        }
+      }
+      /** Check if an ADB forward for our CDP port already exists */
+      checkExistingForward() {
+        try {
+          const result = runSync(adb("forward", "--list"));
+          const lines = result.stdout.toString().trim().split("\n");
+          return lines.some((l) => l.includes(`tcp:${CDP_PORT}`));
+        } catch {
+          return false;
+        }
+      }
       /**
        * Get Edge PID — tries local `pidof` first (works on-device without ADB),
        * falls back to `adb shell pidof` if local fails.
@@ -5286,12 +5380,14 @@ var init_claude_chrome_bridge = __esm({
           this.reconnectTimer = null;
         }
       }
-      /** Stop reconnect timer for final shutdown (cleanup restarts it, but shutdown shouldn't) */
+      /** Stop reconnect timer and cancel backoff for final shutdown */
       stopReconnectForShutdown() {
         this.stopReconnectTimer();
+        this.cancelBackoff();
       }
       /** Clean up CDP connection and ADB forward, restart reconnect timer */
       cleanup() {
+        this.cancelBackoff();
         if (this.pidCheckTimer) {
           clearInterval(this.pidCheckTimer);
           this.pidCheckTimer = null;
@@ -5325,7 +5421,9 @@ var init_claude_chrome_bridge = __esm({
       for (let j = 0; j < 8; j++) c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
       crc32Table[i] = c;
     }
-    pendingToolQueue = [];
+    toolRequestCounter = 0;
+    pendingToolMap = /* @__PURE__ */ new Map();
+    busyTabs = /* @__PURE__ */ new Map();
     HTTP_TOOL_TIMEOUT_MS = 3e4;
     lastToolName = null;
     lastToolTime = null;
@@ -5491,25 +5589,40 @@ var init_claude_chrome_bridge = __esm({
           }
           try {
             const body = await req.json();
+            const requestId = `req_${++toolRequestCounter}_${Date.now()}`;
+            const tabId = body.params?.tabId || 0;
             const toolRequest = JSON.stringify({
               type: "tool_request",
               method: body.method,
-              params: body.params ?? {}
+              params: body.params ?? {},
+              requestId
             });
-            const queuePos = pendingToolQueue.length;
             lastToolName = body.method;
             lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
-            log("info", `HTTP /tool: ${body.method} (queue pos ${queuePos})`);
+            const tabBusy = [...pendingToolMap.values()].some((e) => e.tabId === tabId);
+            log("info", `HTTP /tool: ${body.method} [${requestId}] tab=${tabId} busy=${tabBusy} pending=${pendingToolMap.size}`);
             const result = await new Promise((resolve3) => {
               const timeout = setTimeout(() => {
-                const idx = pendingToolQueue.findIndex((e) => e.resolve === resolve3);
-                const wasHead = idx === 0;
-                if (idx !== -1) pendingToolQueue.splice(idx, 1);
+                if (pendingToolMap.has(requestId)) {
+                  pendingToolMap.delete(requestId);
+                  drainTabQueue(tabId);
+                } else {
+                  const queue = busyTabs.get(tabId);
+                  if (queue) {
+                    const idx = queue.findIndex((e) => e.requestId === requestId);
+                    if (idx !== -1) queue.splice(idx, 1);
+                    if (queue.length === 0) busyTabs.delete(tabId);
+                  }
+                }
                 resolve3({ type: "tool_response", error: "Tool call timed out (30s)" });
-                if (wasHead) drainToolQueue();
               }, HTTP_TOOL_TIMEOUT_MS);
-              pendingToolQueue.push({ requestJson: toolRequest, resolve: resolve3, timeout });
-              if (pendingToolQueue.length === 1) drainToolQueue();
+              if (tabBusy) {
+                if (!busyTabs.has(tabId)) busyTabs.set(tabId, []);
+                busyTabs.get(tabId).push({ requestJson: toolRequest, resolve: resolve3, timeout, requestId, tabId });
+              } else {
+                pendingToolMap.set(requestId, { resolve: resolve3, timeout, tabId });
+                sendToolRequest(requestId, toolRequest);
+              }
             });
             return new Response(
               JSON.stringify(result),
@@ -5564,14 +5677,31 @@ var init_claude_chrome_bridge = __esm({
                 }
               }
             }
-            if (parsed.type === "tool_response" && pendingToolQueue.length > 0) {
-              const { resolve: resolve3, timeout } = pendingToolQueue.shift();
-              clearTimeout(timeout);
-              if ("method" in parsed) delete parsed.method;
-              log("debug", `HTTP /tool response (${pendingToolQueue.length} queued): ${json.slice(0, 200)}`);
-              resolve3(parsed);
-              drainToolQueue();
-              return;
+            if (parsed.type === "tool_response" && pendingToolMap.size > 0) {
+              let matched = false;
+              if (parsed.requestId && pendingToolMap.has(parsed.requestId)) {
+                const entry = pendingToolMap.get(parsed.requestId);
+                pendingToolMap.delete(parsed.requestId);
+                clearTimeout(entry.timeout);
+                if ("method" in parsed) delete parsed.method;
+                log("debug", `HTTP /tool response [${parsed.requestId}] (${pendingToolMap.size} pending): ${json.slice(0, 200)}`);
+                entry.resolve(parsed);
+                drainTabQueue(entry.tabId);
+                matched = true;
+              } else if (!parsed.requestId) {
+                const firstKey = pendingToolMap.keys().next().value;
+                if (firstKey) {
+                  const entry = pendingToolMap.get(firstKey);
+                  pendingToolMap.delete(firstKey);
+                  clearTimeout(entry.timeout);
+                  if ("method" in parsed) delete parsed.method;
+                  log("debug", `HTTP /tool response (FIFO fallback, ${pendingToolMap.size} pending): ${json.slice(0, 200)}`);
+                  entry.resolve(parsed);
+                  drainTabQueue(entry.tabId);
+                  matched = true;
+                }
+              }
+              if (matched) return;
             }
             if (parsed.type === "tool_response" && "method" in parsed) {
               delete parsed.method;
@@ -5904,7 +6034,8 @@ echo "[$(date +%H:%M:%S)] termux-url-opener: $url" >> "$PREFIX/tmp/url-opener.lo
 case "$url" in
   *cfcbridge*/start*)
     BRIDGE_LOG="$PREFIX/tmp/bridge.log"
-    if pgrep -f "(bun|node).*claude-chrome" > /dev/null 2>&1; then
+    # Health-check the bridge directly \u2014 avoids pgrep self-match
+    if curl -sf --connect-timeout 2 http://127.0.0.1:18963/health > /dev/null 2>&1; then
       echo "[$(date +%H:%M:%S)] bridge already running" >> "$PREFIX/tmp/url-opener.log"
       exit 0
     fi

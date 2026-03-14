@@ -866,76 +866,72 @@ var StateManager = class {
 
 // src/budget.ts
 var import_node_child_process = require("node:child_process");
-var WARNING_PCT = 70;
-var CRITICAL_PCT = 90;
 var BudgetTracker = class {
-  budget;
   log;
-  lastStatus = null;
-  constructor(budget, log) {
-    this.budget = budget;
+  /** Cached Termux app PID — set once from env */
+  appPid = null;
+  constructor(_budget, log) {
     this.log = log;
+    const envPid = process.env.TERMUX_APP_PID;
+    if (envPid) {
+      const parsed = parseInt(envPid, 10);
+      if (parsed > 0) this.appPid = parsed;
+    }
   }
-  /** Get current process count for the Termux UID (our app sandbox) */
+  /** Count phantom processes (descendants of app PID) */
   getProcessCount() {
+    if (!this.appPid) return 0;
     try {
-      const uid = String(process.getuid());
-      const output = (0, import_node_child_process.execSync)(`ps -e -o uid=,pid= 2>/dev/null | awk '$1 == ${uid}' | wc -l`, {
+      const output = (0, import_node_child_process.execSync)("ps -e -o pid=,ppid= 2>/dev/null", {
         encoding: "utf-8",
         timeout: 5e3
-      }).trim();
-      return parseInt(output, 10) || 0;
-    } catch {
-      try {
-        const uid = String(process.getuid());
-        const output = (0, import_node_child_process.execSync)(
-          `ls -ldn /proc/[0-9]* 2>/dev/null | awk '$3 == ${uid}' | wc -l`,
-          { encoding: "utf-8", timeout: 5e3 }
-        ).trim();
-        return parseInt(output, 10) || 0;
-      } catch {
-        this.log.warn("Failed to count processes, assuming 0");
-        return 0;
-      }
-    }
-  }
-  /** Determine budget mode from process count */
-  computeMode(count) {
-    const pct = count / this.budget * 100;
-    if (pct >= CRITICAL_PCT) return "critical";
-    if (pct >= WARNING_PCT) return "warning";
-    return "normal";
-  }
-  /** Get current budget status */
-  check() {
-    const total_procs = this.getProcessCount();
-    const usage_pct = Math.round(total_procs / this.budget * 100);
-    const mode = this.computeMode(total_procs);
-    const status = {
-      mode,
-      total_procs,
-      budget: this.budget,
-      usage_pct
-    };
-    if (this.lastStatus && this.lastStatus.mode !== mode) {
-      const logFn = mode === "critical" ? "error" : mode === "warning" ? "warn" : "info";
-      this.log[logFn](`Process budget: ${this.lastStatus.mode} \u2192 ${mode}`, {
-        total_procs,
-        budget: this.budget,
-        usage_pct
       });
+      const childrenOf = /* @__PURE__ */ new Map();
+      for (const line of output.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const parts = trimmed.split(/\s+/);
+        if (parts.length < 2) continue;
+        const pid = parseInt(parts[0], 10);
+        const ppid = parseInt(parts[1], 10);
+        if (isNaN(pid) || isNaN(ppid)) continue;
+        let siblings = childrenOf.get(ppid);
+        if (!siblings) {
+          siblings = [];
+          childrenOf.set(ppid, siblings);
+        }
+        siblings.push(pid);
+      }
+      let count = 0;
+      const queue = childrenOf.get(this.appPid) ?? [];
+      const visited = /* @__PURE__ */ new Set([this.appPid]);
+      while (queue.length > 0) {
+        const pid = queue.shift();
+        if (visited.has(pid)) continue;
+        visited.add(pid);
+        count++;
+        const kids = childrenOf.get(pid);
+        if (kids) {
+          for (const kid of kids) {
+            if (!visited.has(kid)) queue.push(kid);
+          }
+        }
+      }
+      return count;
+    } catch {
+      return 0;
     }
-    this.lastStatus = status;
-    return status;
   }
-  /** Check if we can safely start another session */
+  /** Get snapshot for dashboard/status display */
+  check() {
+    return { phantom_procs: this.getProcessCount() };
+  }
+  /** Always true — phantom killer is disabled, never block anything */
   canStartSession() {
-    const status = this.check();
-    return status.mode !== "critical";
+    return true;
   }
-  /** Update the budget limit (e.g., from config reload) */
-  setBudget(budget) {
-    this.budget = budget;
+  /** No-op — kept for config reload compatibility */
+  setBudget(_budget) {
   }
 };
 
@@ -2656,7 +2652,6 @@ var Daemon = class _Daemon {
     }
     this.ipc.stop();
     removeNotification("tmx-status");
-    removeNotification("tmx-budget");
     removeNotification("tmx-boot");
     removeNotification("tmx-memory");
     for (const session of this.config.sessions) {
@@ -2719,9 +2714,6 @@ var Daemon = class _Daemon {
     if (!sessionConfig.enabled) {
       this.log.debug(`Session '${name}' is disabled, skipping`, { session: name });
       return false;
-    }
-    if (!this.budget.canStartSession()) {
-      this.log.warn(`Process budget over threshold when starting '${name}'`, { session: name });
     }
     const depsReady = sessionConfig.depends_on.every((dep) => {
       const depState = this.state.getSession(dep);
@@ -3043,10 +3035,6 @@ var Daemon = class _Daemon {
         }
       }, backoffMs);
       this.restartTimers.add(timer);
-    }
-    const budgetStatus = this.budget.check();
-    if (budgetStatus.mode === "critical") {
-      this.log.warn("Process budget over threshold", budgetStatus);
     }
   }
   // -- Memory monitoring & OOM shedding ----------------------------------------
@@ -3882,7 +3870,7 @@ var Daemon = class _Daemon {
         daemon_start: state.daemon_start,
         boot_complete: state.boot_complete,
         adb_fixed: state.adb_fixed,
-        budget: this.budget.check(),
+        procs: this.budget.check(),
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
         battery: state.battery ?? null,
@@ -4673,9 +4661,7 @@ function formatDaemonStatus(data) {
   console.log(`  boot: ${data.boot_complete ? `${GREEN}complete${RESET2}` : `${YELLOW}pending${RESET2}`}`);
   console.log(`  adb:  ${data.adb_fixed ? `${GREEN}fixed${RESET2}` : `${YELLOW}not fixed${RESET2}`}`);
   console.log(`  wake: ${data.wake_lock ? `${GREEN}held${RESET2}` : `${DIM2}released${RESET2}`}`);
-  const b = data.budget;
-  const budgetColor = b.mode === "critical" ? RED : b.mode === "warning" ? YELLOW : GREEN;
-  console.log(`  procs: ${budgetColor}${b.total_procs}/${b.budget}${RESET2} (${b.usage_pct}%)`);
+  console.log(`  procs: ${DIM2}${data.procs.phantom_procs} phantom${RESET2}`);
   if (data.memory) {
     const m = data.memory;
     const pressureColor = m.pressure === "emergency" || m.pressure === "critical" ? RED : m.pressure === "warning" ? YELLOW : GREEN;
