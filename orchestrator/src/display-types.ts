@@ -5,14 +5,14 @@
  * for rendering status, session details, and config tables.
  */
 
-import type { BudgetStatus, SessionState, SessionConfig, SessionType } from "./types.js";
+import type { ProcessCount, SessionState, SessionConfig, SessionType } from "./types.js";
 
 /** Data returned by the daemon status IPC command (all sessions) */
 export interface DaemonStatusData {
   daemon_start: string;
   boot_complete: boolean;
   adb_fixed: boolean;
-  budget: BudgetStatus;
+  procs: ProcessCount;
   wake_lock: boolean;
   sessions: SessionSummary[];
   memory?: SystemMemorySummary | null;

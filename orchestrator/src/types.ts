@@ -241,18 +241,11 @@ export interface LogEntry {
   [key: string]: unknown;
 }
 
-// -- Budget -------------------------------------------------------------------
+// -- Process count (informational) --------------------------------------------
 
-/** Process budget mode */
-export type BudgetMode = "normal" | "warning" | "critical";
-
-/** Budget status snapshot */
-export interface BudgetStatus {
-  mode: BudgetMode;
-  total_procs: number;
-  budget: number;
-  /** Percentage of budget used (0-100) */
-  usage_pct: number;
+/** Phantom process count snapshot (phantom killer is disabled on this device) */
+export interface ProcessCount {
+  phantom_procs: number;
 }
 
 // -- Health check result ------------------------------------------------------

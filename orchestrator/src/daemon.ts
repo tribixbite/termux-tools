@@ -405,7 +405,6 @@ export class Daemon {
 
     // Remove persistent notifications
     removeNotification("tmx-status");
-    removeNotification("tmx-budget");
     removeNotification("tmx-boot");
     removeNotification("tmx-memory");
     // Clean up per-session failure notifications
@@ -493,10 +492,6 @@ export class Daemon {
       return false;
     }
 
-    // Check process budget — warn only, never block session starts
-    if (!this.budget.canStartSession()) {
-      this.log.warn(`Process budget over threshold when starting '${name}'`, { session: name });
-    }
 
     // Check dependencies
     const depsReady = sessionConfig.depends_on.every((dep) => {
@@ -917,11 +912,6 @@ export class Daemon {
       this.restartTimers.add(timer);
     }
 
-    // Check process budget — informational only, never blocks or kills
-    const budgetStatus = this.budget.check();
-    if (budgetStatus.mode === "critical") {
-      this.log.warn("Process budget over threshold", budgetStatus as unknown as Record<string, unknown>);
-    }
   }
 
   // -- Memory monitoring & OOM shedding ----------------------------------------
@@ -1928,7 +1918,7 @@ export class Daemon {
         daemon_start: state.daemon_start,
         boot_complete: state.boot_complete,
         adb_fixed: state.adb_fixed,
-        budget: this.budget.check(),
+        procs: this.budget.check(),
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
         battery: state.battery ?? null,

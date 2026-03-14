@@ -1,61 +1,39 @@
 /**
- * budget.ts — Android 12+ phantom process budget tracker (informational only)
+ * budget.ts — Phantom process counter (informational only)
  *
- * Counts phantom processes the way Android's PhantomProcessList does:
- * descendants of the Termux app process (TERMUX_APP_PID), excluding
- * the app process itself. This matches what the phantom process killer
- * actually monitors — NOT all processes under the Termux UID.
- *
- * Budget modes are purely informational — they never block session
- * starts or trigger auto-kills.
+ * Counts descendants of TERMUX_APP_PID to match what Android's
+ * PhantomProcessList tracks. The phantom killer is disabled on this
+ * device via device_config (applied by daemon on ADB connect), so
+ * this is purely for dashboard display.
  */
 
 import { execSync } from "node:child_process";
-import type { BudgetMode, BudgetStatus } from "./types.js";
 import type { Logger } from "./log.js";
 
-/** Threshold percentages for budget modes */
-const WARNING_PCT = 70;
-const CRITICAL_PCT = 90;
+/** Simple process count snapshot for dashboard display */
+export interface ProcessCount {
+  /** Number of phantom processes (descendants of app PID) */
+  phantom_procs: number;
+}
 
 export class BudgetTracker {
-  private budget: number;
   private log: Logger;
-  private lastStatus: BudgetStatus | null = null;
-  /** Cached Termux app PID — set once from env, doesn't change */
+  /** Cached Termux app PID — set once from env */
   private appPid: number | null = null;
 
-  constructor(budget: number, log: Logger) {
-    this.budget = budget;
+  constructor(_budget: number, log: Logger) {
     this.log = log;
-
-    // Resolve TERMUX_APP_PID from env (set by Termux on every session)
     const envPid = process.env.TERMUX_APP_PID;
     if (envPid) {
       const parsed = parseInt(envPid, 10);
       if (parsed > 0) this.appPid = parsed;
     }
-    if (!this.appPid) {
-      this.log.warn("TERMUX_APP_PID not set — phantom process count will use UID fallback");
-    }
   }
 
-  /**
-   * Count phantom processes: descendants of TERMUX_APP_PID.
-   * This matches what Android's PhantomProcessList tracks.
-   */
+  /** Count phantom processes (descendants of app PID) */
   getProcessCount(): number {
-    if (this.appPid) {
-      return this.countDescendants(this.appPid);
-    }
-    // Fallback: count all UID processes (overestimates, but better than nothing)
-    return this.countUidProcesses();
-  }
-
-  /** Walk the process tree to count all descendants of a given PID */
-  private countDescendants(rootPid: number): number {
+    if (!this.appPid) return 0;
     try {
-      // Parse all pid,ppid pairs from ps
       const output = execSync("ps -e -o pid=,ppid= 2>/dev/null", {
         encoding: "utf-8",
         timeout: 5000,
@@ -71,7 +49,6 @@ export class BudgetTracker {
         const pid = parseInt(parts[0], 10);
         const ppid = parseInt(parts[1], 10);
         if (isNaN(pid) || isNaN(ppid)) continue;
-
         let siblings = childrenOf.get(ppid);
         if (!siblings) {
           siblings = [];
@@ -80,11 +57,10 @@ export class BudgetTracker {
         siblings.push(pid);
       }
 
-      // BFS from rootPid, count all descendants (excluding root itself)
+      // BFS from appPid, count descendants (excluding root)
       let count = 0;
-      const queue = childrenOf.get(rootPid) ?? [];
-      const visited = new Set<number>([rootPid]);
-
+      const queue = childrenOf.get(this.appPid) ?? [];
+      const visited = new Set<number>([this.appPid]);
       while (queue.length > 0) {
         const pid = queue.shift()!;
         if (visited.has(pid)) continue;
@@ -97,70 +73,22 @@ export class BudgetTracker {
           }
         }
       }
-
       return count;
     } catch {
-      this.log.warn("Failed to walk process tree, falling back to UID count");
-      return this.countUidProcesses();
-    }
-  }
-
-  /** Fallback: count all processes owned by our UID */
-  private countUidProcesses(): number {
-    try {
-      const uid = String(process.getuid!());
-      const output = execSync(
-        `ps -e -o uid=,pid= 2>/dev/null | awk '$1 == ${uid}' | wc -l`,
-        { encoding: "utf-8", timeout: 5000 }
-      ).trim();
-      return parseInt(output, 10) || 0;
-    } catch {
-      this.log.warn("Failed to count processes");
       return 0;
     }
   }
 
-  /** Determine budget mode from process count (informational only) */
-  private computeMode(count: number): BudgetMode {
-    const pct = (count / this.budget) * 100;
-    if (pct >= CRITICAL_PCT) return "critical";
-    if (pct >= WARNING_PCT) return "warning";
-    return "normal";
+  /** Get snapshot for dashboard/status display */
+  check(): ProcessCount {
+    return { phantom_procs: this.getProcessCount() };
   }
 
-  /** Get current budget status (informational — never blocks anything) */
-  check(): BudgetStatus {
-    const total_procs = this.getProcessCount();
-    const usage_pct = Math.round((total_procs / this.budget) * 100);
-    const mode = this.computeMode(total_procs);
-
-    const status: BudgetStatus = {
-      mode,
-      total_procs,
-      budget: this.budget,
-      usage_pct,
-    };
-
-    // Log transitions between modes
-    if (this.lastStatus && this.lastStatus.mode !== mode) {
-      this.log[mode === "critical" ? "warn" : "info"](
-        `Process budget: ${this.lastStatus.mode} → ${mode}`,
-        { total_procs, budget: this.budget, usage_pct }
-      );
-    }
-
-    this.lastStatus = status;
-    return status;
-  }
-
-  /** Informational check — always returns true (budget never blocks starts) */
+  /** Always true — phantom killer is disabled, never block anything */
   canStartSession(): boolean {
-    this.check(); // update metrics
     return true;
   }
 
-  /** Update the budget limit (e.g., from config reload) */
-  setBudget(budget: number): void {
-    this.budget = budget;
-  }
+  /** No-op — kept for config reload compatibility */
+  setBudget(_budget: number): void {}
 }

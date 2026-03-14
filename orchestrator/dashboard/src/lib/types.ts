@@ -17,12 +17,9 @@ export interface SessionState {
   uptime: string | null;
 }
 
-/** Budget status */
-export interface BudgetStatus {
-  mode: string;
-  total_procs: number;
-  budget: number;
-  usage_pct: number;
+/** Phantom process count (informational — killer is disabled) */
+export interface ProcessCount {
+  phantom_procs: number;
 }
 
 /** System memory */
@@ -40,7 +37,7 @@ export interface DaemonStatus {
   daemon_start: string;
   boot_complete: boolean;
   adb_fixed: boolean;
-  budget: BudgetStatus;
+  procs: ProcessCount;
   wake_lock: boolean;
   memory: SystemMemory | null;
   sessions: SessionState[];

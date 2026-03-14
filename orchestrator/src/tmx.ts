@@ -719,9 +719,7 @@ function formatDaemonStatus(data: DaemonStatusData): void {
   console.log(`  adb:  ${data.adb_fixed ? `${GREEN}fixed${RESET}` : `${YELLOW}not fixed${RESET}`}`);
   console.log(`  wake: ${data.wake_lock ? `${GREEN}held${RESET}` : `${DIM}released${RESET}`}`);
 
-  const b = data.budget;
-  const budgetColor = b.mode === "critical" ? RED : b.mode === "warning" ? YELLOW : GREEN;
-  console.log(`  procs: ${budgetColor}${b.total_procs}/${b.budget}${RESET} (${b.usage_pct}%)`);
+  console.log(`  procs: ${DIM}${data.procs.phantom_procs} phantom${RESET}`);
 
   // Show memory if available
   if (data.memory) {
