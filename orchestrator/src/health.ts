@@ -9,6 +9,7 @@
  */
 
 import { execSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import type { HealthCheckConfig, HealthResult, SessionConfig, TmxConfig } from "./types.js";
 import type { Logger } from "./log.js";
 import type { StateManager } from "./state.js";
@@ -136,23 +137,41 @@ function customCheck(sessionName: string, command: string, startMs: number): Hea
   }
 }
 
+/** PID-based health check — verify /proc/PID exists */
+function pidAliveCheck(sessionName: string, pid: number, startMs: number): HealthResult {
+  const alive = existsSync(`/proc/${pid}`);
+  return {
+    session: sessionName,
+    healthy: alive,
+    message: alive ? `Process PID ${pid} alive` : `Process PID ${pid} not found`,
+    duration_ms: Date.now() - startMs,
+  };
+}
+
 /**
  * Run a full health sweep across all running/degraded sessions.
  * Updates state and returns results.
+ * @param adoptedPids Map of session name → bare PID for non-tmux sessions
  */
 export function runHealthSweep(
   config: TmxConfig,
   state: StateManager,
   log: Logger,
+  adoptedPids?: Map<string, number>,
 ): HealthResult[] {
   const results: HealthResult[] = [];
+  const adopted = adoptedPids ?? new Map<string, number>();
 
-  // First, verify tmux server is alive
-  if (!isTmuxServerAlive()) {
-    log.error("Tmux server is not running — marking all sessions as failed");
+  // First, verify tmux server is alive (only affects non-adopted sessions)
+  const tmuxAlive = isTmuxServerAlive();
+  if (!tmuxAlive) {
     for (const session of config.sessions) {
       const s = state.getSession(session.name);
-      if (s && (s.status === "running" || s.status === "degraded" || s.status === "starting")) {
+      if (!s) continue;
+      // Skip adopted sessions — they don't need tmux
+      if (adopted.has(session.name)) continue;
+      if (s.status === "running" || s.status === "degraded" || s.status === "starting") {
+        log.error(`Tmux server not running — marking '${session.name}' as failed`);
         state.transition(session.name, "failed", "Tmux server not running");
         results.push({
           session: session.name,
@@ -162,7 +181,6 @@ export function runHealthSweep(
         });
       }
     }
-    return results;
   }
 
   for (const session of config.sessions) {
@@ -172,8 +190,17 @@ export function runHealthSweep(
     // Only health-check running or degraded sessions
     if (s.status !== "running" && s.status !== "degraded") continue;
 
+    // Use PID-based check for adopted (non-tmux) sessions
+    const adoptedPid = adopted.get(session.name);
     const healthConfig = getHealthConfig(session, config.health_defaults);
-    const result = checkSessionHealth(session.name, healthConfig, log);
+    let result: HealthResult;
+    if (adoptedPid !== undefined) {
+      result = pidAliveCheck(session.name, adoptedPid, Date.now());
+    } else if (!tmuxAlive) {
+      continue; // Already handled above
+    } else {
+      result = checkSessionHealth(session.name, healthConfig, log);
+    }
     results.push(result);
 
     // Record the result in state (mutates s in place)

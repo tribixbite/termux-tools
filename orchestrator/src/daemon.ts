@@ -37,6 +37,7 @@ import {
   sendKeys,
   createTermuxTab,
   isTmuxServerAlive,
+  discoverBareClaudeSessions,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -168,6 +169,8 @@ export class Daemon {
   private adbRetryTimer: ReturnType<typeof setInterval> | null = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   private restartTimers = new Set<ReturnType<typeof setTimeout>>();
+  /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
+  private adoptedPids = new Map<string, number>();
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -492,6 +495,11 @@ export class Daemon {
       return false;
     }
 
+    // Skip sessions already adopted from bare Termux tabs
+    if (this.adoptedPids.has(name)) {
+      this.log.debug(`Session '${name}' is adopted (bare PID ${this.adoptedPids.get(name)}), skipping start`, { session: name });
+      return true;
+    }
 
     // Check dependencies
     const depsReady = sessionConfig.depends_on.every((dep) => {
@@ -625,17 +633,67 @@ export class Daemon {
       }
     }
 
-    // Recover sessions whose state claims they're active but tmux session is gone.
-    // Handles: post-reboot (state.json persists but tmux is dead), OOM kills,
-    // and sessions stuck in transient states (stopping/starting).
+    // Adopt bare Claude processes (non-tmux Termux tabs)
+    const bareSessions = discoverBareClaudeSessions(this.config.sessions);
+    const adoptedNames = new Set<string>();
+    for (const bare of bareSessions) {
+      const s = this.state.getSession(bare.sessionName);
+      if (s && s.status !== "running") {
+        this.log.info(`Adopting bare Claude session '${bare.sessionName}' (PID ${bare.pid})`, { session: bare.sessionName });
+        this.state.forceStatus(bare.sessionName, "running");
+        this.adoptedPids.set(bare.sessionName, bare.pid);
+        adoptedNames.add(bare.sessionName);
+        if (!s.uptime_start) {
+          this.state.getSession(bare.sessionName)!.uptime_start = new Date().toISOString();
+        }
+      } else if (s && s.status === "running" && !existingSessions.has(bare.sessionName)) {
+        // Running state but no tmux session — track the bare PID for monitoring
+        this.adoptedPids.set(bare.sessionName, bare.pid);
+        adoptedNames.add(bare.sessionName);
+      }
+    }
+
+    // Recover sessions whose state claims they're active but tmux session is gone
+    // AND no bare process was found. Handles: post-reboot (state.json persists but
+    // tmux is dead), OOM kills, and sessions stuck in transient states.
     for (const cfg of this.config.sessions) {
       const s = this.state.getSession(cfg.name);
       if (!s) continue;
       const isActiveState = s.status === "running" || s.status === "degraded" ||
         s.status === "stopping" || s.status === "starting";
-      if (isActiveState && !existingSessions.has(cfg.name)) {
+      if (isActiveState && !existingSessions.has(cfg.name) && !adoptedNames.has(cfg.name)) {
         this.log.info(`Recovering stale '${s.status}' session '${cfg.name}' → stopped`, { session: cfg.name });
         this.state.forceStatus(cfg.name, "stopped");
+      }
+    }
+  }
+
+  /**
+   * Re-scan for newly started bare Claude sessions during health sweeps.
+   * Picks up sessions the user started manually after daemon boot.
+   */
+  private rescanBareClaudeSessions(): void {
+    const bareSessions = discoverBareClaudeSessions(this.config.sessions);
+    for (const bare of bareSessions) {
+      // Skip if we already track this session (tmux or adopted)
+      if (this.adoptedPids.has(bare.sessionName)) {
+        // Update PID if it changed (process restarted)
+        if (this.adoptedPids.get(bare.sessionName) !== bare.pid) {
+          this.log.info(`Adopted session '${bare.sessionName}' PID changed: ${this.adoptedPids.get(bare.sessionName)} → ${bare.pid}`, { session: bare.sessionName });
+          this.adoptedPids.set(bare.sessionName, bare.pid);
+        }
+        continue;
+      }
+
+      const s = this.state.getSession(bare.sessionName);
+      if (!s) continue;
+
+      // Only adopt if session is stopped/failed/pending — don't steal from tmux
+      if (s.status === "stopped" || s.status === "failed" || s.status === "pending") {
+        this.log.info(`Late-adopting bare Claude session '${bare.sessionName}' (PID ${bare.pid})`, { session: bare.sessionName });
+        this.state.forceStatus(bare.sessionName, "running");
+        this.adoptedPids.set(bare.sessionName, bare.pid);
+        this.state.getSession(bare.sessionName)!.uptime_start = new Date().toISOString();
       }
     }
   }
@@ -869,7 +927,10 @@ export class Daemon {
 
   /** Run health sweep and handle auto-restarts for degraded sessions */
   private async healthSweepAndRestart(): Promise<void> {
-    const results = runHealthSweep(this.config, this.state, this.log);
+    // Re-scan for newly started bare Claude sessions
+    this.rescanBareClaudeSessions();
+
+    const results = runHealthSweep(this.config, this.state, this.log, this.adoptedPids);
 
     // Check for degraded sessions needing restart
     for (const session of this.config.sessions) {
@@ -939,8 +1000,24 @@ export class Daemon {
         continue;
       }
 
-      // Get tmux pane PID for this session
-      const pid = this.memory.getSessionPid(session.name);
+      // Get PID: prefer adopted bare PID, fall back to tmux pane PID
+      const adoptedPid = this.adoptedPids.get(session.name);
+      let pid: number | null = null;
+      if (adoptedPid !== undefined) {
+        // Verify adopted PID is still alive
+        if (existsSync(`/proc/${adoptedPid}`)) {
+          pid = adoptedPid;
+        } else {
+          // Bare process died — remove from adopted, mark stopped
+          this.log.info(`Adopted session '${session.name}' PID ${adoptedPid} exited`, { session: session.name });
+          this.adoptedPids.delete(session.name);
+          this.state.forceStatus(session.name, "stopped");
+          this.state.updateSessionMetrics(session.name, null, "stopped");
+          continue;
+        }
+      } else {
+        pid = this.memory.getSessionPid(session.name);
+      }
       if (pid === null) {
         this.state.updateSessionMetrics(session.name, null, "stopped");
         continue;
@@ -1975,7 +2052,7 @@ export class Daemon {
 
   /** Health command — run health sweep now */
   private cmdHealth(): IpcResponse {
-    const results = runHealthSweep(this.config, this.state, this.log);
+    const results = runHealthSweep(this.config, this.state, this.log, this.adoptedPids);
     return { ok: true, data: results };
   }
 

@@ -7,8 +7,8 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
 import type { Logger } from "./log.js";
 
@@ -98,6 +98,128 @@ function tmux(...args: string[]): string | null {
   } catch {
     return null;
   }
+}
+
+// -- Bare (non-tmux) Claude session discovery ---------------------------------
+
+/** A Claude Code process running outside tmux, matched to a config session */
+export interface BareClaudeSession {
+  pid: number;
+  cwd: string;
+  sessionName: string;
+}
+
+/**
+ * Scan the process table for Claude Code instances running in plain Termux tabs
+ * (not inside tmux). Matches each process's cwd against configured session paths.
+ * Returns one entry per session — if multiple Claude PIDs share a cwd, the oldest
+ * (lowest PID) wins.
+ */
+export function discoverBareClaudeSessions(
+  configSessions: SessionConfig[],
+): BareClaudeSession[] {
+  // Build a lookup of resolved absolute path → session name
+  const pathToName = new Map<string, string>();
+  for (const s of configSessions) {
+    if (s.path) {
+      try {
+        pathToName.set(resolve(s.path), s.name);
+      } catch { /* skip unresolvable */ }
+    }
+  }
+  if (pathToName.size === 0) return [];
+
+  // Get all claude processes
+  let psOutput: string;
+  try {
+    const result = spawnSync("ps", ["-eo", "pid,args"], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.status !== 0 || !result.stdout) return [];
+    psOutput = result.stdout;
+  } catch {
+    return [];
+  }
+
+  // Parse PIDs of processes whose command is exactly "claude"
+  const claudePids: number[] = [];
+  for (const line of psOutput.split("\n")) {
+    const trimmed = line.trim();
+    // Match lines like "12345 claude" (PID followed by bare "claude" command)
+    const match = trimmed.match(/^(\d+)\s+claude$/);
+    if (match) claudePids.push(parseInt(match[1], 10));
+  }
+
+  // For each claude PID: resolve cwd, check if it's in tmux, match to config
+  const results: BareClaudeSession[] = [];
+  // Track best (lowest PID) per session name
+  const bestBySession = new Map<string, BareClaudeSession>();
+
+  for (const pid of claudePids) {
+    // Resolve working directory
+    let cwd: string;
+    try {
+      cwd = readlinkSync(`/proc/${pid}/cwd`);
+    } catch {
+      continue; // Process may have exited
+    }
+
+    // Check if any ancestor is tmux (already managed)
+    if (isInTmux(pid)) continue;
+
+    // Match cwd to a configured session
+    const sessionName = pathToName.get(cwd);
+    if (!sessionName) continue;
+
+    const existing = bestBySession.get(sessionName);
+    if (!existing || pid < existing.pid) {
+      bestBySession.set(sessionName, { pid, cwd, sessionName });
+    }
+  }
+
+  for (const entry of bestBySession.values()) {
+    results.push(entry);
+  }
+  return results;
+}
+
+/**
+ * Walk the ancestor chain of a PID to check if any parent is a tmux process.
+ * Reads /proc/PID/stat for ppid and /proc/PID/comm for process name.
+ * Stops after 15 hops or at PID 1 to avoid infinite loops.
+ */
+function isInTmux(pid: number): boolean {
+  let current = pid;
+  for (let depth = 0; depth < 15; depth++) {
+    // Read ppid from /proc/PID/stat (field 4, 1-indexed)
+    let ppid: number;
+    try {
+      const stat = readFileSync(`/proc/${current}/stat`, "utf-8");
+      // Format: "PID (comm) state PPID ..."
+      // comm can contain spaces/parens, so find the last ')' first
+      const closeParen = stat.lastIndexOf(")");
+      const afterComm = stat.slice(closeParen + 2); // skip ") "
+      const fields = afterComm.split(" ");
+      ppid = parseInt(fields[1], 10); // field after state
+    } catch {
+      return false; // Process gone or unreadable
+    }
+
+    if (ppid <= 1) return false; // Reached init — not in tmux
+
+    // Check if parent is tmux
+    try {
+      const comm = readFileSync(`/proc/${ppid}/comm`, "utf-8").trim();
+      if (comm === "tmux" || comm.startsWith("tmux:")) return true;
+    } catch {
+      return false;
+    }
+
+    current = ppid;
+  }
+  return false;
 }
 
 /** Check if the tmux server is alive */
