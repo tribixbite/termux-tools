@@ -432,7 +432,8 @@ function validateConfig(raw) {
       health,
       max_restarts: asNumber(s.max_restarts, `${prefix}.max_restarts`, 3),
       restart_backoff_s: asNumber(s.restart_backoff_s, `${prefix}.restart_backoff_s`, 5),
-      enabled: asBool(s.enabled, `${prefix}.enabled`, true)
+      enabled: asBool(s.enabled, `${prefix}.enabled`, true),
+      bare: asBool(s.bare, `${prefix}.bare`, false)
     });
   }
   for (const session of sessions) {
@@ -1249,6 +1250,33 @@ function sendKeys(sessionName, text, pressEnter = true) {
   const args2 = ["send-keys", "-t", sessionName, text];
   if (pressEnter) args2.push("Enter");
   return tmux(...args2) !== null;
+}
+function spawnBareProcess(config, log) {
+  const { name, command: command2, env: sessionEnv } = config;
+  if (!command2) {
+    log.error(`Bare session '${name}' has no command`, { session: name });
+    return null;
+  }
+  const mergedEnv = { ...process.env, ...sessionEnv };
+  try {
+    const child = (0, import_node_child_process3.spawn)("sh", ["-c", command2], {
+      cwd: config.path ?? process.env.HOME,
+      env: mergedEnv,
+      stdio: "ignore",
+      detached: true
+    });
+    child.unref();
+    const pid = child.pid;
+    if (pid) {
+      log.info(`Spawned bare session '${name}' (PID ${pid})`, { session: name });
+      return pid;
+    }
+    log.error(`Bare session '${name}' spawn returned no PID`, { session: name });
+    return null;
+  } catch (err) {
+    log.error(`Failed to spawn bare session '${name}': ${err}`, { session: name });
+    return null;
+  }
 }
 function createSession(config, log) {
   const { name, type, path, command: command2, env } = config;
@@ -2167,7 +2195,8 @@ var Registry = class {
       health: void 0,
       max_restarts: 3,
       restart_backoff_s: 5,
-      enabled: true
+      enabled: true,
+      bare: false
     }));
   }
   // -- Persistence ------------------------------------------------------------
@@ -2842,6 +2871,17 @@ var Daemon = class _Daemon {
     }
     this.state.transition(name, "waiting");
     this.state.transition(name, "starting");
+    if (sessionConfig.bare) {
+      const pid = spawnBareProcess(sessionConfig, this.log);
+      if (!pid) {
+        this.state.transition(name, "failed", "Failed to spawn bare process");
+        return false;
+      }
+      this.adoptedPids.set(name, pid);
+      this.state.transition(name, "running");
+      this.wake.evaluate("session_change", this.state.getState().sessions);
+      return true;
+    }
     const created = createSession(sessionConfig, this.log);
     if (!created) {
       this.state.transition(name, "failed", "Failed to create tmux session");
@@ -2929,6 +2969,7 @@ var Daemon = class _Daemon {
       }
     }
     for (const cfg of this.config.sessions) {
+      if (cfg.bare) continue;
       const s = this.state.getSession(cfg.name);
       if (!s) continue;
       const isActiveState = s.status === "running" || s.status === "degraded" || s.status === "stopping" || s.status === "starting";
@@ -3384,7 +3425,8 @@ var Daemon = class _Daemon {
       health: void 0,
       max_restarts: 3,
       restart_backoff_s: 5,
-      enabled: true
+      enabled: true,
+      bare: false
     };
     this.config.sessions.push(sessionConfig);
     this.state.initFromConfig(this.config.sessions);

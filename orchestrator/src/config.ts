@@ -303,6 +303,7 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
       max_restarts: asNumber(s.max_restarts, `${prefix}.max_restarts`, 3),
       restart_backoff_s: asNumber(s.restart_backoff_s, `${prefix}.restart_backoff_s`, 5),
       enabled: asBool(s.enabled, `${prefix}.enabled`, true),
+      bare: asBool(s.bare, `${prefix}.bare`, false),
     });
   }
 

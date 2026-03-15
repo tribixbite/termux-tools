@@ -38,6 +38,7 @@ import {
   createTermuxTab,
   isTmuxServerAlive,
   discoverBareClaudeSessions,
+  spawnBareProcess,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -535,6 +536,19 @@ export class Daemon {
     this.state.transition(name, "waiting");
     this.state.transition(name, "starting");
 
+    // Bare sessions: spawn as detached process, track PID directly
+    if (sessionConfig.bare) {
+      const pid = spawnBareProcess(sessionConfig, this.log);
+      if (!pid) {
+        this.state.transition(name, "failed", "Failed to spawn bare process");
+        return false;
+      }
+      this.adoptedPids.set(name, pid);
+      this.state.transition(name, "running");
+      this.wake.evaluate("session_change", this.state.getState().sessions);
+      return true;
+    }
+
     // Create the tmux session
     const created = createSession(sessionConfig, this.log);
     if (!created) {
@@ -656,7 +670,9 @@ export class Daemon {
     // Recover sessions whose state claims they're active but tmux session is gone
     // AND no bare process was found. Handles: post-reboot (state.json persists but
     // tmux is dead), OOM kills, and sessions stuck in transient states.
+    // Skip bare-config sessions — they don't use tmux at all.
     for (const cfg of this.config.sessions) {
+      if (cfg.bare) continue; // bare sessions are tracked via adoptedPids
       const s = this.state.getSession(cfg.name);
       if (!s) continue;
       const isActiveState = s.status === "running" || s.status === "degraded" ||
@@ -1240,6 +1256,7 @@ export class Daemon {
       max_restarts: 3,
       restart_backoff_s: 5,
       enabled: true,
+      bare: false,
     };
     this.config.sessions.push(sessionConfig);
     this.state.initFromConfig(this.config.sessions);

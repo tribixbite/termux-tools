@@ -151,6 +151,7 @@ export class Registry {
       max_restarts: 3,
       restart_backoff_s: 5,
       enabled: true,
+      bare: false,
     }));
   }
 

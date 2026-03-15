@@ -6,7 +6,7 @@
  * instead of hardcoded sleep delays.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
@@ -264,6 +264,39 @@ export function sendKeys(sessionName: string, text: string, pressEnter = true): 
   const args = ["send-keys", "-t", sessionName, text];
   if (pressEnter) args.push("Enter");
   return tmux(...args) !== null;
+}
+
+/**
+ * Spawn a bare (non-tmux) detached process for sessions that crash inside tmux PTY.
+ * Returns the child PID, or null on failure.
+ */
+export function spawnBareProcess(config: SessionConfig, log: Logger): number | null {
+  const { name, command, env: sessionEnv } = config;
+  if (!command) {
+    log.error(`Bare session '${name}' has no command`, { session: name });
+    return null;
+  }
+
+  const mergedEnv = { ...process.env, ...sessionEnv };
+  try {
+    const child = spawn("sh", ["-c", command], {
+      cwd: config.path ?? process.env.HOME,
+      env: mergedEnv,
+      stdio: "ignore",
+      detached: true,
+    });
+    child.unref();
+    const pid = child.pid;
+    if (pid) {
+      log.info(`Spawned bare session '${name}' (PID ${pid})`, { session: name });
+      return pid;
+    }
+    log.error(`Bare session '${name}' spawn returned no PID`, { session: name });
+    return null;
+  } catch (err) {
+    log.error(`Failed to spawn bare session '${name}': ${err}`, { session: name });
+    return null;
+  }
 }
 
 /** Create and start a new tmux session */

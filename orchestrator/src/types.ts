@@ -84,6 +84,8 @@ export interface SessionConfig {
   restart_backoff_s: number;
   /** Whether to auto-start on boot */
   enabled: boolean;
+  /** Spawn as detached process instead of tmux session (for commands that crash in tmux PTY) */
+  bare: boolean;
 }
 
 /** ADB configuration block */
