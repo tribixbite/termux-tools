@@ -4,3 +4,4 @@ claude-code-bridge-v*.crx
 edge-claude-ext.pem
 node_modules/
 dist/
+.env
