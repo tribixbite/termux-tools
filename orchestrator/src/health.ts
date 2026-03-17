@@ -213,7 +213,7 @@ export function runHealthSweep(
     if (result.healthy) {
       // If degraded and now healthy, transition back to running
       if (updated.status === "degraded") {
-        state.transition(session.name, "starting"); // will go running after next check
+        state.transition(session.name, "running");
         log.info(`Session '${session.name}' recovered`, { session: session.name });
       }
     } else {

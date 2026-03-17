@@ -591,13 +591,13 @@ export class Daemon {
     const s = this.state.getSession(name);
     if (!s || s.status !== "starting") return;
 
-    if (readinessResult === "ready") {
+    if (readinessResult === "ready" || readinessResult === "timeout") {
+      // Both cases: session tmux is alive, mark running.
+      // Timeout just means Claude Code hasn't shown the ? prompt yet — not degraded.
       this.state.transition(name, "running");
-    } else if (readinessResult === "timeout") {
-      // Timeout — session may still be loading, mark degraded so health checks kick in
-      this.state.transition(name, "running"); // must go through running first
-      this.state.transition(name, "degraded");
-      this.log.warn(`Session '${name}' entered degraded state (readiness timeout)`, { session: name });
+      if (readinessResult === "timeout") {
+        this.log.info(`Session '${name}' running (readiness poll timed out, tmux alive)`, { session: name });
+      }
     }
     // "disappeared" — session is gone, leave in starting (health check will handle)
   }
