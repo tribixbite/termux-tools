@@ -7,7 +7,7 @@
 
 import * as http from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve } from "node:path";
 import type { Logger } from "./log.js";
 
 /** MIME types for static file serving */
@@ -221,10 +221,12 @@ export class DashboardServer {
     // Normalize path
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
 
-    // Security: prevent directory traversal
-    filePath = filePath.replace(/\.\./g, "");
-
-    let fullPath = join(this.staticDir, filePath);
+    // Security: resolve to absolute path and verify it's inside staticDir
+    let fullPath = resolve(this.staticDir, filePath.replace(/^\//, ""));
+    if (!fullPath.startsWith(this.staticDir)) {
+      // Directory traversal attempt — serve fallback
+      fullPath = join(this.staticDir, "index.html");
+    }
 
     // If path is a directory (or ends with /), look for index.html inside it
     if (existsSync(fullPath) && statSync(fullPath).isDirectory()) {

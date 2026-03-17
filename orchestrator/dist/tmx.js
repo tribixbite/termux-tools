@@ -46,7 +46,7 @@ var IpcServer = class {
   }
   /** Start listening. Cleans up stale socket first. */
   start() {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       if ((0, import_node_fs.existsSync)(this.socketPath)) {
         this.log.debug("Removing stale socket file");
         try {
@@ -62,7 +62,7 @@ var IpcServer = class {
       });
       this.server.listen(this.socketPath, () => {
         this.log.info(`IPC server listening on ${this.socketPath}`);
-        resolve3();
+        resolve4();
       });
     });
   }
@@ -76,7 +76,9 @@ var IpcServer = class {
         const line = buffer.slice(0, newlineIdx).trim();
         buffer = buffer.slice(newlineIdx + 1);
         if (!line) continue;
-        this.processMessage(line, conn);
+        this.processMessage(line, conn).catch((err) => {
+          this.log.error(`Unhandled IPC message error: ${err}`);
+        });
       }
     });
     conn.on("error", (err) => {
@@ -134,7 +136,11 @@ var IpcClient = class {
     try {
       const resp = await this.send({ cmd: "status" }, 3e3);
       return resp.ok;
-    } catch {
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.message.includes("timed out");
+      if (isTimeout) {
+        return true;
+      }
       try {
         (0, import_node_fs.unlinkSync)(this.socketPath);
       } catch {
@@ -144,7 +150,7 @@ var IpcClient = class {
   }
   /** Send a command to the daemon and return the response */
   send(cmd, timeoutMs = 3e4) {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       const conn = net.createConnection(this.socketPath);
       let buffer = "";
       let resolved = false;
@@ -167,7 +173,7 @@ var IpcClient = class {
           resolved = true;
           conn.end();
           try {
-            resolve3(JSON.parse(line));
+            resolve4(JSON.parse(line));
           } catch {
             reject(new Error(`Invalid response: ${line}`));
           }
@@ -997,6 +1003,20 @@ var WakeLockManager = class {
   isHeld() {
     return this.held;
   }
+  /**
+   * Clear any stale wake lock from a previous daemon instance.
+   * After SIGKILL, the OS-level wake lock persists but our `held` flag
+   * resets to false — release() would skip. This unconditionally calls
+   * termux-wake-unlock to ensure a clean slate before applying policy.
+   */
+  clearStale() {
+    try {
+      (0, import_node_child_process2.execSync)("termux-wake-unlock", { timeout: 5e3, stdio: "ignore", env: termuxEnv() });
+      this.log.debug("Cleared stale wake lock (if any)");
+    } catch {
+    }
+    this.held = false;
+  }
   /** Evaluate the policy and acquire/release accordingly */
   evaluate(phase, sessions) {
     switch (this.policy) {
@@ -1506,7 +1526,7 @@ function createTermuxTab(sessionName, log) {
   return true;
 }
 function sleep(ms) {
-  return new Promise((resolve3) => setTimeout(resolve3, ms));
+  return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
 
 // src/health.ts
@@ -1988,7 +2008,7 @@ var import_node_child_process6 = require("node:child_process");
 var import_node_path4 = require("node:path");
 function termuxApiEnv() {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = (0, import_node_path4.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
+  const ldPreload = (0, import_node_path4.join)(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 function resolveTermuxBin2(name) {
@@ -2377,7 +2397,7 @@ var DashboardServer = class {
   }
   /** Attempt to bind the HTTP server once */
   tryListen() {
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve4, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.on("error", (err) => {
         this.server = null;
@@ -2385,7 +2405,7 @@ var DashboardServer = class {
       });
       this.server.listen(this.port, "0.0.0.0", () => {
         this.log.info(`Dashboard server listening on http://0.0.0.0:${this.port}`);
-        resolve3();
+        resolve4();
       });
     });
   }
@@ -2476,10 +2496,10 @@ data: ${JSON.stringify({ id: clientId })}
   async handleApi(req, res, path) {
     let body = "";
     if (req.method === "POST") {
-      body = await new Promise((resolve3) => {
+      body = await new Promise((resolve4) => {
         const chunks = [];
         req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () => resolve3(Buffer.concat(chunks).toString()));
+        req.on("end", () => resolve4(Buffer.concat(chunks).toString()));
       });
     }
     const result = await this.apiHandler(req.method ?? "GET", path, body);
@@ -2489,8 +2509,10 @@ data: ${JSON.stringify({ id: clientId })}
   /** Serve static files from the dashboard dist directory */
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
-    filePath = filePath.replace(/\.\./g, "");
-    let fullPath = (0, import_node_path6.join)(this.staticDir, filePath);
+    let fullPath = (0, import_node_path6.resolve)(this.staticDir, filePath.replace(/^\//, ""));
+    if (!fullPath.startsWith(this.staticDir)) {
+      fullPath = (0, import_node_path6.join)(this.staticDir, "index.html");
+    }
     if ((0, import_node_fs12.existsSync)(fullPath) && (0, import_node_fs12.statSync)(fullPath).isDirectory()) {
       fullPath = (0, import_node_path6.join)(fullPath, "index.html");
     } else if (!(0, import_node_fs12.existsSync)(fullPath) || !(0, import_node_fs12.statSync)(fullPath).isFile()) {
@@ -2581,7 +2603,7 @@ data: ${JSON.stringify({ id: clientId })}
 
 // src/daemon.ts
 function sleep2(ms) {
-  return new Promise((resolve3) => setTimeout(resolve3, ms));
+  return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
 function resolveAdbPath() {
   try {
@@ -2613,7 +2635,7 @@ function resolveTermuxBin3(name) {
 }
 function termuxApiEnv2() {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = (0, import_node_path7.join)(prefix, "lib", "libtermux-exec-ld-preload.so");
+  const ldPreload = (0, import_node_path7.join)(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 var TERMUX_NOTIFICATION_BIN = resolveTermuxBin3("termux-notification");
@@ -2703,6 +2725,7 @@ var Daemon = class _Daemon {
     this.state = new StateManager(this.config.orchestrator.state_file, this.log);
     this.budget = new BudgetTracker(this.config.orchestrator.process_budget, this.log);
     this.wake = new WakeLockManager(this.config.orchestrator.wake_lock_policy, this.log);
+    this.wake.clearStale();
     this.memory = new MemoryMonitor(
       this.log,
       this.config.orchestrator.memory_warning_mb,
@@ -2766,11 +2789,11 @@ var Daemon = class _Daemon {
     this.startBatteryTimer();
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
-    await new Promise((resolve3) => {
+    await new Promise((resolve4) => {
       const check = setInterval(() => {
         if (!this.running) {
           clearInterval(check);
-          resolve3();
+          resolve4();
         }
       }, 1e3);
     });
@@ -5028,7 +5051,7 @@ function getConfigFlag() {
   return void 0;
 }
 function sleep3(ms) {
-  return new Promise((resolve3) => setTimeout(resolve3, ms));
+  return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
 function getFlag(args2, flag) {
   const idx = args2.indexOf(flag);

@@ -70,6 +70,22 @@ export class WakeLockManager {
     return this.held;
   }
 
+  /**
+   * Clear any stale wake lock from a previous daemon instance.
+   * After SIGKILL, the OS-level wake lock persists but our `held` flag
+   * resets to false — release() would skip. This unconditionally calls
+   * termux-wake-unlock to ensure a clean slate before applying policy.
+   */
+  clearStale(): void {
+    try {
+      execSync("termux-wake-unlock", { timeout: 5000, stdio: "ignore", env: termuxEnv() });
+      this.log.debug("Cleared stale wake lock (if any)");
+    } catch {
+      // Not fatal — lock may not have been held
+    }
+    this.held = false;
+  }
+
   /** Evaluate the policy and acquire/release accordingly */
   evaluate(phase: "boot_start" | "boot_end" | "shutdown" | "session_change", sessions?: Record<string, SessionState>): void {
     switch (this.policy) {

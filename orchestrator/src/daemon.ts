@@ -78,7 +78,7 @@ function resolveTermuxBin(name: string): string {
 /** Env for Termux:API commands — bun's glibc runner strips LD_PRELOAD needed by am/app_process */
 function termuxApiEnv(): NodeJS.ProcessEnv {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = join(prefix, "lib", "libtermux-exec-ld-preload.so");
+  const ldPreload = join(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 
@@ -188,6 +188,8 @@ export class Daemon {
     this.state = new StateManager(this.config.orchestrator.state_file, this.log);
     this.budget = new BudgetTracker(this.config.orchestrator.process_budget, this.log);
     this.wake = new WakeLockManager(this.config.orchestrator.wake_lock_policy, this.log);
+    // Clear any stale wake lock from a previous daemon that was SIGKILL'd
+    this.wake.clearStale();
     this.memory = new MemoryMonitor(
       this.log,
       this.config.orchestrator.memory_warning_mb,

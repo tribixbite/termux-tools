@@ -72,7 +72,9 @@ export class IpcServer {
 
         if (!line) continue;
 
-        this.processMessage(line, conn);
+        this.processMessage(line, conn).catch((err) => {
+          this.log.error(`Unhandled IPC message error: ${err}`);
+        });
       }
     });
 
@@ -146,7 +148,14 @@ export class IpcClient {
       // Use a short 3s timeout — if daemon is alive it responds instantly
       const resp = await this.send({ cmd: "status" }, 3_000);
       return resp.ok;
-    } catch {
+    } catch (err) {
+      // Distinguish timeout (daemon busy) from connection refused (daemon dead).
+      // Only delete the socket if we got a connection error — timeouts mean
+      // the daemon is alive but slow (health sweep, etc.).
+      const isTimeout = err instanceof Error && err.message.includes("timed out");
+      if (isTimeout) {
+        return true; // assume daemon is alive but busy
+      }
       // Socket exists but connection failed — stale socket from OOM kill / crash
       try {
         unlinkSync(this.socketPath);

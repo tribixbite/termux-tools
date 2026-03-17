@@ -19,7 +19,7 @@ import type { Logger } from "./log.js";
  */
 function termuxApiEnv(): NodeJS.ProcessEnv {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = join(prefix, "lib", "libtermux-exec-ld-preload.so");
+  const ldPreload = join(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 
