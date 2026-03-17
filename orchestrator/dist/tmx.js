@@ -1112,6 +1112,11 @@ var CLAUDE_READY_PATTERNS = [
   // question mark prompt (e.g., "What would you like to do?")
 ];
 var GO_SEND_DELAY = 500;
+var TERMUX_LD_PRELOAD = (0, import_node_path2.join)(
+  process.env.PREFIX ?? "/data/data/com.termux/files/usr",
+  "lib",
+  "libtermux-exec.so"
+);
 function cleanEnv() {
   const env = { ...process.env };
   delete env.CLAUDECODE;
@@ -1124,6 +1129,9 @@ function cleanEnv() {
     if (key.startsWith("ENABLE_CLAUDE_CODE_")) {
       delete env[key];
     }
+  }
+  if ((0, import_node_fs5.existsSync)(TERMUX_LD_PRELOAD)) {
+    env.LD_PRELOAD = TERMUX_LD_PRELOAD;
   }
   return env;
 }
@@ -1258,6 +1266,9 @@ function spawnBareProcess(config, log) {
     return null;
   }
   const mergedEnv = { ...process.env, ...sessionEnv };
+  if ((0, import_node_fs5.existsSync)(TERMUX_LD_PRELOAD)) {
+    mergedEnv.LD_PRELOAD = TERMUX_LD_PRELOAD;
+  }
   try {
     const child = (0, import_node_child_process3.spawn)("sh", ["-c", command2], {
       cwd: config.path ?? process.env.HOME,
@@ -1278,6 +1289,16 @@ function spawnBareProcess(config, log) {
     return null;
   }
 }
+var _tmuxEnvInjected = false;
+function ensureTmuxLdPreload(log) {
+  if (_tmuxEnvInjected) return;
+  if (!(0, import_node_fs5.existsSync)(TERMUX_LD_PRELOAD)) return;
+  const ok = tmux("set-environment", "-g", "LD_PRELOAD", TERMUX_LD_PRELOAD);
+  if (ok !== null) {
+    log.info(`Injected LD_PRELOAD into tmux global environment`);
+    _tmuxEnvInjected = true;
+  }
+}
 function createSession(config, log) {
   const { name, type, path, command: command2, env } = config;
   const envPrefix = Object.entries(env).map(([k, v]) => `${k}=${v}`).join(" ");
@@ -1285,6 +1306,7 @@ function createSession(config, log) {
     log.info(`Session '${name}' already exists in tmux, skipping create`, { session: name });
     return true;
   }
+  ensureTmuxLdPreload(log);
   const createArgs = ["new-session", "-d", "-s", name];
   if (path) {
     createArgs.push("-c", path);
@@ -1603,7 +1625,7 @@ function runHealthSweep(config, state, log, adoptedPids) {
     if (!updated) continue;
     if (result.healthy) {
       if (updated.status === "degraded") {
-        state.transition(session.name, "starting");
+        state.transition(session.name, "running");
         log.info(`Session '${session.name}' recovered`, { session: session.name });
       }
     } else {
@@ -2679,6 +2701,7 @@ var Daemon = class _Daemon {
     this.state.resetDaemonStart();
     this.mergeRegistrySessions();
     this.state.initFromConfig(this.config.sessions);
+    ensureTmuxLdPreload(this.log);
     this.adoptExistingSessions();
     await this.ipc.start();
     this.setupSignalHandlers();
@@ -2909,12 +2932,11 @@ var Daemon = class _Daemon {
     }
     const s = this.state.getSession(name);
     if (!s || s.status !== "starting") return;
-    if (readinessResult === "ready") {
+    if (readinessResult === "ready" || readinessResult === "timeout") {
       this.state.transition(name, "running");
-    } else if (readinessResult === "timeout") {
-      this.state.transition(name, "running");
-      this.state.transition(name, "degraded");
-      this.log.warn(`Session '${name}' entered degraded state (readiness timeout)`, { session: name });
+      if (readinessResult === "timeout") {
+        this.log.info(`Session '${name}' running (readiness poll timed out, tmux alive)`, { session: name });
+      }
     }
   }
   /** Stop a single session by name */

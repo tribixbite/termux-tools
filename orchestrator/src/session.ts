@@ -52,9 +52,23 @@ const CLAUDE_READY_PATTERNS = [
 const GO_SEND_DELAY = 500;
 
 /**
+ * The LD_PRELOAD value needed for Termux exec interception.
+ * libtermux-exec.so rewrites /usr/bin/env → $PREFIX/bin/env (and similar).
+ * Bun's glibc-runner (bun-termux) strips LD_PRELOAD from the environment,
+ * so the daemon and any tmux server it spawns lack this. We must inject it
+ * back into the env for tmux and bare processes to function correctly.
+ */
+const TERMUX_LD_PRELOAD = join(
+  process.env.PREFIX ?? "/data/data/com.termux/files/usr",
+  "lib",
+  "libtermux-exec.so",
+);
+
+/**
  * Build a clean environment for tmux child processes.
  * Strips CLAUDECODE and CLAUDE_CODE_* vars to prevent nested-session
  * detection when launching Claude Code inside tmux panes.
+ * Re-injects LD_PRELOAD with libtermux-exec.so for /usr/bin/env rewriting.
  */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -69,6 +83,10 @@ function cleanEnv(): NodeJS.ProcessEnv {
     if (key.startsWith("ENABLE_CLAUDE_CODE_")) {
       delete env[key];
     }
+  }
+  // Re-inject LD_PRELOAD for termux-exec (stripped by bun's glibc-runner)
+  if (existsSync(TERMUX_LD_PRELOAD)) {
+    env.LD_PRELOAD = TERMUX_LD_PRELOAD;
   }
   return env;
 }
@@ -278,6 +296,10 @@ export function spawnBareProcess(config: SessionConfig, log: Logger): number | n
   }
 
   const mergedEnv = { ...process.env, ...sessionEnv };
+  // Re-inject LD_PRELOAD for termux-exec (stripped by bun's glibc-runner)
+  if (existsSync(TERMUX_LD_PRELOAD)) {
+    mergedEnv.LD_PRELOAD = TERMUX_LD_PRELOAD;
+  }
   try {
     const child = spawn("sh", ["-c", command], {
       cwd: config.path ?? process.env.HOME,
@@ -299,6 +321,22 @@ export function spawnBareProcess(config: SessionConfig, log: Logger): number | n
   }
 }
 
+/**
+ * Inject LD_PRELOAD into the tmux global environment so new sessions
+ * inherit termux-exec even when the tmux server was started without it.
+ * Safe to call repeatedly — just a `tmux set-environment -g` call.
+ */
+let _tmuxEnvInjected = false;
+export function ensureTmuxLdPreload(log: Logger): void {
+  if (_tmuxEnvInjected) return;
+  if (!existsSync(TERMUX_LD_PRELOAD)) return;
+  const ok = tmux("set-environment", "-g", "LD_PRELOAD", TERMUX_LD_PRELOAD);
+  if (ok !== null) {
+    log.info(`Injected LD_PRELOAD into tmux global environment`);
+    _tmuxEnvInjected = true;
+  }
+}
+
 /** Create and start a new tmux session */
 export function createSession(config: SessionConfig, log: Logger): boolean {
   const { name, type, path, command, env } = config;
@@ -313,6 +351,9 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
     log.info(`Session '${name}' already exists in tmux, skipping create`, { session: name });
     return true;
   }
+
+  // Ensure tmux global env has LD_PRELOAD for termux-exec
+  ensureTmuxLdPreload(log);
 
   // Create detached session with optional working directory
   const createArgs = ["new-session", "-d", "-s", name];

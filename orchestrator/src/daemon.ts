@@ -39,6 +39,7 @@ import {
   isTmuxServerAlive,
   discoverBareClaudeSessions,
   spawnBareProcess,
+  ensureTmuxLdPreload,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -256,6 +257,10 @@ export class Daemon {
     this.state.resetDaemonStart();
     this.mergeRegistrySessions();
     this.state.initFromConfig(this.config.sessions);
+
+    // Inject LD_PRELOAD into tmux global env for termux-exec
+    // (bun's glibc-runner strips it; without it /usr/bin/env fails)
+    ensureTmuxLdPreload(this.log);
 
     // Adopt existing tmux sessions
     this.adoptExistingSessions();
