@@ -528,7 +528,7 @@ function ensureAttachScript(): string {
  * Bring Termux app to foreground via am start.
  * Uses TermuxActivity's standard launch intent.
  */
-function bringTermuxToForeground(log: Logger): void {
+export function bringTermuxToForeground(log: Logger): void {
   const env = amEnv();
   const result = spawnSync(AM_BIN, [
     "start", "-n", "com.termux/.app.TermuxActivity",
@@ -539,11 +539,14 @@ function bringTermuxToForeground(log: Logger): void {
 }
 
 /**
- * Open a Termux tab for a tmux session and bring Termux to foreground.
+ * Open a Termux tab for a tmux session.
  *
- * If the session already has a client (tab exists), just brings Termux to
- * foreground. Otherwise creates a new tab via TermuxService service_execute
- * intent, with switch-client fallback for single-tab mode.
+ * If the session already has a client (tab exists), returns true (no-op).
+ * Otherwise creates a new tab via TermuxService service_execute intent,
+ * with switch-client fallback for single-tab mode.
+ *
+ * Does NOT bring Termux to foreground — callers handle that separately
+ * to avoid spamming am start during batch tab creation.
  */
 export function createTermuxTab(sessionName: string, log: Logger): boolean {
   const env = amEnv();
@@ -552,16 +555,13 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
   tmux("set-option", "-g", "set-titles", "on");
   tmux("set-option", "-g", "set-titles-string", "#S");
 
-  // If there's already a client on this session, just bring Termux to foreground.
-  // We don't switch-client because that would hijack whatever tab the user was
-  // on and orphan its original session. The user can swipe to the labeled tab.
+  // If there's already a client on this session, nothing to do.
   const targetClients = tmux("list-clients", "-t", sessionName, "-F", "#{client_tty}");
   if (targetClients && targetClients.trim().length > 0) {
-    log.info(`Session '${sessionName}' already has a tab, bringing Termux to foreground`, { session: sessionName });
+    log.info(`Session '${sessionName}' already has a tab`, { session: sessionName });
     // Ensure the tab label is correct via OSC title escape
     const clientTty = targetClients.trim().split("\n")[0];
     try { writeFileSync(clientTty, `\x1b]0;${sessionName}\x07`); } catch { /* ignore */ }
-    bringTermuxToForeground(log);
     return true;
   }
 
@@ -582,7 +582,6 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
 
   if (svcResult.status === 0) {
     log.info(`Created Termux tab for '${sessionName}' via TermuxService`, { session: sessionName });
-    bringTermuxToForeground(log);
     return true;
   }
 
@@ -608,7 +607,6 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
     log.warn(`No tmux clients found — open Termux and run: tmux attach -t ${sessionName}`, { session: sessionName });
   }
 
-  bringTermuxToForeground(log);
   return true;
 }
 

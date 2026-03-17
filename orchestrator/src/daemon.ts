@@ -40,6 +40,7 @@ import {
   discoverBareClaudeSessions,
   spawnBareProcess,
   ensureTmuxLdPreload,
+  bringTermuxToForeground,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -996,7 +997,7 @@ export class Daemon {
 
   }
 
-  // -- Memory monitoring & OOM shedding ----------------------------------------
+  // -- Memory monitoring -------------------------------------------------------
 
   /** Start periodic memory monitoring timer (every 15s) */
   private startMemoryTimer(): void {
@@ -1007,7 +1008,7 @@ export class Daemon {
     this.memoryPollAndShed();
   }
 
-  /** Poll system memory, update per-session RSS/activity, shed if needed */
+  /** Poll system memory and update per-session RSS/activity */
   private memoryPollAndShed(): void {
     // System memory
     const sysMem = this.memory.getSystemMemory();
@@ -1052,20 +1053,6 @@ export class Daemon {
 
       this.state.updateSessionMetrics(session.name, rss_mb, activityState);
     }
-
-    // Check if we need to shed sessions due to memory pressure
-    if (sysMem.pressure !== "normal") {
-      this.log.warn(`Memory pressure: ${sysMem.pressure} (${sysMem.available_mb}MB available)`, {
-        available_mb: sysMem.available_mb,
-        total_mb: sysMem.total_mb,
-        pressure: sysMem.pressure,
-      });
-    }
-
-    // Memory shedding disabled — warn only, never auto-kill sessions
-    // if (sysMem.pressure === "critical" || sysMem.pressure === "emergency") {
-    //   this.shedIdleSessions(sysMem.pressure);
-    // }
 
     // Push SSE update with combined state+memory
     this.pushSseState();
@@ -1125,68 +1112,6 @@ export class Daemon {
       "--icon", "dashboard",
       "--action", "termux-open-url http://localhost:18970",
     ]);
-  }
-
-  /**
-   * Shed sessions to reduce memory pressure.
-   * Priority: stop idle sessions first (lowest priority number = most important),
-   * then active sessions if still in emergency.
-   */
-  private async shedIdleSessions(pressure: "critical" | "emergency"): Promise<void> {
-    // Collect candidate sessions sorted by priority (highest number = least important)
-    const candidates: Array<{ name: string; priority: number; activity: string | null }> = [];
-    for (const session of this.config.sessions) {
-      const s = this.state.getSession(session.name);
-      if (!s || s.status !== "running") continue;
-      candidates.push({
-        name: session.name,
-        priority: session.priority,
-        activity: s.activity,
-      });
-    }
-
-    // Sort: idle first, then by priority descending (least important first)
-    candidates.sort((a, b) => {
-      const aIdle = a.activity === "idle" ? 0 : 1;
-      const bIdle = b.activity === "idle" ? 0 : 1;
-      if (aIdle !== bIdle) return aIdle - bIdle;
-      return b.priority - a.priority; // higher priority number = less important
-    });
-
-    // In critical mode, shed idle headless services first
-    // In emergency mode, shed any idle session
-    const maxShed = pressure === "emergency" ? 2 : 1;
-    let shedCount = 0;
-
-    for (const candidate of candidates) {
-      if (shedCount >= maxShed) break;
-
-      const sessionConfig = this.config.sessions.find((s) => s.name === candidate.name);
-      if (!sessionConfig) continue;
-
-      // In critical, only shed idle sessions; in emergency, shed idle first then active
-      if (pressure === "critical" && candidate.activity !== "idle") continue;
-      if (pressure === "emergency" && candidate.activity !== "idle" && shedCount === 0) {
-        // Try idle first even in emergency
-        const hasIdle = candidates.some((c) => c.activity === "idle");
-        if (hasIdle) continue;
-      }
-
-      this.log.warn(`Shedding session '${candidate.name}' due to ${pressure} memory pressure`, {
-        session: candidate.name,
-        activity: candidate.activity,
-        priority: candidate.priority,
-      });
-
-      notify("tmx memory", `Shedding '${candidate.name}' — ${pressure} memory pressure`, "tmx-memory");
-      await this.stopSessionByName(candidate.name);
-      shedCount++;
-    }
-
-    if (shedCount === 0) {
-      this.log.warn("No sessions available to shed");
-      notify("tmx memory", `${pressure} memory pressure — no sessions to shed`, "tmx-memory");
-    }
   }
 
   // -- Session registry ---------------------------------------------------------
@@ -1592,7 +1517,7 @@ export class Daemon {
           return { status: 200, data: entries };
         }
         case "tab": {
-          // Open Termux tab attached to a session
+          // Open Termux tab attached to a session and bring Termux to foreground
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
           // Bare sessions have no tmux session to attach to
@@ -1601,6 +1526,8 @@ export class Daemon {
             return { status: 400, data: { error: `'${name}' is a bare (headless) session — no tmux tab` } };
           }
           if (createTermuxTab(name, this.log)) {
+            // Single am start — only when user explicitly clicks a session
+            bringTermuxToForeground(this.log);
             return { status: 200, data: { ok: true, session: name } };
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };

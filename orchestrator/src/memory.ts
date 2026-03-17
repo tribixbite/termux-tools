@@ -3,7 +3,7 @@
  *
  * Parses /proc/meminfo for system-wide stats and uses `ps` to compute
  * per-session RSS including all child processes (MCP servers, LSP, etc.).
- * Defines pressure levels for OOM shedding decisions.
+ * Defines pressure levels for dashboard display.
  */
 
 import { readFileSync } from "node:fs";
