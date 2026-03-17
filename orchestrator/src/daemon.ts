@@ -354,9 +354,13 @@ export class Daemon {
     this.updateStatusNotification();
   }
 
-  /** Graceful shutdown — reverse-order stop, release wake lock, exit */
+  /**
+   * Graceful shutdown — detach from sessions, release resources, exit.
+   * By default, tmux sessions are LEFT RUNNING so the next daemon can adopt them.
+   * Pass killSessions=true only for explicit `tmx shutdown --kill`.
+   */
   private shutdownInProgress = false;
-  async shutdown(): Promise<void> {
+  async shutdown(killSessions = false): Promise<void> {
     if (this.shutdownInProgress) return;
     this.shutdownInProgress = true;
     this.log.info("Shutdown sequence starting");
@@ -385,17 +389,23 @@ export class Daemon {
     }
     this.restartTimers.clear();
 
-    // Stop sessions in reverse dependency order
-    const shutdownOrder = computeShutdownOrder(this.config.sessions);
-    for (const batch of shutdownOrder) {
-      const stopPromises = batch.sessions.map(async (name) => {
-        const s = this.state.getSession(name);
-        if (!s || s.status === "stopped" || s.status === "pending") return;
-        this.state.transition(name, "stopping");
-        await stopSession(name, this.log);
-        this.state.transition(name, "stopped");
-      });
-      await Promise.all(stopPromises);
+    if (killSessions) {
+      // Only kill tmux sessions when explicitly requested (tmx shutdown --kill)
+      this.log.info("Killing all tmux sessions (--kill requested)");
+      const shutdownOrder = computeShutdownOrder(this.config.sessions);
+      for (const batch of shutdownOrder) {
+        const stopPromises = batch.sessions.map(async (name) => {
+          const s = this.state.getSession(name);
+          if (!s || s.status === "stopped" || s.status === "pending") return;
+          this.state.transition(name, "stopping");
+          await stopSession(name, this.log);
+          this.state.transition(name, "stopped");
+        });
+        await Promise.all(stopPromises);
+      }
+    } else {
+      // Default: orphan sessions for next daemon to adopt
+      this.log.info("Detaching from sessions (tmux sessions left running for adoption)");
     }
 
     // Flush registry with final activity timestamps
@@ -1900,7 +1910,7 @@ export class Daemon {
 
       case "shutdown":
         // Run shutdown async and respond before exiting
-        setTimeout(() => this.shutdown().then(() => process.exit(0)), 100);
+        setTimeout(() => this.shutdown(cmd.kill).then(() => process.exit(0)), 100);
         return { ok: true, data: "Shutdown initiated" };
 
       case "go":

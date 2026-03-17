@@ -53,13 +53,33 @@ export class DashboardServer {
     this.apiHandler = apiHandler;
   }
 
-  /** Start the HTTP server */
-  start(): Promise<void> {
+  /** Start the HTTP server, retrying if port is in TIME_WAIT from previous daemon */
+  async start(): Promise<void> {
+    const maxRetries = 3;
+    const retryDelay = 2000;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await this.tryListen();
+        return;
+      } catch (err: unknown) {
+        const isAddrInUse = err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "EADDRINUSE";
+        if (isAddrInUse && attempt < maxRetries) {
+          this.log.warn(`Dashboard port ${this.port} in use, retrying in ${retryDelay / 1000}s (${attempt}/${maxRetries})`);
+          await new Promise((r) => setTimeout(r, retryDelay));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  /** Attempt to bind the HTTP server once */
+  private tryListen(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
 
       this.server.on("error", (err) => {
-        this.log.error(`Dashboard server error: ${err}`);
+        this.server = null;
         reject(err);
       });
 
@@ -70,7 +90,7 @@ export class DashboardServer {
     });
   }
 
-  /** Stop the HTTP server */
+  /** Stop the HTTP server, force-closing all connections to release the port */
   stop(): void {
     // Close all SSE connections
     for (const client of this.sseClients) {
@@ -79,6 +99,9 @@ export class DashboardServer {
     this.sseClients = [];
 
     if (this.server) {
+      // Force-close all open connections so port is released immediately
+      // (prevents TIME_WAIT from blocking next daemon's bind)
+      this.server.closeAllConnections();
       this.server.close();
       this.server = null;
     }

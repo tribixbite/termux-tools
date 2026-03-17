@@ -215,7 +215,7 @@ export type IpcCommand =
   | { cmd: "restart"; name?: string }
   | { cmd: "health" }
   | { cmd: "boot" }
-  | { cmd: "shutdown" }
+  | { cmd: "shutdown"; kill?: boolean }
   | { cmd: "go"; name: string }
   | { cmd: "send"; name: string; text: string }
   | { cmd: "tabs"; names?: string[] }

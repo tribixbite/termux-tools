@@ -9,8 +9,27 @@
  */
 
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { WakeLockPolicy, SessionState } from "./types.js";
 import type { Logger } from "./log.js";
+
+/**
+ * Build env with LD_PRELOAD injected for termux-exec compatibility.
+ * Bun's glibc-runner strips LD_PRELOAD, so child processes (like `am`)
+ * invoked by termux-wake-lock/unlock need it re-injected.
+ */
+function termuxEnv(): Record<string, string> {
+  const env = { ...process.env } as Record<string, string>;
+  const ldPreload = join(
+    process.env.PREFIX ?? "/data/data/com.termux/files/usr",
+    "lib", "libtermux-exec.so",
+  );
+  if (existsSync(ldPreload)) {
+    env.LD_PRELOAD = ldPreload;
+  }
+  return env;
+}
 
 export class WakeLockManager {
   private policy: WakeLockPolicy;
@@ -26,7 +45,7 @@ export class WakeLockManager {
   acquire(): void {
     if (this.held) return;
     try {
-      execSync("termux-wake-lock", { timeout: 5000, stdio: "ignore" });
+      execSync("termux-wake-lock", { timeout: 5000, stdio: "ignore", env: termuxEnv() });
       this.held = true;
       this.log.info("Wake lock acquired");
     } catch (err) {
@@ -38,7 +57,7 @@ export class WakeLockManager {
   release(): void {
     if (!this.held) return;
     try {
-      execSync("termux-wake-unlock", { timeout: 5000, stdio: "ignore" });
+      execSync("termux-wake-unlock", { timeout: 5000, stdio: "ignore", env: termuxEnv() });
       this.held = false;
       this.log.info("Wake lock released");
     } catch (err) {

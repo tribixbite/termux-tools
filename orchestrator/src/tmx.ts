@@ -584,7 +584,7 @@ async function runIpcCommand(): Promise<void> {
       cmd = { cmd: "health" };
       break;
     case "shutdown":
-      cmd = { cmd: "shutdown" };
+      cmd = { cmd: "shutdown", kill: args.includes("--kill") };
       break;
     case "memory":
       cmd = { cmd: "memory" };
@@ -927,7 +927,8 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}go${RESET} <name>             Send "go" to a Claude session
   ${CYAN}send${RESET} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET}                Start daemon (foreground)
-  ${CYAN}shutdown${RESET}              Stop everything + release wake lock + exit daemon
+  ${CYAN}shutdown${RESET}              Exit daemon (sessions left for adoption by next daemon)
+  ${CYAN}shutdown --kill${RESET}       Exit daemon + kill all tmux sessions
   ${CYAN}upgrade${RESET}               Rebuild, shutdown daemon, let watchdog auto-restart
 
 ${BOLD}OPTIONS${RESET}
