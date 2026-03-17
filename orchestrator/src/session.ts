@@ -381,9 +381,10 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   // Start the appropriate process inside the session
   switch (type) {
     case "claude":
-      // Start Claude Code via node explicitly — Termux lacks /usr/bin/env
-      // which the claude shebang requires. Using node + resolved path bypasses this.
-      sendKeys(name, "node $(readlink -f $(which claude)) --dangerously-skip-permissions", true);
+      // Use the cc alias (claude --continue --dangerously-skip-permissions).
+      // --continue resumes the last conversation in the project directory.
+      // LD_PRELOAD injection (above) ensures /usr/bin/env shebang works.
+      sendKeys(name, "cc", true);
       break;
 
     case "daemon":

@@ -1591,14 +1591,20 @@ export class Daemon {
           const entries = log.readTail(100, sessionFilter);
           return { status: 200, data: entries };
         }
-        case "tab":
+        case "tab": {
           // Open Termux tab attached to a session
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
+          // Bare sessions have no tmux session to attach to
+          const tabCfg = this.config.sessions.find((s: SessionConfig) => s.name === name);
+          if (tabCfg?.bare) {
+            return { status: 400, data: { error: `'${name}' is a bare (headless) session — no tmux tab` } };
+          }
           if (createTermuxTab(name, this.log)) {
             return { status: 200, data: { ok: true, session: name } };
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
+        }
         case "processes":
           // List Android apps sorted by RSS (via ADB)
           return { status: 200, data: this.getAndroidApps() };
