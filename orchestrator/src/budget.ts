@@ -5,9 +5,12 @@
  * PhantomProcessList tracks. The phantom killer is disabled on this
  * device via device_config (applied by daemon on ADB connect), so
  * this is purely for dashboard display.
+ *
+ * Uses a 30s cache to avoid blocking the event loop with ps every
+ * time the dashboard polls status (every 15s via SSE).
  */
 
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { Logger } from "./log.js";
 
 /** Simple process count snapshot for dashboard display */
@@ -16,10 +19,16 @@ export interface ProcessCount {
   phantom_procs: number;
 }
 
+/** Cache TTL for process count (ms) */
+const CACHE_TTL = 30_000;
+
 export class BudgetTracker {
   private log: Logger;
   /** Cached Termux app PID — set once from env */
   private appPid: number | null = null;
+  /** Cached count + timestamp to avoid blocking every 15s */
+  private cachedCount = 0;
+  private cacheTime = 0;
 
   constructor(_budget: number, log: Logger) {
     this.log = log;
@@ -31,17 +40,19 @@ export class BudgetTracker {
   }
 
   /** Count phantom processes (descendants of app PID) */
-  getProcessCount(): number {
+  private getProcessCount(): number {
     if (!this.appPid) return 0;
     try {
-      const output = execSync("ps -e -o pid=,ppid= 2>/dev/null", {
+      const result = spawnSync("ps", ["-e", "-o", "pid=,ppid="], {
         encoding: "utf-8",
-        timeout: 5000,
+        timeout: 3000,
+        stdio: ["ignore", "pipe", "ignore"],
       });
+      if (result.status !== 0 || !result.stdout) return 0;
 
       // Build parent → children map
       const childrenOf = new Map<number, number[]>();
-      for (const line of output.split("\n")) {
+      for (const line of result.stdout.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         const parts = trimmed.split(/\s+/);
@@ -79,9 +90,14 @@ export class BudgetTracker {
     }
   }
 
-  /** Get snapshot for dashboard/status display */
+  /** Get snapshot for dashboard/status display (cached 30s) */
   check(): ProcessCount {
-    return { phantom_procs: this.getProcessCount() };
+    const now = Date.now();
+    if (now - this.cacheTime > CACHE_TTL) {
+      this.cachedCount = this.getProcessCount();
+      this.cacheTime = now;
+    }
+    return { phantom_procs: this.cachedCount };
   }
 
   /** Always true — phantom killer is disabled, never block anything */

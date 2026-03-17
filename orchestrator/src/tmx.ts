@@ -166,10 +166,21 @@ async function runBoot(): Promise<void> {
     // Spawn daemon using the bun wrapper (not process.argv[0] which may be the
     // raw buno binary under glibc-runner — spawning it directly bypasses grun
     // and causes "invalid ELF header" on Android/Termux).
+    // Strip Claude Code env vars so the daemon doesn't inherit them.
+    // This prevents performance overhead from Claude's env and avoids
+    // nested-session detection when spawning tmux sessions.
+    const daemonEnv = { ...process.env };
+    delete daemonEnv.CLAUDECODE;
+    for (const key of Object.keys(daemonEnv)) {
+      if (key.startsWith("CLAUDE_CODE_") || key.startsWith("ENABLE_CLAUDE_CODE_") || key === "CLAUDE_TMPDIR") {
+        delete daemonEnv[key];
+      }
+    }
     const bunPath = resolveBunPath();
     const child = spawn(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd],
+      env: daemonEnv,
     });
     child.unref();
     closeSync(stderrFd);
