@@ -1,10 +1,14 @@
 /**
- * wake.ts — termux-wake-lock/unlock management
+ * wake.ts — termux-wake-lock management (acquire-only)
  *
- * Manages the Termux wake lock based on policy:
- *   always           — acquire on daemon start, release on shutdown
- *   active_sessions  — acquire when any session is running, release when all stopped
- *   boot_only        — acquire during boot, release after boot completes
+ * Manages the Termux wake lock. The wake lock is NEVER released by the daemon.
+ * Android aggressively kills background processes when wake lock is not held.
+ * The old startup.sh never released, and it was stable — we follow the same pattern.
+ *
+ * Policy controls when to acquire:
+ *   always           — acquire on daemon start
+ *   active_sessions  — acquire when any session is running
+ *   boot_only        — acquire during boot
  *   never            — never acquire
  */
 
@@ -17,7 +21,7 @@ import type { Logger } from "./log.js";
 /**
  * Build env with LD_PRELOAD injected for termux-exec compatibility.
  * Bun's glibc-runner strips LD_PRELOAD, so child processes (like `am`)
- * invoked by termux-wake-lock/unlock need it re-injected.
+ * invoked by termux-wake-lock need it re-injected.
  */
 function termuxEnv(): Record<string, string> {
   const env = { ...process.env } as Record<string, string>;
@@ -53,61 +57,32 @@ export class WakeLockManager {
     }
   }
 
-  /** Release the wake lock if held */
-  release(): void {
-    if (!this.held) return;
-    try {
-      execSync("termux-wake-unlock", { timeout: 5000, stdio: "ignore", env: termuxEnv() });
-      this.held = false;
-      this.log.info("Wake lock released");
-    } catch (err) {
-      this.log.error(`Failed to release wake lock: ${err}`);
-    }
-  }
-
   /** Whether the wake lock is currently held */
   isHeld(): boolean {
     return this.held;
   }
 
   /**
-   * Clear any stale wake lock from a previous daemon instance.
-   * After SIGKILL, the OS-level wake lock persists but our `held` flag
-   * resets to false — release() would skip. This unconditionally calls
-   * termux-wake-unlock to ensure a clean slate before applying policy.
+   * Evaluate the policy and acquire if appropriate.
+   * NOTE: Wake lock is NEVER released by the daemon. Only acquire paths exist.
+   * Android kills background processes when wake lock is dropped — the old
+   * tasker/startup.sh never released, and it was stable.
    */
-  clearStale(): void {
-    try {
-      execSync("termux-wake-unlock", { timeout: 5000, stdio: "ignore", env: termuxEnv() });
-      this.log.debug("Cleared stale wake lock (if any)");
-    } catch {
-      // Not fatal — lock may not have been held
-    }
-    this.held = false;
-  }
-
-  /** Evaluate the policy and acquire/release accordingly */
   evaluate(phase: "boot_start" | "boot_end" | "shutdown" | "session_change", sessions?: Record<string, SessionState>): void {
     switch (this.policy) {
       case "always":
-        if (phase === "shutdown") {
-          this.release();
-        } else {
-          this.acquire();
-        }
+        // Always acquire, never release
+        this.acquire();
         break;
 
       case "active_sessions":
-        if (phase === "shutdown") {
-          this.release();
-        } else if (sessions) {
+        // Acquire when any session is active — never release
+        if (sessions) {
           const hasActive = Object.values(sessions).some(
             (s) => s.status === "running" || s.status === "starting" || s.status === "degraded"
           );
           if (hasActive) {
             this.acquire();
-          } else {
-            this.release();
           }
         }
         break;
@@ -115,19 +90,12 @@ export class WakeLockManager {
       case "boot_only":
         if (phase === "boot_start") {
           this.acquire();
-        } else if (phase === "boot_end" || phase === "shutdown") {
-          this.release();
         }
         break;
 
       case "never":
-        this.release();
+        // Don't acquire, don't release
         break;
     }
-  }
-
-  /** Force release on shutdown regardless of policy */
-  forceRelease(): void {
-    this.release();
   }
 }

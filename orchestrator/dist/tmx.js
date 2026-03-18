@@ -988,74 +988,39 @@ var WakeLockManager = class {
       this.log.error(`Failed to acquire wake lock: ${err}`);
     }
   }
-  /** Release the wake lock if held */
-  release() {
-    if (!this.held) return;
-    try {
-      (0, import_node_child_process2.execSync)("termux-wake-unlock", { timeout: 5e3, stdio: "ignore", env: termuxEnv() });
-      this.held = false;
-      this.log.info("Wake lock released");
-    } catch (err) {
-      this.log.error(`Failed to release wake lock: ${err}`);
-    }
-  }
   /** Whether the wake lock is currently held */
   isHeld() {
     return this.held;
   }
   /**
-   * Clear any stale wake lock from a previous daemon instance.
-   * After SIGKILL, the OS-level wake lock persists but our `held` flag
-   * resets to false — release() would skip. This unconditionally calls
-   * termux-wake-unlock to ensure a clean slate before applying policy.
+   * Evaluate the policy and acquire if appropriate.
+   * NOTE: Wake lock is NEVER released by the daemon. Only acquire paths exist.
+   * Android kills background processes when wake lock is dropped — the old
+   * tasker/startup.sh never released, and it was stable.
    */
-  clearStale() {
-    try {
-      (0, import_node_child_process2.execSync)("termux-wake-unlock", { timeout: 5e3, stdio: "ignore", env: termuxEnv() });
-      this.log.debug("Cleared stale wake lock (if any)");
-    } catch {
-    }
-    this.held = false;
-  }
-  /** Evaluate the policy and acquire/release accordingly */
   evaluate(phase, sessions) {
     switch (this.policy) {
       case "always":
-        if (phase === "shutdown") {
-          this.release();
-        } else {
-          this.acquire();
-        }
+        this.acquire();
         break;
       case "active_sessions":
-        if (phase === "shutdown") {
-          this.release();
-        } else if (sessions) {
+        if (sessions) {
           const hasActive = Object.values(sessions).some(
             (s) => s.status === "running" || s.status === "starting" || s.status === "degraded"
           );
           if (hasActive) {
             this.acquire();
-          } else {
-            this.release();
           }
         }
         break;
       case "boot_only":
         if (phase === "boot_start") {
           this.acquire();
-        } else if (phase === "boot_end" || phase === "shutdown") {
-          this.release();
         }
         break;
       case "never":
-        this.release();
         break;
     }
-  }
-  /** Force release on shutdown regardless of policy */
-  forceRelease() {
-    this.release();
   }
 };
 
@@ -2606,6 +2571,22 @@ data: ${JSON.stringify({ id: clientId })}
 function sleep2(ms) {
   return new Promise((resolve4) => setTimeout(resolve4, ms));
 }
+var TRACE_PATH = (0, import_node_path7.join)(
+  process.env.HOME ?? "/data/data/com.termux/files/home",
+  ".local",
+  "share",
+  "tmx",
+  "logs",
+  "trace.log"
+);
+function trace(msg) {
+  try {
+    const ts = (/* @__PURE__ */ new Date()).toISOString().slice(11, 23);
+    (0, import_node_fs13.appendFileSync)(TRACE_PATH, `${ts} ${msg}
+`);
+  } catch {
+  }
+}
 function resolveAdbPath() {
   try {
     const result = (0, import_node_child_process7.spawnSync)("which", ["adb"], { encoding: "utf-8", timeout: 3e3 });
@@ -2726,7 +2707,7 @@ var Daemon = class _Daemon {
     this.state = new StateManager(this.config.orchestrator.state_file, this.log);
     this.budget = new BudgetTracker(this.config.orchestrator.process_budget, this.log);
     this.wake = new WakeLockManager(this.config.orchestrator.wake_lock_policy, this.log);
-    this.wake.clearStale();
+    this.wake.acquire();
     this.memory = new MemoryMonitor(
       this.log,
       this.config.orchestrator.memory_warning_mb,
@@ -2771,6 +2752,7 @@ var Daemon = class _Daemon {
   }
   /** Start the daemon — main entry point */
   async start() {
+    trace("daemon:start");
     this.preflight();
     this.running = true;
     this.log.info("Daemon starting", {
@@ -2801,6 +2783,7 @@ var Daemon = class _Daemon {
   }
   /** Full boot sequence: ADB fix → dependency-ordered start → cron */
   async boot() {
+    trace("boot:start");
     this.log.info("Boot sequence starting");
     this.wake.evaluate("boot_start");
     const bootDeadline = Date.now() + this.config.orchestrator.boot_timeout_s * 1e3;
@@ -2846,6 +2829,7 @@ var Daemon = class _Daemon {
   async shutdown(killSessions = false) {
     if (this.shutdownInProgress) return;
     this.shutdownInProgress = true;
+    trace("shutdown:start");
     this.log.info("Shutdown sequence starting");
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
@@ -2884,7 +2868,6 @@ var Daemon = class _Daemon {
       this.log.info("Detaching from sessions (tmux sessions left running for adoption)");
     }
     this.registry.flush();
-    this.wake.forceRelease();
     if (this.dashboard) {
       this.dashboard.stop();
       this.dashboard = null;
@@ -2945,6 +2928,7 @@ var Daemon = class _Daemon {
   }
   /** Start a single session by name */
   async startSession(name) {
+    trace(`session:start:${name}`);
     const sessionConfig = this.config.sessions.find((s2) => s2.name === name);
     if (!sessionConfig) {
       this.log.error(`Unknown session '${name}'`);
@@ -3030,6 +3014,7 @@ var Daemon = class _Daemon {
   }
   /** Stop a single session by name */
   async stopSessionByName(name) {
+    trace(`session:stop:${name}`);
     const s = this.state.getSession(name);
     if (!s) return false;
     if (s.status === "stopped" || s.status === "pending") return true;
@@ -3193,6 +3178,7 @@ var Daemon = class _Daemon {
   // -- ADB fix ----------------------------------------------------------------
   /** Attempt ADB connection and apply phantom process killer fix */
   async fixAdb() {
+    trace("adb:fix:start");
     this.log.info("Attempting ADB connection for phantom process fix");
     const { connect_script, connect_timeout_s, phantom_fix } = this.config.adb;
     try {
@@ -3235,36 +3221,77 @@ var Daemon = class _Daemon {
     if (localIp && serial.startsWith(`${localIp}:`)) return true;
     return false;
   }
-  /** Apply Android 12+ phantom process killer fix via ADB */
+  /**
+   * Apply Android 12+ process protection fixes via ADB.
+   * Mirrors ALL the protections from the old tasker/startup.sh:
+   * 1. Phantom process killer disable (device_config + settings)
+   * 2. Doze whitelist (deviceidle) for Termux + Edge
+   * 3. Active standby bucket for Termux + Edge
+   * 4. Background execution allow for Termux + Edge
+   */
   applyPhantomFix() {
     if (!this.isLocalAdbDevice()) {
       const serial = this.resolveAdbSerial();
       this.log.warn(`Skipping phantom fix \u2014 ADB device '${serial}' may not be this device`);
       return;
     }
-    const shellCmds = [
+    const phantomCmds = [
       ["/system/bin/device_config", "put", "activity_manager", "max_phantom_processes", "2147483647"],
       ["settings", "put", "global", "settings_enable_monitor_phantom_procs", "false"]
     ];
-    const samsungPkgs = [
-      "com.samsung.android.ssco",
-      "com.samsung.android.mocca",
-      "com.samsung.android.camerasdkservice"
-    ];
-    for (const cmd of shellCmds) {
+    const dozeWhitelistPkgs = ["com.termux", "com.microsoft.emmx.canary"];
+    const standbyPkgs = ["com.termux", "com.microsoft.emmx.canary"];
+    const bgPkgs = ["com.termux", "com.microsoft.emmx.canary"];
+    for (const cmd of phantomCmds) {
       try {
         (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 1e4, stdio: "ignore" });
       } catch (err) {
         this.log.warn(`Phantom fix command failed: ${cmd.join(" ")}`, { error: String(err) });
       }
     }
+    for (const pkg of dozeWhitelistPkgs) {
+      try {
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "deviceidle", "whitelist", `+${pkg}`), {
+          timeout: 1e4,
+          stdio: "ignore"
+        });
+      } catch (err) {
+        this.log.warn(`Doze whitelist failed for ${pkg}`, { error: String(err) });
+      }
+    }
+    for (const pkg of standbyPkgs) {
+      try {
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("am", "set-standby-bucket", pkg, "active"), {
+          timeout: 1e4,
+          stdio: "ignore"
+        });
+      } catch (err) {
+        this.log.warn(`Standby bucket failed for ${pkg}`, { error: String(err) });
+      }
+    }
+    for (const pkg of bgPkgs) {
+      try {
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "allow"), {
+          timeout: 1e4,
+          stdio: "ignore"
+        });
+      } catch (err) {
+        this.log.warn(`Background allow failed for ${pkg}`, { error: String(err) });
+      }
+    }
+    const samsungPkgs = [
+      "com.samsung.android.ssco",
+      "com.samsung.android.mocca",
+      "com.samsung.android.camerasdkservice"
+    ];
     for (const pkg of samsungPkgs) {
       try {
         (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 1e4, stdio: "ignore" });
       } catch {
       }
     }
-    this.log.info("Phantom process fix applied");
+    trace("adb:fix:complete");
+    this.log.info("Android process protection fixes applied (phantom + doze + standby + background)");
   }
   /** Start a periodic ADB retry timer */
   startAdbRetryTimer() {
@@ -3296,6 +3323,7 @@ var Daemon = class _Daemon {
   }
   /** Run health sweep and handle auto-restarts for degraded sessions */
   async healthSweepAndRestart() {
+    trace("health:sweep:start");
     this.rescanBareClaudeSessions();
     const results = runHealthSweep(this.config, this.state, this.log, this.adoptedPids);
     for (const session of this.config.sessions) {
@@ -3332,6 +3360,7 @@ var Daemon = class _Daemon {
       }, backoffMs);
       this.restartTimers.add(timer);
     }
+    trace("health:sweep:done");
   }
   // -- Memory monitoring -------------------------------------------------------
   /** Start periodic memory monitoring timer (every 15s) */
@@ -3343,6 +3372,7 @@ var Daemon = class _Daemon {
   }
   /** Poll system memory and update per-session RSS/activity */
   memoryPollAndShed() {
+    trace("memory:poll");
     const sysMem = this.memory.getSystemMemory();
     this.state.updateSystemMemory(sysMem);
     for (const session of this.config.sessions) {
@@ -3556,6 +3586,7 @@ var Daemon = class _Daemon {
   }
   /** Poll battery status, take action if critically low */
   batteryPoll() {
+    trace("battery:poll");
     const status = this.battery.checkAndAct();
     if (!status) return;
     this.state.updateBattery({
@@ -4056,6 +4087,7 @@ var Daemon = class _Daemon {
   /** Set up process signal handlers for graceful shutdown */
   setupSignalHandlers() {
     const handler = async (signal) => {
+      trace(`signal:${signal}`);
       this.log.info(`Received ${signal}, shutting down...`);
       await this.shutdown();
       process.exit(0);
@@ -4083,6 +4115,7 @@ var Daemon = class _Daemon {
   // -- IPC command handler ----------------------------------------------------
   /** Handle an IPC command from the CLI */
   async handleIpcCommand(cmd) {
+    trace(`ipc:${cmd.cmd}${cmd.name ? `:${cmd.name}` : ""}`);
     switch (cmd.cmd) {
       case "status":
         return this.cmdStatus(cmd.name);
