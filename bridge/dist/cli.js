@@ -6469,7 +6469,13 @@ async function callBridgeTool(method, params) {
       const body = await resp.text();
       return { error: `Bridge HTTP ${resp.status}: ${body}` };
     }
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { error: `Bridge returned non-JSON: ${text.slice(0, 200)}` };
+    }
     if (data.error) return { error: String(data.error) };
     return { result: data.result ?? data };
   } catch (err) {

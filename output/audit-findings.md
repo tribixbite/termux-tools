@@ -35,13 +35,13 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 
 ## MEDIUM — Schedule
 
-- [ ] **M1** `config.ts:337-341` — `asString()` converts objects to "[object Object]"
-- [ ] **M2** `session.ts:303-322` — Bare process PID valid even if child exits immediately
-- [ ] **M3** `daemon.ts:313-319` — Up to 1s delay on shutdown due to polling interval
-- [ ] **M4** `cli.ts:691` — `resp.json()` without Content-Type check
-- [ ] **M5** `content.js:177-221` — O(n²) buildAccessibilityTree on large DOMs
-- [ ] **M6** `popup.js:413-464` — Cascading intervals in refreshNetwork
-- [ ] **M7** `check-fdroid-mr.sh:8,31` — TOCTOU race on state file
-- [ ] **M8** `crewind.sh:52-54` — Unescaped regex in grep
-- [ ] **M9** `restore-tabs.sh:36-50` — create_tab discards exit codes
-- [ ] **M10** `install.sh:38,49` — Silenced errors cascade to misleading build failure
+- [x] **M1** `config.ts:337-341` — `asString()` converts objects to "[object Object]"
+- [x] **M2** `session.ts:303-322` — Bare process PID valid even if child exits immediately — wontfix: health sweep handles stale PIDs naturally
+- [x] **M3** `daemon.ts:313-319` — Up to 1s delay on shutdown due to polling interval
+- [x] **M4** `cli.ts:691` — `resp.json()` without Content-Type check
+- [x] **M5** `content.js:177-221` — O(n²) buildAccessibilityTree on large DOMs
+- [x] **M6** `popup.js:413-464` — Cascading intervals in refreshNetwork
+- [x] **M7** `check-fdroid-mr.sh:8,31` — TOCTOU race on state file
+- [x] **M8** `crewind.sh:52-54` — Unescaped regex in grep
+- [x] **M9** `restore-tabs.sh:36-50` — create_tab discards exit codes
+- [x] **M10** `install.sh:38,49` — Silenced errors cascade to misleading build failure

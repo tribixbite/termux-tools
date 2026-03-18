@@ -464,7 +464,8 @@ function validateConfig(raw) {
 function asString(val, path, fallback) {
   if (val == null) return fallback;
   if (typeof val === "string") return val;
-  return String(val);
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  throw new ConfigError(path, `expected string, got ${typeof val}`);
 }
 function asNumber(val, path, fallback) {
   if (val == null) return fallback;
@@ -2789,6 +2790,8 @@ var Daemon = class _Daemon {
   localIpExpiry = 0;
   static LOCAL_IP_TTL_MS = 6e4;
   running = false;
+  /** Resolved when shutdown() completes — replaces 1s polling interval */
+  shutdownResolve = null;
   constructor(configPath) {
     this.config = loadConfig(configPath);
     this.log = new Logger(this.config.orchestrator.log_dir);
@@ -2864,12 +2867,7 @@ var Daemon = class _Daemon {
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
     await new Promise((resolve4) => {
-      const check = setInterval(() => {
-        if (!this.running) {
-          clearInterval(check);
-          resolve4();
-        }
-      }, 1e3);
+      this.shutdownResolve = resolve4;
     });
   }
   /** Full boot sequence: ADB fix → dependency-ordered start → cron */
@@ -2975,6 +2973,7 @@ var Daemon = class _Daemon {
       removeNotification(`tmx-fail-${session.name}`);
     }
     this.running = false;
+    this.shutdownResolve?.();
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
   }

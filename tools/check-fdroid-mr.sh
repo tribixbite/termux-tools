@@ -4,6 +4,10 @@
 MR_ID="30449"
 STATE_FILE="$HOME/.fdroid_mr_${MR_ID}_state"
 
+# Advisory lock to prevent concurrent instances from racing on state file
+exec 9>"$STATE_FILE.lock"
+flock -n 9 || exit 0
+
 # Get current MR state
 CURRENT_STATE=$(curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/merge_requests/${MR_ID}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state','unknown'))" 2>/dev/null)
 

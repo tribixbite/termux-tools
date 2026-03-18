@@ -35,11 +35,17 @@ fi
 
 info "Installing dependencies..."
 cd "$TMX_DIR"
-bun install --cwd "$TMX_DIR" --backend=copyfile 2>/dev/null || true
+if ! bun install --cwd "$TMX_DIR" --backend=copyfile; then
+  error "bun install failed (exit $?)"
+  exit 1
+fi
 
 # Fix Android-specific native binaries if the script exists
 if [ -f "$TMX_DIR/../scripts/fix-android-binaries.mjs" ]; then
-  node "$TMX_DIR/../scripts/fix-android-binaries.mjs" 2>/dev/null || true
+  if ! node "$TMX_DIR/../scripts/fix-android-binaries.mjs"; then
+    error "fix-android-binaries failed (exit $?)"
+    exit 1
+  fi
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────

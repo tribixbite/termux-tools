@@ -200,6 +200,8 @@ export class Daemon {
   private localIpExpiry = 0;
   private static readonly LOCAL_IP_TTL_MS = 60_000;
   private running = false;
+  /** Resolved when shutdown() completes — replaces 1s polling interval */
+  private shutdownResolve: (() => void) | null = null;
 
   constructor(configPath?: string) {
     this.config = loadConfig(configPath);
@@ -315,14 +317,9 @@ export class Daemon {
 
     notify("tmx daemon", "Orchestrator started");
 
-    // Keep process alive
+    // Keep process alive until shutdown() resolves the promise
     await new Promise<void>((resolve) => {
-      const check = setInterval(() => {
-        if (!this.running) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 1000);
+      this.shutdownResolve = resolve;
     });
   }
 
@@ -467,6 +464,7 @@ export class Daemon {
     }
 
     this.running = false;
+    this.shutdownResolve?.();
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
   }

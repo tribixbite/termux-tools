@@ -337,7 +337,8 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
 function asString(val: unknown, path: string, fallback: string): string {
   if (val == null) return fallback;
   if (typeof val === "string") return val;
-  return String(val);
+  if (typeof val === "number" || typeof val === "boolean") return String(val);
+  throw new ConfigError(path, `expected string, got ${typeof val}`);
 }
 
 function asNumber(val: unknown, path: string, fallback: number): number {

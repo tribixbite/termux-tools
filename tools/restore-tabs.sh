@@ -36,7 +36,8 @@ create_tab() {
     termux-am start \
       -n com.termux/.app.TermuxActivity \
       --es com.termux.execute.background true \
-      -e com.termux.execute.command "$cmd" 2>/dev/null
+      -e com.termux.execute.command "$cmd"
+    return $?
   else
     # Fallback: RunCommandService via DalvikVM am
     # SESSION_ACTION 0 = open new tab in foreground
@@ -46,7 +47,8 @@ create_tab() {
       --es com.termux.RUN_COMMAND_PATH "/data/data/com.termux/files/usr/bin/bash" \
       --esa com.termux.RUN_COMMAND_ARGUMENTS "-c,$cmd" \
       --ez com.termux.RUN_COMMAND_BACKGROUND false \
-      --es com.termux.RUN_COMMAND_SESSION_ACTION "0" >/dev/null 2>&1
+      --es com.termux.RUN_COMMAND_SESSION_ACTION "0" >/dev/null
+    return $?
   fi
 }
 

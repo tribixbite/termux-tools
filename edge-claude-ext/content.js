@@ -185,7 +185,10 @@ function readPage(params) {
     root = el;
   }
 
-  const tree = buildAccessibilityTree(root, 0, maxDepth, filter === "interactive");
+  // Node count limit prevents O(n²) getComputedStyle calls on massive DOMs
+  let nodeCount = 0;
+  const MAX_NODES = 3000;
+  const tree = buildAccessibilityTree(root, 0, maxDepth, filter === "interactive", () => ++nodeCount > MAX_NODES);
   let output = serializeTree(tree, 0);
 
   if (output.length > maxChars) {
@@ -196,9 +199,10 @@ function readPage(params) {
   return { result: output };
 }
 
-function buildAccessibilityTree(el, currentDepth, maxDepth, interactiveOnly) {
+function buildAccessibilityTree(el, currentDepth, maxDepth, interactiveOnly, isOverLimit) {
   if (currentDepth > maxDepth) return null;
   if (!el || el.nodeType !== Node.ELEMENT_NODE) return null;
+  if (isOverLimit && isOverLimit()) return null;
 
   const tag = el.tagName?.toLowerCase() || "";
 
@@ -224,7 +228,7 @@ function buildAccessibilityTree(el, currentDepth, maxDepth, interactiveOnly) {
   };
 
   for (const child of el.children) {
-    const childNode = buildAccessibilityTree(child, currentDepth + 1, maxDepth, interactiveOnly);
+    const childNode = buildAccessibilityTree(child, currentDepth + 1, maxDepth, interactiveOnly, isOverLimit);
     if (childNode) {
       node.children.push(childNode);
     }

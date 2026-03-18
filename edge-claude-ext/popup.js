@@ -427,40 +427,41 @@ function refreshNetwork() {
 
     if (filtered.length === 0) {
       container.innerHTML = '<div style="color:#484f58;padding:8px;font-size:10px">No network requests captured</div>';
-      return;
+    } else {
+      for (const entry of filtered) {
+        const el = document.createElement("div");
+        el.className = "net-entry";
+        const statusClass = entry.statusCode < 300 ? "s2xx" : entry.statusCode < 400 ? "s3xx" : entry.statusCode < 500 ? "s4xx" : "s5xx";
+        const ts = new Date(entry.timestamp).toTimeString().slice(0, 8);
+        // Truncate URL to last path segment + query
+        let shortUrl = entry.url;
+        try {
+          const u = new URL(entry.url);
+          shortUrl = u.pathname + u.search;
+          if (shortUrl.length > 60) shortUrl = "..." + shortUrl.slice(-57);
+        } catch {}
+        el.innerHTML = `
+          <span class="net-status ${statusClass}">${entry.statusCode}</span>
+          <span class="net-method">${escHtml(entry.method || "GET")}</span>
+          <span class="net-type">${escHtml(entry.type || "")}</span>
+          <span class="net-url" title="${escHtml(entry.url)}">${escHtml(shortUrl)}</span>
+          <span class="net-ts">${ts}</span>
+        `;
+        container.appendChild(el);
+      }
+      container.scrollTop = container.scrollHeight;
     }
 
-    for (const entry of filtered) {
-      const el = document.createElement("div");
-      el.className = "net-entry";
-      const statusClass = entry.statusCode < 300 ? "s2xx" : entry.statusCode < 400 ? "s3xx" : entry.statusCode < 500 ? "s4xx" : "s5xx";
-      const ts = new Date(entry.timestamp).toTimeString().slice(0, 8);
-      // Truncate URL to last path segment + query
-      let shortUrl = entry.url;
-      try {
-        const u = new URL(entry.url);
-        shortUrl = u.pathname + u.search;
-        if (shortUrl.length > 60) shortUrl = "..." + shortUrl.slice(-57);
-      } catch {}
-      el.innerHTML = `
-        <span class="net-status ${statusClass}">${entry.statusCode}</span>
-        <span class="net-method">${escHtml(entry.method || "GET")}</span>
-        <span class="net-type">${escHtml(entry.type || "")}</span>
-        <span class="net-url" title="${escHtml(entry.url)}">${escHtml(shortUrl)}</span>
-        <span class="net-ts">${ts}</span>
-      `;
-      container.appendChild(el);
-    }
-    container.scrollTop = container.scrollHeight;
-  });
-
-  // Auto-refresh while panel is visible
-  clearInterval(networkRefreshTimer);
-  networkRefreshTimer = setInterval(() => {
+    // Schedule next refresh via setTimeout (not setInterval) to prevent cascading
+    // Only schedule if network panel is still active after render completes
+    clearTimeout(networkRefreshTimer);
     const panel = document.getElementById("panel-network");
-    if (panel?.classList.contains("active")) refreshNetwork();
-    else clearInterval(networkRefreshTimer);
-  }, 3000);
+    if (panel?.classList.contains("active")) {
+      networkRefreshTimer = setTimeout(refreshNetwork, 3000);
+    } else {
+      networkRefreshTimer = null;
+    }
+  });
 }
 
 document.getElementById("btn-clear-network")?.addEventListener("click", () => {

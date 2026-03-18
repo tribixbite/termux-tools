@@ -49,8 +49,9 @@ crewind() {
     # Use grep -oP for reliable context extraction with 100 chars before/after
     local context=""
     local raw_context
-    raw_context=$(grep -m1 -i "$term" "$f" 2>/dev/null \
-      | grep -oiP ".{0,100}${term}.{0,100}" 2>/dev/null \
+    # Use \Q...\E to escape regex metacharacters in search term (PCRE literal quoting)
+    raw_context=$(grep -m1 -Fi "$term" "$f" 2>/dev/null \
+      | grep -oiP ".{0,100}\\Q${term}\\E.{0,100}" 2>/dev/null \
       | head -1)
     if [[ -n "$raw_context" ]]; then
       # Clean up JSON escapes and whitespace

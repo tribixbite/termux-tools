@@ -688,7 +688,14 @@ async function callBridgeTool(
       const body = await resp.text();
       return { error: `Bridge HTTP ${resp.status}: ${body}` };
     }
-    const data = (await resp.json()) as Record<string, unknown>;
+    // Read as text first, then parse — avoids body-consumed error if JSON parsing fails
+    const text = await resp.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return { error: `Bridge returned non-JSON: ${text.slice(0, 200)}` };
+    }
     if (data.error) return { error: String(data.error) };
     return { result: data.result ?? data };
   } catch (err) {
