@@ -18,16 +18,20 @@
     fetchLogs(sessionFilter || undefined).then((e) => (entries = e));
   }
 
-  // SSE for real-time log events (browser only)
-  const sse = typeof window !== "undefined" ? new SseClient() : null;
-  sse?.on<{ entries: LogEntry[] }>("state", async () => {
-    // Refresh logs when state changes (new log entries are likely)
-    entries = await fetchLogs(sessionFilter || undefined);
-    if (autoScroll && container) {
-      requestAnimationFrame(() => {
-        container!.scrollTop = container!.scrollHeight;
-      });
-    }
+  // SSE for real-time log events (browser only) — cleaned up on component destroy
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    const sse = new SseClient();
+    sse.on<{ entries: LogEntry[] }>("state", async () => {
+      // Refresh logs when state changes (new log entries are likely)
+      entries = await fetchLogs(sessionFilter || undefined);
+      if (autoScroll && container) {
+        requestAnimationFrame(() => {
+          container!.scrollTop = container!.scrollHeight;
+        });
+      }
+    });
+    return () => sse.close();
   });
 
   function levelColor(level: string): string {

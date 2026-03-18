@@ -16,24 +16,24 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 
 ## HIGH — Fix Soon
 
-- [ ] **H1** `tools/flutter-termux-setup.sh:162,223` — sed with `/` delimiter breaks on paths containing `/`
-- [ ] **H2** `tools/adb-wireless-connect.sh:53,57` — No error checking if `ifconfig` fails; empty HOST variable
-- [ ] **H3** `tools/flutter-termux-setup.sh:122-137` — `find -exec sh -c` with filenames; injection risk
-- [ ] **H4** `tools/crewind.sh:60,134` — Unescaped regex metacharacters in sed substitution with user input `$term`
-- [ ] **H5** `scripts/gen-og-animation.sh:125,148` — Unquoted `$draws` and `$WEBP_ARGS` variable expansion
-- [ ] **H6** `claude-chrome-bridge.ts:1410-1426` — Native host `readStdout()` loop: killed process exits silently with no log
-- [ ] **H7** `claude-chrome-bridge.ts:1937-1942` — Race in native host spawn: two concurrent WS connections both spawn duplicates
-- [ ] **H8** `claude-chrome-bridge.ts:1979-2008` — `pendingToolMap` grows unbounded; no MAX_PENDING_TOOLS limit
-- [ ] **H9** `claude-chrome-bridge.ts:416-426` — CDP Network event buffer: 500 events × N sessions, no global cap
-- [ ] **H10** `claude-chrome-bridge.ts:1704-1724` — GIF: single bad frame returns HTTP 500 for entire request
-- [ ] **H11** `dashboard/src/components/LogViewer.svelte:22-31` — SSE client leak: no onDestroy cleanup
-- [ ] **H12** `dashboard/src/components/BridgeStatus.svelte+AdbStatus.svelte:24-52` — Unbounded setInterval without cleanup on destroy
-- [ ] **H13** `dashboard/src/components/SessionTable.svelte:28-36` — No error feedback for session actions; failed API calls silently ignored
-- [ ] **H14** `daemon.ts:352-362` — Auto-tabs setTimeout not tracked for cleanup; fires after shutdown
-- [ ] **H15** `daemon.ts:1086-1101` — Auto-restart timer cleanup race on shutdown; stale timer handle
-- [ ] **H16** `session.ts:217-223` — `isInTmux()` lastIndexOf(")") can return -1; garbage parent PID parsing
-- [ ] **H17** `health.ts:82-86,123` — Custom health command passed to execSync without shell escaping; injection risk
-- [ ] **H18** `memory.ts:168-176` — execSync with session name interpolation; command injection via backticks
+- [-] **H1** `tools/flutter-termux-setup.sh:162,223` — FALSE POSITIVE: already uses `|` delimiter
+- [-] **H2** `tools/adb-wireless-connect.sh:53,57` — FALSE POSITIVE: empty HOST already checked at line 63
+- [-] **H3** `tools/flutter-termux-setup.sh:122-137` — FALSE POSITIVE: sh -c `$1` properly quoted, {} passed as positional
+- [x] **H4** `tools/crewind.sh:60,134` — Unescaped regex metacharacters in sed substitution with user input `$term`
+- [-] **H5** `scripts/gen-og-animation.sh:125,148` — FALSE POSITIVE: $draws is quoted, $WEBP_ARGS intentionally word-split
+- [-] **H6** `claude-chrome-bridge.ts:1410-1426` — LOW: readStdout already logs on close; no functional impact
+- [-] **H7** `claude-chrome-bridge.ts:1937-1942` — FALSE POSITIVE: spawnNativeHost() is synchronous, no race
+- [x] **H8** `claude-chrome-bridge.ts:1979-2008` — `pendingToolMap` grows unbounded; no MAX_PENDING_TOOLS limit
+- [x] **H9** `claude-chrome-bridge.ts:416-426` — CDP Network event buffer: 500 events × N sessions, no global cap
+- [-] **H10** `claude-chrome-bridge.ts:1704-1724` — Could not verify at reported lines; GIF handler not found
+- [x] **H11** `dashboard/src/components/LogViewer.svelte:22-31` — SSE client leak: no onDestroy cleanup
+- [x] **H12** `dashboard/src/components/BridgeStatus.svelte+AdbStatus.svelte:24-52` — Unbounded setInterval without cleanup on destroy
+- [x] **H13** `dashboard/src/components/SessionTable.svelte:28-36` — No error feedback for session actions; failed API calls silently ignored
+- [x] **H14** `daemon.ts:352-362` — Auto-tabs setTimeout not tracked for cleanup; fires after shutdown
+- [-] **H15** `daemon.ts:1086-1101` — FALSE POSITIVE: clearTimeout on already-fired timer is a no-op
+- [x] **H16** `session.ts:217-223` — `isInTmux()` lastIndexOf(")") can return -1; garbage parent PID parsing
+- [-] **H17** `health.ts:82-86,123` — FALSE POSITIVE: config is user-authored, command execution is the point
+- [x] **H18** `memory.ts:168-176` — execSync with session name interpolation; command injection via backticks
 
 ## MEDIUM — Schedule
 

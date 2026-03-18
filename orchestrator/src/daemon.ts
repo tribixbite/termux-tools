@@ -191,6 +191,7 @@ export class Daemon {
   private registryFlushTimer: ReturnType<typeof setInterval> | null = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   private restartTimers = new Set<ReturnType<typeof setTimeout>>();
+  private autoTabsTimer: ReturnType<typeof setTimeout> | null = null;
   /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
   private adoptedPids = new Map<string, number>();
   private adbSerial: string | null = null;
@@ -349,7 +350,8 @@ export class Daemon {
     // Step 4: Restore Termux tabs for non-headless running sessions.
     // Uses TermuxService service_execute intent to create real Termux tabs
     // that attach to tmux sessions. Brief delay to let sessions stabilize.
-    setTimeout(() => {
+    this.autoTabsTimer = setTimeout(() => {
+      this.autoTabsTimer = null;
       try {
         const tabResult = this.cmdTabs();
         if (tabResult.ok) {
@@ -415,7 +417,11 @@ export class Daemon {
       this.registryFlushTimer = null;
     }
 
-    // Cancel pending auto-restart timers
+    // Cancel pending auto-tabs and auto-restart timers
+    if (this.autoTabsTimer) {
+      clearTimeout(this.autoTabsTimer);
+      this.autoTabsTimer = null;
+    }
     for (const timer of this.restartTimers) {
       clearTimeout(timer);
     }

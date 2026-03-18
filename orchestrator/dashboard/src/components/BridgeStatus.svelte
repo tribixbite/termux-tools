@@ -20,18 +20,19 @@
     }
   }
 
-  // Initial fetch + poll every 15s (browser only)
-  if (typeof window !== "undefined") {
+  // Initial fetch + poll every 15s (browser only) — cleaned up on component destroy
+  $effect(() => {
+    if (typeof window === "undefined") return;
     refresh();
-    setInterval(refresh, 15_000);
-    // Tick the uptime counter every second for a live feel
-    setInterval(() => {
+    const pollId = setInterval(refresh, 15_000);
+    const tickId = setInterval(() => {
       if (fetchedAt > 0) {
         const elapsed = (Date.now() - fetchedAt) / 1000;
         liveUptime = Math.floor(fetchedUptime + elapsed);
       }
     }, 1000);
-  }
+    return () => { clearInterval(pollId); clearInterval(tickId); };
+  });
 
   function formatUptime(seconds: number): string {
     if (seconds <= 0) return "0m";

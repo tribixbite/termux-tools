@@ -56,8 +56,10 @@ crewind() {
     if [[ -n "$raw_context" ]]; then
       # Clean up JSON escapes and whitespace
       raw_context=$(echo "$raw_context" | sed 's/\\n/ /g; s/\\t/ /g; s/  */ /g')
-      # Highlight the search term with red bold
-      context=$(echo "$raw_context" | sed "s/${term}/\\\\033[1;31m&\\\\033[0m/ig")
+      # Highlight the search term with red bold (escape sed metacharacters)
+      local sed_term
+      sed_term=$(printf '%s' "$term" | sed 's/[\\&/.*^$[]/\\&/g')
+      context=$(echo "$raw_context" | sed "s/${sed_term}/\\\\033[1;31m&\\\\033[0m/ig")
       # Add ellipsis indicators
       [[ ${#raw_context} -ge 200 ]] && context="...${context}..."
     fi

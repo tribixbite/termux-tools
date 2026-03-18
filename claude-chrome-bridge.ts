@@ -413,7 +413,14 @@ class CdpManager {
             if (sessionId) {
               const p = data.params as Record<string, unknown>;
               const resp = p.response as Record<string, unknown> | undefined;
-              if (!this.networkEvents.has(sessionId)) this.networkEvents.set(sessionId, []);
+              if (!this.networkEvents.has(sessionId)) {
+                // Evict oldest session if at capacity (LRU via Map insertion order)
+                if (this.networkEvents.size >= 20) {
+                  const oldestKey = this.networkEvents.keys().next().value;
+                  if (oldestKey) this.networkEvents.delete(oldestKey);
+                }
+                this.networkEvents.set(sessionId, []);
+              }
               const buf = this.networkEvents.get(sessionId)!;
               buf.push({
                 url: (resp?.url as string) ?? "",
@@ -422,7 +429,7 @@ class CdpManager {
                 type: (p.type as string) ?? "other",
                 timestamp: Date.now(),
               });
-              if (buf.length > 500) buf.shift(); // ring buffer
+              if (buf.length > 200) buf.shift(); // ring buffer (200 per session, 20 sessions max)
             }
           }
         } catch {
@@ -1891,6 +1898,16 @@ const server: BridgeServer = createBridgeServer({
 
         lastToolName = body.method;
         lastToolTime = new Date().toISOString();
+
+        // Guard against unbounded queue growth
+        const MAX_PENDING_TOOLS = 50;
+        const totalQueued = pendingToolMap.size + Array.from(busyTabs.values()).reduce((acc, arr) => acc + arr.length, 0);
+        if (totalQueued >= MAX_PENDING_TOOLS) {
+          return new Response(
+            JSON.stringify({ error: "Too many pending tool requests" }),
+            { status: 429, headers: { "Content-Type": "application/json" } },
+          );
+        }
 
         // Check if this tab is already processing a request
         const tabBusy = [...pendingToolMap.values()].some((e) => e.tabId === tabId);

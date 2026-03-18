@@ -5,6 +5,7 @@
   import SessionCard from "./SessionCard.svelte";
 
   let expandedSession: string | null = $state(null);
+  let actionError: string | null = $state(null);
 
   /** Derived from shared store — no own SSE/fetch needed */
   const status = $derived<DaemonStatus | null>(store.daemon);
@@ -27,24 +28,39 @@
 
   async function handleAction(e: Event, action: string, name: string) {
     e.stopPropagation();
-    switch (action) {
-      case "start": await startSession(name); break;
-      case "stop": await stopSession(name); break;
-      case "restart": await restartSession(name); break;
-      case "go": await goSession(name); break;
+    actionError = null;
+    try {
+      switch (action) {
+        case "start": await startSession(name); break;
+        case "stop": await stopSession(name); break;
+        case "restart": await restartSession(name); break;
+        case "go": await goSession(name); break;
+      }
+      await refreshStatus();
+    } catch (err) {
+      actionError = `${action} failed for ${name}: ${(err as Error).message}`;
     }
-    await refreshStatus();
   }
 
   async function handleOpenTab(e: Event, name: string) {
     e.stopPropagation();
-    await openTab(name);
+    try {
+      await openTab(name);
+    } catch (err) {
+      actionError = `Open tab failed for ${name}: ${(err as Error).message}`;
+    }
   }
 </script>
 
 {#if error}
   <div class="card border-[var(--accent-red)]">
     <p class="text-[var(--accent-red)] text-sm">Failed to connect: {error}</p>
+  </div>
+{/if}
+
+{#if actionError}
+  <div class="card mb-2" style="border: 1px solid var(--accent-red); padding: 0.5rem 0.75rem">
+    <p class="text-xs" style="color: var(--accent-red)">{actionError}</p>
   </div>
 {/if}
 

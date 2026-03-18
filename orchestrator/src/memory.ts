@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import type { Logger } from "./log.js";
 
 /** Memory pressure levels based on MemAvailable thresholds */
@@ -165,10 +165,12 @@ export class MemoryMonitor {
   /** Get PID of the shell inside a tmux session pane */
   getSessionPid(sessionName: string): number | null {
     try {
-      const output = execSync(
-        `tmux list-panes -t "${sessionName}" -F "#{pane_pid}" 2>/dev/null`,
-        { encoding: "utf-8", timeout: 5000 },
-      ).trim();
+      // Use spawnSync to avoid shell injection via session names
+      const result = spawnSync("tmux", ["list-panes", "-t", sessionName, "-F", "#{pane_pid}"], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      const output = (result.stdout ?? "").trim();
       const pid = parseInt(output.split("\n")[0], 10);
       return isNaN(pid) ? null : pid;
     } catch {

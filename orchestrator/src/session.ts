@@ -218,6 +218,7 @@ function isInTmux(pid: number): boolean {
       // Format: "PID (comm) state PPID ..."
       // comm can contain spaces/parens, so find the last ')' first
       const closeParen = stat.lastIndexOf(")");
+      if (closeParen < 0) return false; // Malformed /proc/PID/stat
       const afterComm = stat.slice(closeParen + 2); // skip ") "
       const fields = afterComm.split(" ");
       ppid = parseInt(fields[1], 10); // field after state

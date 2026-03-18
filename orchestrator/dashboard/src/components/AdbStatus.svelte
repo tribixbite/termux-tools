@@ -46,11 +46,13 @@
     }
   }
 
-  // Initial fetch + poll every 15s
-  if (typeof window !== "undefined") {
+  // Initial fetch + poll every 15s — cleaned up on component destroy
+  $effect(() => {
+    if (typeof window === "undefined") return;
     refresh();
-    setInterval(refresh, 15_000);
-  }
+    const id = setInterval(refresh, 15_000);
+    return () => clearInterval(id);
+  });
 
   /** Extract short label from serial (e.g. "192.168.1.100:42555" → ":42555") */
   function shortSerial(serial: string): string {
