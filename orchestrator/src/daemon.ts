@@ -1218,10 +1218,19 @@ export class Daemon {
     const activeCount = activeNames.length;
     const title = `tmx ▶ ${activeCount}/${totalRunning}`;
 
-    // Build content lines showing session names
+    // Build content lines showing session names (truncate to avoid Android notification limits)
+    const MAX_NAMES = 10;
     const parts: string[] = [];
-    if (activeNames.length > 0) parts.push(`active: ${activeNames.join(", ")}`);
-    if (idleNames.length > 0) parts.push(`idle: ${idleNames.join(", ")}`);
+    if (activeNames.length > 0) {
+      const shown = activeNames.slice(0, MAX_NAMES);
+      const extra = activeNames.length - shown.length;
+      parts.push(`active: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
+    if (idleNames.length > 0) {
+      const shown = idleNames.slice(0, MAX_NAMES);
+      const extra = idleNames.length - shown.length;
+      parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
 
     notifyWithArgs([

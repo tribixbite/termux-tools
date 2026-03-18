@@ -1361,10 +1361,13 @@ let lastToolName: string | null = null;
 let lastToolTime: string | null = null;
 
 /** Send a tool request to all connected WS clients */
-function sendToolRequest(requestId: string, requestJson: string): void {
+/** Send tool request to all connected WS clients. Returns true if sent to at least one. */
+function sendToolRequest(requestId: string, requestJson: string): boolean {
+  let sent = false;
   for (const client of wsClients) {
-    try { client.send(requestJson); } catch {}
+    try { client.send(requestJson); sent = true; } catch {}
   }
+  return sent;
 }
 
 /** Drain the next queued request for a tab after the current one completes */
@@ -1381,7 +1384,13 @@ function drainTabQueue(tabId: number): void {
     timeout: next.timeout,
     tabId: next.tabId,
   });
-  sendToolRequest(next.requestId, next.requestJson);
+  const sent = sendToolRequest(next.requestId, next.requestJson);
+  if (!sent) {
+    // All clients disconnected — resolve immediately instead of waiting for timeout
+    pendingToolMap.delete(next.requestId);
+    clearTimeout(next.timeout);
+    next.resolve({ type: "tool_response", error: "All bridge clients disconnected before dispatch" });
+  }
 }
 
 // --- Child Process Management ------------------------------------------------

@@ -57,12 +57,22 @@ export class IpcServer {
     });
   }
 
+  private static readonly MAX_IPC_BUFFER_SIZE = 1 * 1024 * 1024; // 1MB
+
   /** Handle a single client connection */
   private handleConnection(conn: net.Socket): void {
     let buffer = "";
 
     conn.on("data", (data) => {
       buffer += data.toString();
+
+      // Guard against unbounded buffer growth (e.g., malicious client sending without newlines)
+      if (buffer.length > IpcServer.MAX_IPC_BUFFER_SIZE) {
+        this.log.warn(`IPC buffer exceeded ${IpcServer.MAX_IPC_BUFFER_SIZE} bytes, dropping connection`);
+        buffer = "";
+        conn.destroy();
+        return;
+      }
 
       // Process all complete messages (delimited by newline)
       let newlineIdx: number;

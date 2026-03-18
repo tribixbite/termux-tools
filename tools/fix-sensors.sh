@@ -76,7 +76,10 @@ com.samsung.android.smartface.overlay
 
 echo "Enabling camera/sensor packages..."
 for pkg in $PACKAGES; do
-  result=$(adb shell "pm enable $pkg" 2>&1)
+  if ! result=$(adb shell "pm enable $pkg" 2>&1); then
+    echo "  ⚠ adb shell failed for $pkg"
+    continue
+  fi
   if [[ "$result" == *"new state: enabled"* ]]; then
     echo "  ✓ $pkg"
   fi

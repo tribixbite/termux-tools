@@ -9,7 +9,12 @@ exec 9>"$STATE_FILE.lock"
 flock -n 9 || exit 0
 
 # Get current MR state
-CURRENT_STATE=$(curl -s "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/merge_requests/${MR_ID}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state','unknown'))" 2>/dev/null)
+CURRENT_STATE=$(curl -s --max-time 10 "https://gitlab.com/api/v4/projects/fdroid%2Ffdroiddata/merge_requests/${MR_ID}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('state','unknown'))" 2>/dev/null)
+
+# Skip if network failed or returned unknown
+if [ -z "$CURRENT_STATE" ] || [ "$CURRENT_STATE" = "unknown" ]; then
+    exit 0
+fi
 
 # Read previous state
 PREV_STATE=""

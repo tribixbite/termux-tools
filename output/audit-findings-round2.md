@@ -37,40 +37,40 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 
 ## MEDIUM — Schedule
 
-- [ ] **M1** `orchestrator/install.sh:38,55` — Partial error handling on bun install/build
-- [ ] **M2** `tools/fix-sensors.sh:79` — No handling if `adb shell` fails
-- [ ] **M3** `tools/discwebp.sh:49` — `stat -c%s` without error handling; non-numeric comparison
-- [ ] **M4** `tools/check-fdroid-mr.sh:12` — Network failure returns "unknown" treated as valid state
-- [ ] **M5** `tools/restore-tabs.sh:100` — Unquoted `$session` in command string
-- [ ] **M6** `tools/adb-wireless-connect.sh:96-105` — Hardcoded nmap output format; silent parse failure
-- [ ] **M7** `tools/flutter-termux-setup.sh:315-325` — Symlinks created without verifying targets exist
-- [ ] **M8** `claude-chrome-bridge.ts:1364-1378` — `drainTabQueue()` race: failed `sendToolRequest()` after `queue.shift()` loses request
-- [ ] **M9** `bridge/src/cli.ts:780-805` — MCP JSON-RPC buffer splits on newlines within JSON strings
-- [ ] **M10** `claude-chrome-bridge.ts:1850-1862` — No schema validation of `body.method` against MCP_TOOLS
-- [ ] **M11** `edge-claude-ext/background.js:829-850` — `executeViaPort()` timeout not cleared before retry
-- [ ] **M12** `edge-claude-ext/background.js:801-817` — Port disconnect cleanup race with new port
-- [ ] **M13** `edge-claude-ext/popup.js:414-464` — Cascading interval refreshes on rapid tab switching
-- [ ] **M14** `dashboard/src/pages/memory.astro:22-75` — Duplicate SSE connection violating shared store design
-- [ ] **M15** `dashboard/src/lib/api.ts:120-140` — `fetchBridgeHealth()` no HTTP status validation
-- [ ] **M16** `dashboard/src/components/ProcessManager.svelte:20-30` — Unnecessary Set recreation per handleStop() call
-- [ ] **M17** `dashboard/src/components/AdbStatus.svelte:20-47` — No timeout on handleConnect(); infinite "scanning..."
-- [ ] **M18** `ipc.ts:62-78` — IPC buffer accumulation without size limit; OOM via malicious client
-- [ ] **M19** `daemon.ts:1194-1199` — Unbounded notification body for large session counts
-- [ ] **M20** `config.ts:145-165` — TOML array parsing has no depth/size limit; stack overflow risk
-- [ ] **M21** `battery.ts:99-100` — Charging status misclassified when `plugged !== "UNPLUGGED"` overrides status
+- [-] **M1** `orchestrator/install.sh:38,55` — FALSE POSITIVE: already has error handling from round 1 (M10)
+- [x] **M2** `tools/fix-sensors.sh:79` — No handling if `adb shell` fails
+- [x] **M3** `tools/discwebp.sh:49` — `stat -c%s` without error handling; non-numeric comparison
+- [x] **M4** `tools/check-fdroid-mr.sh:12` — Network failure returns "unknown" treated as valid state
+- [-] **M5** `tools/restore-tabs.sh:100` — WONTFIX: tmux enforces safe session names, no special chars possible
+- [-] **M6** `tools/adb-wireless-connect.sh:96-105` — WONTFIX: nmap greppable output format (-oG) is stable/documented
+- [-] **M7** `tools/flutter-termux-setup.sh:315-325` — FALSE POSITIVE: already fixed in round 1 (H14)
+- [x] **M8** `claude-chrome-bridge.ts:1364-1378` — `drainTabQueue()` race: failed `sendToolRequest()` after `queue.shift()` loses request
+- [-] **M9** `bridge/src/cli.ts:780-805` — FALSE POSITIVE: JSON-RPC newline-delimited protocol guarantees no literal newlines
+- [-] **M10** `claude-chrome-bridge.ts:1850-1862` — WONTFIX: bridge is a relay, extension validates methods
+- [-] **M11** `edge-claude-ext/background.js:829-850` — FALSE POSITIVE: timer cleared at line 794 when response arrives
+- [-] **M12** `edge-claude-ext/background.js:801-817` — FALSE POSITIVE: already uses port object identity (round 1 C1 fix)
+- [-] **M13** `edge-claude-ext/popup.js:414-464` — FALSE POSITIVE: already fixed in round 1 (M6)
+- [-] **M14** `dashboard/src/pages/memory.astro:22-75` — WONTFIX: separate pages, not concurrent SSE connections
+- [-] **M15** `dashboard/src/lib/api.ts:120-140` — FALSE POSITIVE: already fixed in C5 (checkedJson)
+- [-] **M16** `dashboard/src/components/ProcessManager.svelte:20-30` — WONTFIX: Set recreation cost negligible, Svelte reactivity requires new reference
+- [x] **M17** `dashboard/src/components/AdbStatus.svelte:20-47` — No timeout on handleConnect(); infinite "scanning..."
+- [x] **M18** `ipc.ts:62-78` — IPC buffer accumulation without size limit; OOM via malicious client
+- [x] **M19** `daemon.ts:1194-1199` — Unbounded notification body for large session counts
+- [-] **M20** `config.ts:145-165` — WONTFIX: config is local/user-authored, not untrusted input
+- [x] **M21** `battery.ts:99-100` — Charging status misclassified when `plugged !== "UNPLUGGED"` overrides status
 
 ## LOW — Nice to Have
 
-- [ ] **L1** `orchestrator/install.sh:67,72,82` — Errors suppressed with `2>/dev/null || true` without logging
-- [ ] **L2** `tools/adb-wireless-connect.sh:176,189` — Date format locale-dependent
-- [ ] **L3** `scripts/gen-og-animation.sh:28-29` — ImageMagick `convert` availability not checked
-- [ ] **L4** `orchestrator/watchdog.sh:17-19` — 5s daemon_alive() timeout may be too short under load
-- [ ] **L5** `claude-chrome-bridge.ts:1735-1738` — `/crop` endpoint: clamped width/height can be 0
-- [ ] **L6** `edge-claude-ext/content.js:14-20` — `refCounter` integer overflow on long-lived pages
-- [ ] **L7** `claude-chrome-bridge.ts:1714-1717` — GIF endpoint missing charset=utf-8 in Content-Type
-- [ ] **L8** `claude-chrome-bridge.ts:1800-1809` — CRX build: generic error without actual runSync() output
-- [ ] **L9** `site/src/components/CodeBlock.svelte:22-32` — Deprecated `document.execCommand("copy")` fallback
-- [ ] **L10** `dashboard/src/layouts/Layout.astro:20-45` — Squeeze on ultra-small screens (<320px)
-- [ ] **L11** `dashboard/src/components/SessionTable.svelte:78-83` — Missing aria-label on Unicode button icons
-- [ ] **L12** `daemon.ts:1397` — Battery timer initial poll not tracked for cleanup
-- [ ] **L13** `config.ts:225-234` — Health defaults for unknown session types silently ignored
+- [-] **L1** `orchestrator/install.sh:67,72,82` — WONTFIX: dashboard build is intentionally optional
+- [-] **L2** `tools/adb-wireless-connect.sh:176,189` — WONTFIX: Termux locale is predictable (POSIX)
+- [-] **L3** `scripts/gen-og-animation.sh:28-29` — WONTFIX: dev-only script, ImageMagick expected
+- [-] **L4** `orchestrator/watchdog.sh:17-19` — WONTFIX: 5s timeout adequate; busy returns true not dead
+- [-] **L5** `claude-chrome-bridge.ts:1735-1738` — WONTFIX: 0-pixel crop is edge case, Sharp rejects gracefully
+- [-] **L6** `edge-claude-ext/content.js:14-20` — WONTFIX: 2^53 counter overflows after ~285 million years
+- [-] **L7** `claude-chrome-bridge.ts:1714-1717` — WONTFIX: charset defaults to utf-8 for JSON content
+- [-] **L8** `claude-chrome-bridge.ts:1800-1809` — WONTFIX: crx3 errors printed to stderr already
+- [-] **L9** `site/src/components/CodeBlock.svelte:22-32` — WONTFIX: Clipboard API tried first, execCommand is acceptable fallback
+- [-] **L10** `dashboard/src/layouts/Layout.astro:20-45` — WONTFIX: dashboard targets tablets/phones, not sub-320px screens
+- [-] **L11** `dashboard/src/components/SessionTable.svelte:78-83` — WONTFIX: dashboard is a local tool, not public-facing
+- [-] **L12** `daemon.ts:1397` — WONTFIX: 5s one-shot timer is cleaned up naturally, not a recurring leak
+- [-] **L13** `config.ts:225-234` — WONTFIX: config validation handles this at load time

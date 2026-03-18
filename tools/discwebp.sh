@@ -46,7 +46,7 @@ while [[ $quality -ge 50 ]]; do
     echo "Output file empty at quality=$quality"
     continue
   fi
-  size=$(stat -c%s "$tmp")
+  size=$(stat -c%s "$tmp" 2>/dev/null) || { echo "stat failed on $tmp"; continue; }
   if [[ $size -le 10000000 ]]; then
     mv "$tmp" "$output"
     echo "Done: $(numfmt --to=iec $size) @ q=$quality"

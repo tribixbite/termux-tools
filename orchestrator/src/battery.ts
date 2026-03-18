@@ -96,7 +96,7 @@ export class BatteryMonitor {
         return {
           percentage: data.percentage,
           charging: data.status === "CHARGING" || data.status === "FULL" ||
-            data.plugged !== "UNPLUGGED",
+            (data.plugged !== "UNPLUGGED" && data.status !== "DISCHARGING"),
           temperature: data.temperature,
           health: data.health ?? "UNKNOWN",
         };

@@ -20,11 +20,17 @@
   async function handleConnect() {
     connecting = true;
     error = null;
+    const scanTimeout = setTimeout(() => {
+      connecting = false;
+      error = "Connection scan timed out";
+    }, 30_000);
     try {
       const result = await adbConnect();
+      clearTimeout(scanTimeout);
       if (!result.ok) error = result.message ?? "Connection failed";
       setTimeout(refresh, 2000);
     } catch {
+      clearTimeout(scanTimeout);
       error = "Connect request failed";
     } finally {
       connecting = false;
