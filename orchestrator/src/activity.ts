@@ -31,6 +31,10 @@ export class ActivityDetector {
   private log: Logger;
   /** Previous CPU tick snapshots keyed by session name */
   private snapshots = new Map<string, CpuSnapshot>();
+  /** Cached /proc tree: ppid → children with ticks. Built once per sweep, shared across sessions. */
+  private procCache: { childrenOf: Map<number, { pid: number; ticks: number }[]>; ts: number } | null = null;
+  /** Cache TTL in ms — rebuild if older than this (matches poll interval) */
+  private static readonly PROC_CACHE_TTL_MS = 10_000;
 
   constructor(log: Logger) {
     this.log = log;
@@ -157,51 +161,83 @@ export class ActivityDetector {
     return utime + stime;
   }
 
+  /** Invalidate the proc cache (call at the start of each sweep) */
+  invalidateProcCache(): void {
+    this.procCache = null;
+  }
+
+  /**
+   * Build the /proc tree once, caching ppid → children with ticks.
+   * Shared across all sessions in a single sweep — O(n) instead of O(sessions*procs).
+   */
+  private buildProcTree(): Map<number, { pid: number; ticks: number }[]> {
+    const now = Date.now();
+    if (this.procCache && now - this.procCache.ts < ActivityDetector.PROC_CACHE_TTL_MS) {
+      return this.procCache.childrenOf;
+    }
+
+    const childrenOf = new Map<number, { pid: number; ticks: number }[]>();
+
+    try {
+      const procEntries = readdirSync("/proc").filter((e) => /^\d+$/.test(e));
+
+      for (const entry of procEntries) {
+        try {
+          const pid = parseInt(entry, 10);
+          const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+          const closeParen = stat.lastIndexOf(")");
+          if (closeParen === -1) continue;
+          const fields = stat.slice(closeParen + 2).split(" ");
+          const ppid = parseInt(fields[1], 10);
+          const utime = parseInt(fields[11], 10);
+          const stime = parseInt(fields[12], 10);
+          if (isNaN(ppid) || isNaN(utime) || isNaN(stime)) continue;
+
+          const ticks = utime + stime;
+          let children = childrenOf.get(ppid);
+          if (!children) {
+            children = [];
+            childrenOf.set(ppid, children);
+          }
+          children.push({ pid, ticks });
+        } catch {
+          // Process may have exited between readdir and stat read
+        }
+      }
+    } catch {
+      // Can't read /proc
+    }
+
+    this.procCache = { childrenOf, ts: now };
+    return childrenOf;
+  }
+
   /**
    * Sum CPU ticks for a process and all its children.
-   * Reads /proc/PID/stat for the root and each child found via ppid matching.
+   * Uses the cached proc tree (built once per sweep) for O(tree_depth) lookup.
    */
   private readTreeCpuTicks(rootPid: number): number | null {
     const rootTicks = this.readCpuTicks(rootPid);
     if (rootTicks === null) return null;
 
     let total = rootTicks;
+    const childrenOf = this.buildProcTree();
 
-    // Find children by reading /proc/PID/stat for all numeric /proc entries
-    try {
-      const procEntries = readdirSync("/proc").filter((e) => /^\d+$/.test(e));
+    // Walk the tree from root → descendants
+    const stack = [rootPid];
+    const visited = new Set<number>([rootPid]);
 
-      const stack = [rootPid];
-      const visited = new Set<number>([rootPid]);
+    while (stack.length > 0) {
+      const parent = stack.pop()!;
+      const children = childrenOf.get(parent);
+      if (!children) continue;
 
-      while (stack.length > 0) {
-        const parent = stack.pop()!;
-        for (const entry of procEntries) {
-          const childPid = parseInt(entry, 10);
-          if (visited.has(childPid)) continue;
-
-          try {
-            const stat = readFileSync(`/proc/${childPid}/stat`, "utf-8");
-            const closeParen = stat.lastIndexOf(")");
-            if (closeParen === -1) continue;
-            const fields = stat.slice(closeParen + 2).split(" ");
-            const ppid = parseInt(fields[1], 10); // field 4 = ppid, index 1 after ')'
-            if (ppid === parent) {
-              visited.add(childPid);
-              stack.push(childPid);
-              const utime = parseInt(fields[11], 10);
-              const stime = parseInt(fields[12], 10);
-              if (!isNaN(utime) && !isNaN(stime)) {
-                total += utime + stime;
-              }
-            }
-          } catch {
-            // Process may have exited
-          }
-        }
+      for (const child of children) {
+        if (visited.has(child.pid)) continue;
+        visited.add(child.pid);
+        total += child.ticks;
+        stack.push(child.pid);
       }
-    } catch {
-      // Can't read /proc — return root ticks only
     }
 
     return total;

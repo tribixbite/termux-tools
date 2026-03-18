@@ -43,7 +43,7 @@ export class DashboardServer {
   private port: number;
   private staticDir: string;
   private apiHandler: ApiHandler;
-  private sseClients: SseClient[] = [];
+  private sseClients = new Set<SseClient>();
   private sseIdCounter = 0;
 
   constructor(port: number, staticDir: string, apiHandler: ApiHandler, log: Logger) {
@@ -96,7 +96,7 @@ export class DashboardServer {
     for (const client of this.sseClients) {
       client.res.end();
     }
-    this.sseClients = [];
+    this.sseClients.clear();
 
     if (this.server) {
       // Force-close all open connections so port is released immediately
@@ -110,25 +110,20 @@ export class DashboardServer {
   /** Push an SSE event to all connected clients */
   pushEvent(event: string, data: unknown): void {
     const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-    const dead: number[] = [];
 
     for (const client of this.sseClients) {
       try {
         client.res.write(payload);
       } catch {
-        dead.push(client.id);
+        // Safe to delete during Set iteration per ES spec
+        this.sseClients.delete(client);
       }
-    }
-
-    // Clean up disconnected clients
-    if (dead.length > 0) {
-      this.sseClients = this.sseClients.filter((c) => !dead.includes(c.id));
     }
   }
 
   /** Get number of connected SSE clients */
   get sseClientCount(): number {
-    return this.sseClients.length;
+    return this.sseClients.size;
   }
 
   // -- Request handling -------------------------------------------------------
@@ -181,17 +176,17 @@ export class DashboardServer {
 
     const clientId = ++this.sseIdCounter;
     const client: SseClient = { res, id: clientId };
-    this.sseClients.push(client);
+    this.sseClients.add(client);
 
-    this.log.debug(`SSE client connected (id=${clientId}, total=${this.sseClients.length})`);
+    this.log.debug(`SSE client connected (id=${clientId}, total=${this.sseClients.size})`);
 
     // Send initial ping
     res.write(`event: connected\ndata: ${JSON.stringify({ id: clientId })}\n\n`);
 
-    // Clean up on disconnect
+    // Clean up on disconnect — O(1) Set.delete vs O(n) array filter
     req.on("close", () => {
-      this.sseClients = this.sseClients.filter((c) => c.id !== clientId);
-      this.log.debug(`SSE client disconnected (id=${clientId}, remaining=${this.sseClients.length})`);
+      this.sseClients.delete(client);
+      this.log.debug(`SSE client disconnected (id=${clientId}, remaining=${this.sseClients.size})`);
     });
   }
 

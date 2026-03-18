@@ -848,9 +848,23 @@ var StateManager = class {
       if ((0, import_node_fs4.existsSync)(this.statePath)) {
         const content = (0, import_node_fs4.readFileSync)(this.statePath, "utf-8");
         const parsed = JSON.parse(content);
-        if (parsed.daemon_start && parsed.sessions) {
-          return parsed;
+        if (!parsed || typeof parsed !== "object" || !parsed.daemon_start || !parsed.sessions || typeof parsed.sessions !== "object") {
+          this.log.warn("State file has invalid shape, starting fresh");
+          return newDaemonState();
         }
+        const validSessions = {};
+        for (const [name, raw] of Object.entries(parsed.sessions)) {
+          const s = raw;
+          if (s && typeof s === "object" && typeof s.status === "string" && typeof s.name === "string") {
+            if (typeof s.restart_count !== "number") s.restart_count = 0;
+            if (typeof s.consecutive_failures !== "number") s.consecutive_failures = 0;
+            validSessions[name] = s;
+          } else {
+            this.log.warn(`Dropping malformed session state for '${name}'`);
+          }
+        }
+        parsed.sessions = validSessions;
+        return parsed;
       }
     } catch (err) {
       this.log.warn(`Failed to load state from ${this.statePath}, starting fresh`, {
@@ -1676,11 +1690,14 @@ function runHealthSweep(config, state, log, adoptedPids) {
 // src/memory.ts
 var import_node_fs8 = require("node:fs");
 var import_node_child_process5 = require("node:child_process");
-var MemoryMonitor = class {
+var MemoryMonitor = class _MemoryMonitor {
   log;
   warningMb;
   criticalMb;
   emergencyMb;
+  /** Cached ps output with TTL to avoid blocking execSync on every call */
+  psCache = null;
+  static PS_CACHE_TTL_MS = 5e3;
   constructor(log, warningMb = 1500, criticalMb = 800, emergencyMb = 500) {
     this.log = log;
     this.warningMb = warningMb;
@@ -1786,8 +1803,16 @@ var MemoryMonitor = class {
       return null;
     }
   }
-  /** Parse ps output to get all processes with pid, ppid, rss */
+  /** Invalidate ps cache (call at the start of each poll cycle) */
+  invalidatePsCache() {
+    this.psCache = null;
+  }
+  /** Parse ps output to get all processes with pid, ppid, rss (cached for 5s) */
   getAllProcesses() {
+    const now = Date.now();
+    if (this.psCache && now - this.psCache.ts < _MemoryMonitor.PS_CACHE_TTL_MS) {
+      return this.psCache.entries;
+    }
     try {
       const output = (0, import_node_child_process5.execSync)("ps -e -o pid=,ppid=,rss= 2>/dev/null", {
         encoding: "utf-8",
@@ -1804,6 +1829,7 @@ var MemoryMonitor = class {
           });
         }
       }
+      this.psCache = { entries, ts: now };
       return entries;
     } catch {
       this.log.warn("Failed to read process list via ps");
@@ -1830,10 +1856,14 @@ var MemoryMonitor = class {
 // src/activity.ts
 var import_node_fs9 = require("node:fs");
 var IDLE_THRESHOLD = 3;
-var ActivityDetector = class {
+var ActivityDetector = class _ActivityDetector {
   log;
   /** Previous CPU tick snapshots keyed by session name */
   snapshots = /* @__PURE__ */ new Map();
+  /** Cached /proc tree: ppid → children with ticks. Built once per sweep, shared across sessions. */
+  procCache = null;
+  /** Cache TTL in ms — rebuild if older than this (matches poll interval) */
+  static PROC_CACHE_TTL_MS = 1e4;
   constructor(log) {
     this.log = log;
   }
@@ -1931,43 +1961,69 @@ var ActivityDetector = class {
     if (isNaN(utime) || isNaN(stime)) return null;
     return utime + stime;
   }
+  /** Invalidate the proc cache (call at the start of each sweep) */
+  invalidateProcCache() {
+    this.procCache = null;
+  }
+  /**
+   * Build the /proc tree once, caching ppid → children with ticks.
+   * Shared across all sessions in a single sweep — O(n) instead of O(sessions*procs).
+   */
+  buildProcTree() {
+    const now = Date.now();
+    if (this.procCache && now - this.procCache.ts < _ActivityDetector.PROC_CACHE_TTL_MS) {
+      return this.procCache.childrenOf;
+    }
+    const childrenOf = /* @__PURE__ */ new Map();
+    try {
+      const procEntries = (0, import_node_fs9.readdirSync)("/proc").filter((e) => /^\d+$/.test(e));
+      for (const entry of procEntries) {
+        try {
+          const pid = parseInt(entry, 10);
+          const stat = (0, import_node_fs9.readFileSync)(`/proc/${pid}/stat`, "utf-8");
+          const closeParen = stat.lastIndexOf(")");
+          if (closeParen === -1) continue;
+          const fields = stat.slice(closeParen + 2).split(" ");
+          const ppid = parseInt(fields[1], 10);
+          const utime = parseInt(fields[11], 10);
+          const stime = parseInt(fields[12], 10);
+          if (isNaN(ppid) || isNaN(utime) || isNaN(stime)) continue;
+          const ticks = utime + stime;
+          let children = childrenOf.get(ppid);
+          if (!children) {
+            children = [];
+            childrenOf.set(ppid, children);
+          }
+          children.push({ pid, ticks });
+        } catch {
+        }
+      }
+    } catch {
+    }
+    this.procCache = { childrenOf, ts: now };
+    return childrenOf;
+  }
   /**
    * Sum CPU ticks for a process and all its children.
-   * Reads /proc/PID/stat for the root and each child found via ppid matching.
+   * Uses the cached proc tree (built once per sweep) for O(tree_depth) lookup.
    */
   readTreeCpuTicks(rootPid) {
     const rootTicks = this.readCpuTicks(rootPid);
     if (rootTicks === null) return null;
     let total = rootTicks;
-    try {
-      const procEntries = (0, import_node_fs9.readdirSync)("/proc").filter((e) => /^\d+$/.test(e));
-      const stack = [rootPid];
-      const visited = /* @__PURE__ */ new Set([rootPid]);
-      while (stack.length > 0) {
-        const parent = stack.pop();
-        for (const entry of procEntries) {
-          const childPid = parseInt(entry, 10);
-          if (visited.has(childPid)) continue;
-          try {
-            const stat = (0, import_node_fs9.readFileSync)(`/proc/${childPid}/stat`, "utf-8");
-            const closeParen = stat.lastIndexOf(")");
-            if (closeParen === -1) continue;
-            const fields = stat.slice(closeParen + 2).split(" ");
-            const ppid = parseInt(fields[1], 10);
-            if (ppid === parent) {
-              visited.add(childPid);
-              stack.push(childPid);
-              const utime = parseInt(fields[11], 10);
-              const stime = parseInt(fields[12], 10);
-              if (!isNaN(utime) && !isNaN(stime)) {
-                total += utime + stime;
-              }
-            }
-          } catch {
-          }
-        }
+    const childrenOf = this.buildProcTree();
+    const stack = [rootPid];
+    const visited = /* @__PURE__ */ new Set([rootPid]);
+    while (stack.length > 0) {
+      const parent = stack.pop();
+      const children = childrenOf.get(parent);
+      if (!children) continue;
+      for (const child of children) {
+        if (visited.has(child.pid)) continue;
+        visited.add(child.pid);
+        total += child.ticks;
+        stack.push(child.pid);
       }
-    } catch {
     }
     return total;
   }
@@ -2339,7 +2395,7 @@ var DashboardServer = class {
   port;
   staticDir;
   apiHandler;
-  sseClients = [];
+  sseClients = /* @__PURE__ */ new Set();
   sseIdCounter = 0;
   constructor(port, staticDir, apiHandler, log) {
     this.port = port;
@@ -2385,7 +2441,7 @@ var DashboardServer = class {
     for (const client of this.sseClients) {
       client.res.end();
     }
-    this.sseClients = [];
+    this.sseClients.clear();
     if (this.server) {
       this.server.closeAllConnections();
       this.server.close();
@@ -2398,21 +2454,17 @@ var DashboardServer = class {
 data: ${JSON.stringify(data)}
 
 `;
-    const dead = [];
     for (const client of this.sseClients) {
       try {
         client.res.write(payload);
       } catch {
-        dead.push(client.id);
+        this.sseClients.delete(client);
       }
-    }
-    if (dead.length > 0) {
-      this.sseClients = this.sseClients.filter((c) => !dead.includes(c.id));
     }
   }
   /** Get number of connected SSE clients */
   get sseClientCount() {
-    return this.sseClients.length;
+    return this.sseClients.size;
   }
   // -- Request handling -------------------------------------------------------
   async handleRequest(req, res) {
@@ -2452,15 +2504,15 @@ data: ${JSON.stringify(data)}
     });
     const clientId = ++this.sseIdCounter;
     const client = { res, id: clientId };
-    this.sseClients.push(client);
-    this.log.debug(`SSE client connected (id=${clientId}, total=${this.sseClients.length})`);
+    this.sseClients.add(client);
+    this.log.debug(`SSE client connected (id=${clientId}, total=${this.sseClients.size})`);
     res.write(`event: connected
 data: ${JSON.stringify({ id: clientId })}
 
 `);
     req.on("close", () => {
-      this.sseClients = this.sseClients.filter((c) => c.id !== clientId);
-      this.log.debug(`SSE client disconnected (id=${clientId}, remaining=${this.sseClients.length})`);
+      this.sseClients.delete(client);
+      this.log.debug(`SSE client disconnected (id=${clientId}, remaining=${this.sseClients.size})`);
     });
   }
   /** Handle API request */
@@ -2634,7 +2686,7 @@ function resolveAdbPath() {
   ];
   for (const p of candidates) {
     try {
-      if (require("fs").existsSync(p)) return p;
+      if ((0, import_node_fs13.existsSync)(p)) return p;
     } catch {
     }
   }
@@ -2725,6 +2777,7 @@ var Daemon = class _Daemon {
   memoryTimer = null;
   batteryTimer = null;
   adbRetryTimer = null;
+  registryFlushTimer = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   restartTimers = /* @__PURE__ */ new Set();
   /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
@@ -2805,6 +2858,9 @@ var Daemon = class _Daemon {
     this.startHealthTimer();
     this.startMemoryTimer();
     this.startBatteryTimer();
+    this.registryFlushTimer = setInterval(() => {
+      this.registry.flush();
+    }, 5 * 60 * 1e3);
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
     await new Promise((resolve4) => {
@@ -2881,6 +2937,10 @@ var Daemon = class _Daemon {
     if (this.adbRetryTimer) {
       clearInterval(this.adbRetryTimer);
       this.adbRetryTimer = null;
+    }
+    if (this.registryFlushTimer) {
+      clearInterval(this.registryFlushTimer);
+      this.registryFlushTimer = null;
     }
     for (const timer of this.restartTimers) {
       clearTimeout(timer);
@@ -3415,6 +3475,8 @@ var Daemon = class _Daemon {
   /** Poll system memory and update per-session RSS/activity */
   memoryPollAndShed() {
     trace("memory:poll");
+    this.memory.invalidatePsCache();
+    this.activity.invalidateProcCache();
     const sysMem = this.memory.getSystemMemory();
     this.state.updateSystemMemory(sysMem);
     for (const session of this.config.sessions) {
@@ -3729,14 +3791,13 @@ var Daemon = class _Daemon {
             const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs13.existsSync)(p)) ?? bridgeCandidates[0];
             const bunPath = (0, import_node_fs13.existsSync)((0, import_node_path7.join)(home, ".bun/bin/bun")) ? (0, import_node_path7.join)(home, ".bun/bin/bun") : "bun";
             const bridgeDir = (0, import_node_path7.dirname)(bridgeScript);
-            const { writeFileSync: writeFileSync5, chmodSync } = require("fs");
-            writeFileSync5(scriptPath, [
+            (0, import_node_fs13.writeFileSync)(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
               `# CFC Bridge startup script (generated by tmx daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`
             ].join("\n") + "\n");
-            chmodSync(scriptPath, 493);
+            (0, import_node_fs13.chmodSync)(scriptPath, 493);
             const amBin = resolveTermuxBin3("am");
             const svcResult = (0, import_node_child_process7.spawnSync)(amBin, [
               "startservice",

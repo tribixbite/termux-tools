@@ -51,6 +51,9 @@ export class MemoryMonitor {
   private warningMb: number;
   private criticalMb: number;
   private emergencyMb: number;
+  /** Cached ps output with TTL to avoid blocking execSync on every call */
+  private psCache: { entries: PsEntry[]; ts: number } | null = null;
+  private static readonly PS_CACHE_TTL_MS = 5_000;
 
   constructor(log: Logger, warningMb = 1500, criticalMb = 800, emergencyMb = 500) {
     this.log = log;
@@ -173,8 +176,18 @@ export class MemoryMonitor {
     }
   }
 
-  /** Parse ps output to get all processes with pid, ppid, rss */
+  /** Invalidate ps cache (call at the start of each poll cycle) */
+  invalidatePsCache(): void {
+    this.psCache = null;
+  }
+
+  /** Parse ps output to get all processes with pid, ppid, rss (cached for 5s) */
   private getAllProcesses(): PsEntry[] {
+    const now = Date.now();
+    if (this.psCache && now - this.psCache.ts < MemoryMonitor.PS_CACHE_TTL_MS) {
+      return this.psCache.entries;
+    }
+
     try {
       const output = execSync("ps -e -o pid=,ppid=,rss= 2>/dev/null", {
         encoding: "utf-8",
@@ -191,6 +204,7 @@ export class MemoryMonitor {
           });
         }
       }
+      this.psCache = { entries, ts: now };
       return entries;
     } catch {
       this.log.warn("Failed to read process list via ps");

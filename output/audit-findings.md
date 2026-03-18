@@ -17,13 +17,13 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 
 ## HIGH — Fix Soon
 
-- [ ] **H1** `activity.ts:167-195` — O(n²) /proc traversal every 15s
-- [ ] **H2** `memory.ts:179` — Blocking execSync("ps") in event loop
-- [ ] **H3** `http.ts:115-126` — SSE client cleanup race in concurrent pushEvent
-- [ ] **H4** `health.ts` + `daemon.ts` — State transitions not locked (health sweep vs IPC race)
-- [ ] **H5** `registry.ts:117` — `updateActivity()` never persists; crash loses data
-- [ ] **H6** `state.ts:214` — No validation on JSON.parse of state.json
-- [ ] **H7** `daemon.ts:81` — Unnecessary runtime `require("fs")` when already imported
+- [x] **H1** `activity.ts:167-195` — O(n²) /proc traversal every 15s
+- [x] **H2** `memory.ts:179` — Blocking execSync("ps") in event loop
+- [x] **H3** `http.ts:115-126` — SSE client cleanup race in concurrent pushEvent
+- [x] **H4** `health.ts` + `daemon.ts` — State transitions not locked (health sweep vs IPC race) — wontfix: single-threaded JS, check-then-act is safe
+- [x] **H5** `registry.ts:117` — `updateActivity()` never persists; crash loses data
+- [x] **H6** `state.ts:214` — No validation on JSON.parse of state.json
+- [x] **H7** `daemon.ts:81` — Unnecessary runtime `require("fs")` when already imported
 - [ ] **H8** `background.js:173-284` — No per-tab tool execution queue; parallel requests race
 - [ ] **H9** `background.js:762` — `msg.result` used without validation; `msg.error` ignored
 - [ ] **H10** `background.js:861-869` — `resolveTabId()` returns undefined when no tabs exist

@@ -211,11 +211,27 @@ export class StateManager {
     try {
       if (existsSync(this.statePath)) {
         const content = readFileSync(this.statePath, "utf-8");
-        const parsed = JSON.parse(content) as TmxState;
-        // Basic shape validation
-        if (parsed.daemon_start && parsed.sessions) {
-          return parsed;
+        const parsed = JSON.parse(content);
+        // Validate top-level shape
+        if (!parsed || typeof parsed !== "object" || !parsed.daemon_start || !parsed.sessions || typeof parsed.sessions !== "object") {
+          this.log.warn("State file has invalid shape, starting fresh");
+          return newDaemonState();
         }
+        // Validate each session entry — drop malformed entries instead of crashing
+        const validSessions: Record<string, SessionState> = {};
+        for (const [name, raw] of Object.entries(parsed.sessions)) {
+          const s = raw as Record<string, unknown>;
+          if (s && typeof s === "object" && typeof s.status === "string" && typeof s.name === "string") {
+            // Ensure numeric fields are actually numbers
+            if (typeof s.restart_count !== "number") s.restart_count = 0;
+            if (typeof s.consecutive_failures !== "number") s.consecutive_failures = 0;
+            validSessions[name] = s as unknown as SessionState;
+          } else {
+            this.log.warn(`Dropping malformed session state for '${name}'`);
+          }
+        }
+        parsed.sessions = validSessions;
+        return parsed as TmxState;
       }
     } catch (err) {
       this.log.warn(`Failed to load state from ${this.statePath}, starting fresh`, {
