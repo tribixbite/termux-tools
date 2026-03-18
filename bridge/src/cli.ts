@@ -205,12 +205,24 @@ case "$url" in
       echo "[\$(date +%H:%M:%S)] bridge already running" >> "$PREFIX/tmp/url-opener.log"
       exit 0
     fi
+    # Find a JS runtime that can actually execute code.
+    # bun on Termux uses a C wrapper (bun-termux) that may fail if its
+    # shim library is missing — test with a real eval, not just --version.
+    _try_runtime() {
+      "$1" -e "process.exit(0)" > /dev/null 2>&1
+    }
     RUNTIME=""
-    if [[ -x "$HOME/.bun/bin/bun" ]]; then RUNTIME="$HOME/.bun/bin/bun"
-    elif command -v bun > /dev/null 2>&1; then RUNTIME="\$(command -v bun)"
-    elif command -v node > /dev/null 2>&1; then RUNTIME="\$(command -v node)"
+    if [[ -x "$HOME/.bun/bin/bun" ]] && _try_runtime "$HOME/.bun/bin/bun"; then
+      RUNTIME="$HOME/.bun/bin/bun"
+    elif command -v bun > /dev/null 2>&1 && _try_runtime bun; then
+      RUNTIME="\$(command -v bun)"
+    elif command -v node > /dev/null 2>&1 && _try_runtime node; then
+      RUNTIME="\$(command -v node)"
     fi
-    if [[ -z "$RUNTIME" ]]; then exit 1; fi
+    if [[ -z "$RUNTIME" ]]; then
+      echo "[\$(date +%H:%M:%S)] no working JS runtime found" >> "$PREFIX/tmp/url-opener.log"
+      exit 1
+    fi
     BRIDGE_SCRIPT=""
     if [[ -f "$HOME/git/termux-tools/claude-chrome-bridge.ts" ]]; then
       BRIDGE_SCRIPT="$HOME/git/termux-tools/claude-chrome-bridge.ts"

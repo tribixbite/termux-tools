@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -33,7 +32,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url;
 var init_import_meta_shim = __esm({
   "src/import-meta-shim.js"() {
-    "use strict";
     import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "";
   }
 });
@@ -3936,7 +3934,6 @@ function createNodeServer(config) {
 var import_promises, import_node_fs, import_node_stream, cp, http, IS_BUN;
 var init_compat = __esm({
   "../compat.ts"() {
-    "use strict";
     init_import_meta_shim();
     import_promises = require("node:fs/promises");
     import_node_fs = require("node:fs");
@@ -4643,7 +4640,6 @@ function shutdown() {
 var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
-    "use strict";
     init_import_meta_shim();
     import_path = require("path");
     import_node_zlib = require("node:zlib");
@@ -6039,12 +6035,24 @@ case "$url" in
       echo "[$(date +%H:%M:%S)] bridge already running" >> "$PREFIX/tmp/url-opener.log"
       exit 0
     fi
+    # Find a JS runtime that can actually execute code.
+    # bun on Termux uses a C wrapper (bun-termux) that may fail if its
+    # shim library is missing \u2014 test with a real eval, not just --version.
+    _try_runtime() {
+      "$1" -e "process.exit(0)" > /dev/null 2>&1
+    }
     RUNTIME=""
-    if [[ -x "$HOME/.bun/bin/bun" ]]; then RUNTIME="$HOME/.bun/bin/bun"
-    elif command -v bun > /dev/null 2>&1; then RUNTIME="$(command -v bun)"
-    elif command -v node > /dev/null 2>&1; then RUNTIME="$(command -v node)"
+    if [[ -x "$HOME/.bun/bin/bun" ]] && _try_runtime "$HOME/.bun/bin/bun"; then
+      RUNTIME="$HOME/.bun/bin/bun"
+    elif command -v bun > /dev/null 2>&1 && _try_runtime bun; then
+      RUNTIME="$(command -v bun)"
+    elif command -v node > /dev/null 2>&1 && _try_runtime node; then
+      RUNTIME="$(command -v node)"
     fi
-    if [[ -z "$RUNTIME" ]]; then exit 1; fi
+    if [[ -z "$RUNTIME" ]]; then
+      echo "[$(date +%H:%M:%S)] no working JS runtime found" >> "$PREFIX/tmp/url-opener.log"
+      exit 1
+    fi
     BRIDGE_SCRIPT=""
     if [[ -f "$HOME/git/termux-tools/claude-chrome-bridge.ts" ]]; then
       BRIDGE_SCRIPT="$HOME/git/termux-tools/claude-chrome-bridge.ts"
