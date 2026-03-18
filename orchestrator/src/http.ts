@@ -221,9 +221,11 @@ export class DashboardServer {
     // Normalize path
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
 
-    // Security: resolve to absolute path and verify it's inside staticDir
+    // Security: resolve to absolute path and verify it's inside staticDir.
+    // Trailing slash on prefix prevents partial-match bypass (e.g. /dist_secrets matching /dist).
+    const safePrefix = this.staticDir.endsWith("/") ? this.staticDir : this.staticDir + "/";
     let fullPath = resolve(this.staticDir, filePath.replace(/^\//, ""));
-    if (!fullPath.startsWith(this.staticDir)) {
+    if (!fullPath.startsWith(safePrefix) && fullPath !== this.staticDir) {
       // Directory traversal attempt — serve fallback
       fullPath = join(this.staticDir, "index.html");
     }
@@ -233,7 +235,7 @@ export class DashboardServer {
       fullPath = join(fullPath, "index.html");
     } else if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
       // Try appending /index.html for clean URLs (e.g. /memory → /memory/index.html)
-      const dirIndex = join(this.staticDir, filePath, "index.html");
+      const dirIndex = join(fullPath, "index.html");
       if (existsSync(dirIndex) && statSync(dirIndex).isFile()) {
         fullPath = dirIndex;
       }

@@ -1497,15 +1497,18 @@ export class Daemon {
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
             const logPath = join(prefix, "tmp/bridge.log");
             const logFd = openSync(logPath, "a");
-            const child = spawn(runtime, [bridgeScript], {
-              detached: true,
-              stdio: ["ignore", logFd, logFd],
-            });
-            child.unref();
-            closeSync(logFd);
+            try {
+              const child = spawn(runtime, [bridgeScript], {
+                detached: true,
+                stdio: ["ignore", logFd, logFd],
+              });
+              child.unref();
 
-            this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
-            return { status: 200, data: { status: "starting", pid: child.pid } };
+              this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
+              return { status: 200, data: { status: "starting", pid: child.pid } };
+            } finally {
+              closeSync(logFd);
+            }
           }
 
           // GET /api/bridge — proxy to CFC bridge health endpoint

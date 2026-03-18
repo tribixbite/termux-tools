@@ -2509,14 +2509,15 @@ data: ${JSON.stringify({ id: clientId })}
   /** Serve static files from the dashboard dist directory */
   handleStatic(res, urlPath) {
     let filePath = urlPath === "/" ? "/index.html" : urlPath;
+    const safePrefix = this.staticDir.endsWith("/") ? this.staticDir : this.staticDir + "/";
     let fullPath = (0, import_node_path6.resolve)(this.staticDir, filePath.replace(/^\//, ""));
-    if (!fullPath.startsWith(this.staticDir)) {
+    if (!fullPath.startsWith(safePrefix) && fullPath !== this.staticDir) {
       fullPath = (0, import_node_path6.join)(this.staticDir, "index.html");
     }
     if ((0, import_node_fs12.existsSync)(fullPath) && (0, import_node_fs12.statSync)(fullPath).isDirectory()) {
       fullPath = (0, import_node_path6.join)(fullPath, "index.html");
     } else if (!(0, import_node_fs12.existsSync)(fullPath) || !(0, import_node_fs12.statSync)(fullPath).isFile()) {
-      const dirIndex = (0, import_node_path6.join)(this.staticDir, filePath, "index.html");
+      const dirIndex = (0, import_node_path6.join)(fullPath, "index.html");
       if ((0, import_node_fs12.existsSync)(dirIndex) && (0, import_node_fs12.statSync)(dirIndex).isFile()) {
         fullPath = dirIndex;
       }
@@ -3729,14 +3730,17 @@ var Daemon = class _Daemon {
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
             const logPath = (0, import_node_path7.join)(prefix, "tmp/bridge.log");
             const logFd = (0, import_node_fs13.openSync)(logPath, "a");
-            const child = (0, import_node_child_process7.spawn)(runtime, [bridgeScript], {
-              detached: true,
-              stdio: ["ignore", logFd, logFd]
-            });
-            child.unref();
-            (0, import_node_fs13.closeSync)(logFd);
-            this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
-            return { status: 200, data: { status: "starting", pid: child.pid } };
+            try {
+              const child = (0, import_node_child_process7.spawn)(runtime, [bridgeScript], {
+                detached: true,
+                stdio: ["ignore", logFd, logFd]
+              });
+              child.unref();
+              this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
+              return { status: 200, data: { status: "starting", pid: child.pid } };
+            } finally {
+              (0, import_node_fs13.closeSync)(logFd);
+            }
           }
           try {
             const controller = new AbortController();
