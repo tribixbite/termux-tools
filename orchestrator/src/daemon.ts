@@ -608,7 +608,10 @@ export class Daemon {
     // For Claude sessions, wait for readiness and optionally send "go"
     if (sessionConfig.type === "claude") {
       // Don't block the startup for readiness — handle in background
-      this.handleClaudeStartup(name, sessionConfig);
+      this.handleClaudeStartup(name, sessionConfig).catch((err) => {
+        this.log.error(`Claude startup failed for '${name}': ${(err as Error).message}`, { session: name });
+        this.state.transition(name, "failed", `Startup error: ${(err as Error).message}`);
+      });
     } else {
       // For non-Claude sessions, assume running after creation
       this.state.transition(name, "running");

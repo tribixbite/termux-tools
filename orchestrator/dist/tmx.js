@@ -2428,6 +2428,10 @@ var DashboardServer = class {
     return new Promise((resolve4, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.on("error", (err) => {
+        try {
+          this.server?.close();
+        } catch {
+        }
         this.server = null;
         reject(err);
       });
@@ -3078,7 +3082,10 @@ var Daemon = class _Daemon {
       return false;
     }
     if (sessionConfig.type === "claude") {
-      this.handleClaudeStartup(name, sessionConfig);
+      this.handleClaudeStartup(name, sessionConfig).catch((err) => {
+        this.log.error(`Claude startup failed for '${name}': ${err.message}`, { session: name });
+        this.state.transition(name, "failed", `Startup error: ${err.message}`);
+      });
     } else {
       this.state.transition(name, "running");
     }

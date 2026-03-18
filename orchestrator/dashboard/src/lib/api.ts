@@ -98,23 +98,29 @@ export class SseClient {
 
 // -- REST helpers -----------------------------------------------------------
 
+/** Parse JSON response with HTTP status validation */
+async function checkedJson<T>(res: Response): Promise<T> {
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
 /** Fetch daemon status (all sessions) */
 export async function fetchStatus(): Promise<DaemonStatus> {
   const res = await fetch("/api/status");
-  return res.json();
+  return checkedJson(res);
 }
 
 /** Fetch memory stats */
 export async function fetchMemory(): Promise<MemoryResponse> {
   const res = await fetch("/api/memory");
-  return res.json();
+  return checkedJson(res);
 }
 
 /** Fetch log entries */
 export async function fetchLogs(session?: string): Promise<LogEntry[]> {
   const url = session ? `/api/logs/${encodeURIComponent(session)}` : "/api/logs";
   const res = await fetch(url);
-  return res.json();
+  return checkedJson(res);
 }
 
 /** Fetch CFC bridge health */
@@ -127,12 +133,12 @@ export async function fetchBridgeHealth(): Promise<BridgeHealth> {
       signal: controller.signal,
     });
     clearTimeout(timeout);
-    return res.json();
+    return checkedJson(res);
   } catch {
     // Fallback to proxy endpoint
     try {
       const res = await fetch("/api/bridge");
-      return res.json();
+      return checkedJson(res);
     } catch {
       return { status: "offline", error: "Unreachable" };
     }
@@ -184,7 +190,7 @@ export interface AppInfo {
 /** Fetch list of running Android apps sorted by RSS */
 export async function fetchApps(): Promise<AppInfo[]> {
   const res = await fetch("/api/processes");
-  return res.json();
+  return checkedJson(res);
 }
 
 /** Force-stop an Android app by package name */
@@ -196,7 +202,7 @@ export async function forceStopApp(pkg: string): Promise<void> {
 export async function fetchAdbDevices(): Promise<import("./types").AdbDevice[]> {
   try {
     const res = await fetch("/api/adb");
-    const data = await res.json();
+    const data = await checkedJson<{ devices?: import("./types").AdbDevice[] }>(res);
     return data.devices ?? [];
   } catch {
     return [];
@@ -207,7 +213,7 @@ export async function fetchAdbDevices(): Promise<import("./types").AdbDevice[]> 
 export async function adbConnect(): Promise<{ ok: boolean; message?: string }> {
   try {
     const res = await fetch("/api/adb/connect", { method: "POST" });
-    return res.json();
+    return checkedJson(res);
   } catch {
     return { ok: false, message: "Request failed" };
   }
@@ -222,7 +228,7 @@ export async function adbDisconnect(): Promise<void> {
 export async function adbDisconnectDevice(serial: string): Promise<{ ok: boolean; message?: string }> {
   try {
     const res = await fetch(`/api/adb/disconnect/${encodeURIComponent(serial)}`, { method: "POST" });
-    return res.json();
+    return checkedJson(res);
   } catch {
     return { ok: false, message: "Request failed" };
   }

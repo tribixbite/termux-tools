@@ -27,6 +27,11 @@ import ProcessManager from "../components/ProcessManager.svelte";
 
   const tableEl = document.getElementById("rss-table")!;
 
+  /** Escape HTML entities to prevent XSS */
+  function esc(s: string): string {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
   async function renderTable() {
     try {
       const data = await fetchMemory();
@@ -49,9 +54,9 @@ import ProcessManager from "../components/ProcessManager.svelte";
           : s.activity === "idle" ? "var(--accent-yellow)"
           : "var(--text-muted)";
         html += `<tr style="border-top: 1px solid var(--border)">
-          <td class="py-1.5 pr-4">${s.name}</td>
-          <td class="py-1.5 pr-4" style="color: var(--text-secondary)">${s.rss_mb}MB</td>
-          <td class="py-1.5" style="color: ${actColor}">${s.activity ?? "-"}</td>
+          <td class="py-1.5 pr-4">${esc(s.name)}</td>
+          <td class="py-1.5 pr-4" style="color: var(--text-secondary)">${esc(String(s.rss_mb))}MB</td>
+          <td class="py-1.5" style="color: ${actColor}">${esc(s.activity ?? "-")}</td>
         </tr>`;
         totalRss += s.rss_mb ?? 0;
       }
@@ -64,7 +69,7 @@ import ProcessManager from "../components/ProcessManager.svelte";
 
       tableEl.innerHTML = html;
     } catch (e) {
-      tableEl.innerHTML = `<p class="text-xs" style="color: var(--accent-red)">Error: ${(e as Error).message}</p>`;
+      tableEl.innerHTML = `<p class="text-xs" style="color: var(--accent-red)">Error: ${esc((e as Error).message)}</p>`;
     }
   }
 

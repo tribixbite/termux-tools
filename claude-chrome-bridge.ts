@@ -1486,7 +1486,10 @@ function handleNativeMessage(json: string): void {
       cdpManager.evaluateJS(code, tabId).then((cdpResult) => {
         const response = JSON.stringify({ type: "tool_response", result: cdpResult });
         log("debug", `CDP→native: ${response.slice(0, 200)}`);
-        sendToNativeHost(response);
+        try { sendToNativeHost(response); } catch (e) {
+          log("warn", `sendToNativeHost failed after CDP eval: ${(e as Error).message}`);
+          for (const client of wsClients) { try { client.send(outJson); } catch {} }
+        }
       }).catch((err) => {
         // CDP failed — fall through to extension DOM evaluator
         log("warn", `CDP eval failed, forwarding to extension: ${(err as Error).message}`);
@@ -1507,12 +1510,17 @@ function handleNativeMessage(json: string): void {
       cdpManager.captureScreenshot(tabId).then((cdpResult) => {
         if (cdpResult.data) {
           // Return as MCP image content matching CFC's expected format
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: {
-              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }],
-            },
-          }));
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: {
+                content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }],
+              },
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP screenshot: ${(e as Error).message}`);
+            for (const client of wsClients) { try { client.send(outJson); } catch {} }
+          }
         } else {
           // CDP failed — forward to extension as fallback
           log("warn", `CDP screenshot failed: ${cdpResult.error}`);
@@ -1549,12 +1557,17 @@ function handleNativeMessage(json: string): void {
           const croppedRGBA = cropPixels(rgba, width, height, cropX, cropY, cropW, cropH);
           const pngBuf = encodePNG(croppedRGBA, cropW, cropH);
           const b64 = pngBuf.toString("base64");
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: {
-              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }],
-            },
-          }));
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: {
+                content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }],
+              },
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP zoom: ${(e as Error).message}`);
+            for (const client of wsClients) { try { client.send(outJson); } catch {} }
+          }
         } catch (cropErr) {
           log("warn", `CDP zoom crop failed: ${(cropErr as Error).message}`);
           for (const client of wsClients) { try { client.send(outJson); } catch {} }
@@ -1579,10 +1592,15 @@ function handleNativeMessage(json: string): void {
       log("info", `CDP: intercepting computer ${action} (tab ${tabId ?? "active"})`);
       cdpManager.dispatchComputerAction(action, (parsed.params ?? {}) as Record<string, unknown>, tabId).then((cdpResult) => {
         if (cdpResult.result) {
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: { result: cdpResult.result },
-          }));
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: { result: cdpResult.result },
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP ${action}: ${(e as Error).message}`);
+            for (const client of wsClients) { try { client.send(outJson); } catch {} }
+          }
         } else {
           // CDP failed — forward to extension as fallback
           log("warn", `CDP ${action} failed: ${cdpResult.error}`);
@@ -1601,7 +1619,12 @@ function handleNativeMessage(json: string): void {
       if (width && height) {
         log("info", `CDP: intercepting resize_window (${width}×${height})`);
         cdpManager.setDeviceMetrics(width, height, parsed.params?.tabId as number | undefined).then((r) => {
-          sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+          try {
+            sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP resize: ${(e as Error).message}`);
+            for (const client of wsClients) { try { client.send(outJson); } catch {} }
+          }
         }).catch(() => {
           for (const client of wsClients) { try { client.send(outJson); } catch {} }
         });
@@ -1617,10 +1640,15 @@ function handleNativeMessage(json: string): void {
       const cdpRequests = cdpManager.getNetworkRequests(tabId, since, typeFilter);
       if (cdpRequests.length > 0) {
         log("info", `CDP: returning ${cdpRequests.length} network requests`);
-        sendToNativeHost(JSON.stringify({
-          type: "tool_response",
-          result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" },
-        }));
+        try {
+          sendToNativeHost(JSON.stringify({
+            type: "tool_response",
+            result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" },
+          }));
+        } catch (e) {
+          log("warn", `sendToNativeHost failed for network requests: ${(e as Error).message}`);
+          // Fall through to extension's webRequest tracking
+        }
         return;
       }
       // No CDP data yet — fall through to extension's webRequest tracking
@@ -1869,7 +1897,15 @@ const server: BridgeServer = createBridgeServer({
         log("info", `HTTP /tool: ${body.method} [${requestId}] tab=${tabId} busy=${tabBusy} pending=${pendingToolMap.size}`);
 
         // Enqueue and wait — resolved by WS message handler on tool_response
+        // Guard against double-settlement: timeout + WS response can race
         const result = await new Promise<unknown>((resolve) => {
+          let settled = false;
+          const safeResolve = (val: unknown) => {
+            if (settled) return;
+            settled = true;
+            resolve(val);
+          };
+
           const timeout = setTimeout(() => {
             // Timeout: clean up from pendingToolMap or busyTabs
             if (pendingToolMap.has(requestId)) {
@@ -1884,16 +1920,16 @@ const server: BridgeServer = createBridgeServer({
                 if (queue.length === 0) busyTabs.delete(tabId);
               }
             }
-            resolve({ type: "tool_response", error: "Tool call timed out (30s)" });
+            safeResolve({ type: "tool_response", error: "Tool call timed out (30s)" });
           }, HTTP_TOOL_TIMEOUT_MS);
 
           if (tabBusy) {
             // Same tab already in-flight — queue for later
             if (!busyTabs.has(tabId)) busyTabs.set(tabId, []);
-            busyTabs.get(tabId)!.push({ requestJson: toolRequest, resolve, timeout, requestId, tabId });
+            busyTabs.get(tabId)!.push({ requestJson: toolRequest, resolve: safeResolve, timeout, requestId, tabId });
           } else {
             // Tab is free — send immediately
-            pendingToolMap.set(requestId, { resolve, timeout, tabId });
+            pendingToolMap.set(requestId, { resolve: safeResolve, timeout, tabId });
             sendToolRequest(requestId, toolRequest);
           }
         });

@@ -79,6 +79,7 @@ export class DashboardServer {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
 
       this.server.on("error", (err) => {
+        try { this.server?.close(); } catch { /* already closed */ }
         this.server = null;
         reject(err);
       });
