@@ -35,11 +35,18 @@ echo "Output: $(basename "$output")"
 
 while [[ $quality -ge 50 ]]; do
   echo "Trying quality=$quality..."
-  ffmpeg -y -i "$input" \
+  if ! ffmpeg -y -i "$input" \
     -vf "scale=w=720:h=720:force_original_aspect_ratio=decrease:flags=lanczos,fps=12,unsharp=5:5:1.2:5:5:0.6" \
     -c:v libwebp -preset picture -loop 0 -quality $quality -compression_level 4 -an \
-    "$tmp" 2>/dev/null
-  size=$(stat -c%s "$tmp" 2>/dev/null)
+    "$tmp" 2>/dev/null; then
+    echo "ffmpeg failed at quality=$quality"
+    continue
+  fi
+  if [[ ! -s "$tmp" ]]; then
+    echo "Output file empty at quality=$quality"
+    continue
+  fi
+  size=$(stat -c%s "$tmp")
   if [[ $size -le 10000000 ]]; then
     mv "$tmp" "$output"
     echo "Done: $(numfmt --to=iec $size) @ q=$quality"

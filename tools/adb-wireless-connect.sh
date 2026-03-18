@@ -43,21 +43,18 @@ load_last_connection() {
 }
 
 # Function to find and connect to ADB wireless
+# Commands that may fail use || true instead of set +e to avoid leaking to caller
 connect_adb_wireless() {
-    # Save shell's errexit state
-    case $- in *e*) was_e=1;; esac
-    set +e
-
     # Get host IP from wlan0 or use provided host
     if [ -n "$1" ]; then
         HOST="$1"
     else
         # Try to get wlan0 IP
-        HOST=$(ifconfig 2>/dev/null | awk '/wlan0/{getline; if(/inet /) print $2}')
+        HOST=$(ifconfig 2>/dev/null | awk '/wlan0/{getline; if(/inet /) print $2}' || true)
 
         # Fallback to any non-loopback interface
         if [ -z "$HOST" ]; then
-            HOST=$(ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/{print $2; exit}')
+            HOST=$(ifconfig 2>/dev/null | awk '/inet / && !/127.0.0.1/{print $2; exit}' || true)
         fi
     fi
 
@@ -65,7 +62,6 @@ connect_adb_wireless() {
         echo "❌ Could not determine device IP address"
         echo "   Please provide host IP as argument: $0 <host_ip>"
         echo "   Example: $0 192.168.1.100"
-        [ -n "$was_e" ] && set -e
         return 1
     fi
 
@@ -80,7 +76,6 @@ connect_adb_wireless() {
             if adb devices | grep -q "^$LAST_CONN[[:space:]]*device"; then
                 echo "✅ Reconnected to $LAST_CONN"
                 export ADB_DEVICE="$LAST_CONN"
-                [ -n "$was_e" ] && set -e
                 return 0
             fi
         fi
@@ -89,7 +84,7 @@ connect_adb_wireless() {
 
     # Disconnect any existing connections
     echo "   Disconnecting existing ADB connections..."
-    adb disconnect -a >/dev/null 2>&1
+    adb disconnect -a >/dev/null 2>&1 || true
 
     # Build list of ports to try (reversed order - highest first)
     PORTS="5555"
@@ -132,7 +127,7 @@ connect_adb_wireless() {
                 echo "$p"
                 return 0
             fi
-            adb disconnect "$h:$p" >/dev/null 2>&1
+            adb disconnect "$h:$p" >/dev/null 2>&1 || true
         fi
         return 1
     }
@@ -147,18 +142,17 @@ connect_adb_wireless() {
                 echo "✅ connected!"
                 export ADB_DEVICE="$HOST:$port"
                 save_state "$HOST:$port"
-                [ -n "$was_e" ] && set -e
+
                 return 0
             fi
             echo "⚠️  auth pending"
-            adb disconnect "$HOST:$port" >/dev/null 2>&1
+            adb disconnect "$HOST:$port" >/dev/null 2>&1 || true
         else
             echo "❌"
         fi
     done
 
     echo "❌ No working ADB port found on $HOST"
-    [ -n "$was_e" ] && set -e
     return 1
 }
 

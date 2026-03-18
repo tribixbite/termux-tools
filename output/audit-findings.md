@@ -24,14 +24,14 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 - [x] **H5** `registry.ts:117` — `updateActivity()` never persists; crash loses data
 - [x] **H6** `state.ts:214` — No validation on JSON.parse of state.json
 - [x] **H7** `daemon.ts:81` — Unnecessary runtime `require("fs")` when already imported
-- [ ] **H8** `background.js:173-284` — No per-tab tool execution queue; parallel requests race
-- [ ] **H9** `background.js:762` — `msg.result` used without validation; `msg.error` ignored
-- [ ] **H10** `background.js:861-869` — `resolveTabId()` returns undefined when no tabs exist
-- [ ] **H11** `content.js:84-92` — Port reconnect backoff never resets on success
-- [ ] **H12** `cli.ts:770-788` — MCP JSON-RPC buffer unbounded
-- [ ] **H13** `discwebp.sh:36-50` — ffmpeg failure → moves broken file
-- [ ] **H14** `flutter-termux-setup.sh:259-273` — Symlink replace with no rollback
-- [ ] **H15** `adb-wireless-connect.sh:47-51` — `set +e` without trap leaks to parent
+- [x] **H8** `background.js:173-284` — No per-tab tool execution queue; parallel requests race
+- [x] **H9** `background.js:762` — `msg.result` used without validation; `msg.error` ignored
+- [x] **H10** `background.js:861-869` — `resolveTabId()` returns undefined when no tabs exist
+- [x] **H11** `content.js:84-92` — Port reconnect backoff never resets on success
+- [x] **H12** `cli.ts:770-788` — MCP JSON-RPC buffer unbounded
+- [x] **H13** `discwebp.sh:36-50` — ffmpeg failure → moves broken file
+- [x] **H14** `flutter-termux-setup.sh:259-273` — Symlink replace with no rollback
+- [x] **H15** `adb-wireless-connect.sh:47-51` — `set +e` without trap leaks to parent
 
 ## MEDIUM — Schedule
 

@@ -263,8 +263,19 @@ for NDK_VER in "${NDK_VERSIONS[@]}"; do
       if $DRY_RUN; then
         dry "symlink $ndk_name -> $PREFIX/bin/$termux_name"
       else
-        mv "$target" "${target}.x86"
-        ln -sf "$PREFIX/bin/$termux_name" "$target"
+        # Verify symlink target exists before replacing
+        if [[ ! -f "$PREFIX/bin/$termux_name" ]]; then
+          warn "Missing $PREFIX/bin/$termux_name — skipping $ndk_name"
+          continue
+        fi
+        mv "$target" "${target}.bak"
+        if ! ln -sf "$PREFIX/bin/$termux_name" "$target"; then
+          # Rollback: restore backup on symlink failure
+          mv "${target}.bak" "$target"
+          warn "symlink failed for $ndk_name"
+          continue
+        fi
+        rm -f "${target}.bak"
         ((link_count++)) || true
       fi
     elif [[ -L "$target" ]]; then

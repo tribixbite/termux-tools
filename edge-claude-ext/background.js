@@ -196,6 +196,18 @@ async function handleBridgeMessage(msg) {
 
 // --- Tool Request Dispatch ---------------------------------------------------
 
+// Per-tab tool execution queue — prevents concurrent tool requests from racing
+// on the same tab's DOM state. Each request awaits the previous one's completion.
+const tabQueues = new Map(); // tabId → Promise chain
+
+function enqueueToolForTab(tabId, handler) {
+  const prev = tabQueues.get(tabId) ?? Promise.resolve();
+  // Swallow errors in chain so a failed request doesn't block subsequent ones
+  const next = prev.catch(() => {}).then(() => handler());
+  tabQueues.set(tabId, next);
+  return next; // Caller gets the actual resolution/rejection of their handler
+}
+
 async function handleToolRequest(msg) {
   const { method, params, requestId } = msg;
   stats.toolRequestsReceived++;
@@ -209,6 +221,17 @@ async function handleToolRequest(msg) {
       params: params.args || {},
     });
   }
+
+  // Queue tab-targeting tools so they execute sequentially per tab
+  const tabId = resolveTabId(params?.tabId);
+  if (tabId != null) {
+    return enqueueToolForTab(tabId, () => executeToolRequest(msg));
+  }
+  return executeToolRequest(msg);
+}
+
+async function executeToolRequest(msg) {
+  const { method, params, requestId } = msg;
 
   const startTime = Date.now();
   stats.lastToolName = method;
@@ -770,7 +793,8 @@ chrome.runtime.onConnect.addListener((port) => {
     if (pending) {
       clearTimeout(pending.timer);
       pendingPortRequests.delete(msg._reqId);
-      pending.resolve(msg.result);
+      // Provide fallback if content script sent a malformed/empty payload
+      pending.resolve(msg.result ?? { error: "Empty response from content script" });
     }
   });
 
@@ -883,7 +907,7 @@ function resolveTabId(tabId) {
   }
   const first = mcpTabGroup.keys().next();
   if (!first.done) return first.value;
-  return tabId;
+  return tabId ?? null; // explicit null instead of undefined pass-through
 }
 
 function broadcastState() {

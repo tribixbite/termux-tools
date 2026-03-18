@@ -6534,8 +6534,15 @@ async function cmdMcp() {
   }
   const decoder = new TextDecoder();
   let buffer = "";
+  const MAX_BUFFER_SIZE = 10 * 1024 * 1024;
   for await (const chunk of process.stdin) {
     buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk);
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      log2(`WARN: MCP buffer exceeded ${MAX_BUFFER_SIZE} bytes, discarding`);
+      buffer = "";
+      mcpSend(mcpError(0, -32600, "Request too large"));
+      continue;
+    }
     let idx;
     while ((idx = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, idx).trim();

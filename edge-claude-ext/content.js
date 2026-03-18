@@ -77,7 +77,12 @@ function connectPort() {
     // Extension context invalidated — stop retrying
     return;
   }
-  portReconnectAttempts = 0; // reset on successful connect
+
+  // Reset backoff after connection survives 1s without disconnecting.
+  // This handles both initial connect and reconnects after failures.
+  const connectTimer = setTimeout(() => {
+    portReconnectAttempts = 0;
+  }, 1000);
 
   port.onMessage.addListener((msg) => {
     if (!msg.action || !msg._reqId) return;
@@ -94,6 +99,7 @@ function connectPort() {
   });
 
   port.onDisconnect.addListener(() => {
+    clearTimeout(connectTimer); // connection didn't survive — don't reset backoff
     port = null;
     portReconnectAttempts++;
     // Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 60s

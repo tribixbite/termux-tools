@@ -768,9 +768,19 @@ async function cmdMcp(): Promise<void> {
   // Read newline-delimited JSON-RPC from stdin
   const decoder = new TextDecoder();
   let buffer = "";
+  const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB — prevent OOM from malformed input
 
   for await (const chunk of process.stdin) {
     buffer += typeof chunk === "string" ? chunk : decoder.decode(chunk as Uint8Array);
+
+    // Guard against unbounded buffer growth (no newline in input)
+    if (buffer.length > MAX_BUFFER_SIZE) {
+      log(`WARN: MCP buffer exceeded ${MAX_BUFFER_SIZE} bytes, discarding`);
+      buffer = "";
+      mcpSend(mcpError(0, -32600, "Request too large"));
+      continue;
+    }
+
     let idx: number;
     while ((idx = buffer.indexOf("\n")) !== -1) {
       const line = buffer.slice(0, idx).trim();
