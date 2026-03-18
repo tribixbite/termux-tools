@@ -691,8 +691,9 @@ async function handleUploadImage(params) {
 }
 
 /** GIF creator — captures PNG frames, encodes via bridge's /gif endpoint */
-const gifState = { recording: false, frames: [], tabId: null, timer: null };
+const gifState = { recording: false, frames: [], tabId: null, timer: null, maxTimer: null };
 const GIF_BRIDGE_URL = "http://127.0.0.1:18963/gif";
+const GIF_MAX_DURATION_MS = 60_000; // Hard cap: 60s max recording
 
 async function handleGifCreator(params) {
   const { action } = params;
@@ -717,11 +718,22 @@ async function handleGifCreator(params) {
         } catch {}
       }, 500);
 
+      // Hard cap: stop recording after 60s even if stop_recording is never called
+      gifState.maxTimer = setTimeout(() => {
+        if (gifState.recording) {
+          clearInterval(gifState.timer);
+          gifState.recording = false;
+          gifState.maxTimer = null;
+          addLog("warn", `GIF: max duration (${GIF_MAX_DURATION_MS / 1000}s) reached, auto-stopped`);
+        }
+      }, GIF_MAX_DURATION_MS);
+
       return { result: "Recording started (max 30s / 60 frames)" };
     }
     case "stop_recording": {
       if (!gifState.recording) return { error: "Not recording" };
       clearInterval(gifState.timer);
+      if (gifState.maxTimer) { clearTimeout(gifState.maxTimer); gifState.maxTimer = null; }
       gifState.recording = false;
       return {
         result: `Recording stopped. ${gifState.frames.length} frames captured.`,
@@ -775,8 +787,9 @@ async function handleGifCreator(params) {
 // which corrupts message channels after 2-3 calls.
 /** @type {Map<number, chrome.runtime.Port>} */
 const contentPorts = new Map();
-/** @type {Map<string, {resolve: Function, timer: number}>} */
+/** @type {Map<string, {resolve: Function, timer: number, port: chrome.runtime.Port}>} */
 const pendingPortRequests = new Map();
+const MAX_PENDING_PORT_REQUESTS = 100;
 let portReqCounter = 0;
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -827,6 +840,14 @@ function executeViaContentScript(tabId, action, params) {
 }
 
 function executeViaPort(port, tabId, action, params) {
+  // Guard against unbounded growth (e.g. tab frozen or content script dead).
+  // Reject immediately — falling back to sendMessage would just add another
+  // 30s timeout and potentially trigger content script re-injection while
+  // 100 dead requests are still leaking.
+  if (pendingPortRequests.size >= MAX_PENDING_PORT_REQUESTS) {
+    addLog("warn", `Pending port requests at limit (${MAX_PENDING_PORT_REQUESTS})`);
+    return Promise.reject(new Error("Tab unresponsive: max concurrent tool requests exceeded"));
+  }
   return new Promise((resolve, reject) => {
     const reqId = `req_${++portReqCounter}`;
     const timer = setTimeout(() => {

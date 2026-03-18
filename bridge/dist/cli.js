@@ -4321,12 +4321,15 @@ function encodeGIF(frames, delayMs) {
   return result;
 }
 function sendToolRequest(requestId, requestJson) {
+  let sent = false;
   for (const client of wsClients) {
     try {
       client.send(requestJson);
+      sent = true;
     } catch {
     }
   }
+  return sent;
 }
 function drainTabQueue(tabId) {
   const queue = busyTabs.get(tabId);
@@ -4341,7 +4344,12 @@ function drainTabQueue(tabId) {
     timeout: next.timeout,
     tabId: next.tabId
   });
-  sendToolRequest(next.requestId, next.requestJson);
+  const sent = sendToolRequest(next.requestId, next.requestJson);
+  if (!sent) {
+    pendingToolMap.delete(next.requestId);
+    clearTimeout(next.timeout);
+    next.resolve({ type: "tool_response", error: "All bridge clients disconnected before dispatch" });
+  }
 }
 function spawnNativeHost() {
   if (nativeHost) {
@@ -4395,8 +4403,8 @@ function spawnNativeHost() {
       log("error", "stderr read error:", err);
     }
   };
-  readStdout();
-  readStderr();
+  readStdout().catch((err) => log("error", "readStdout unhandled:", err));
+  readStderr().catch((err) => log("error", "readStderr unhandled:", err));
   nativeHost.exited.then((code) => {
     log("warn", `Native host exited with code ${code}`);
     nativeHost = null;
@@ -4424,7 +4432,17 @@ function handleNativeMessage(json) {
       cdpManager.evaluateJS(code, tabId).then((cdpResult) => {
         const response = JSON.stringify({ type: "tool_response", result: cdpResult });
         log("debug", `CDP\u2192native: ${response.slice(0, 200)}`);
-        sendToNativeHost(response);
+        try {
+          sendToNativeHost(response);
+        } catch (e) {
+          log("warn", `sendToNativeHost failed after CDP eval: ${e.message}`);
+          for (const client of wsClients) {
+            try {
+              client.send(outJson);
+            } catch {
+            }
+          }
+        }
       }).catch((err) => {
         log("warn", `CDP eval failed, forwarding to extension: ${err.message}`);
         for (const client of wsClients) {
@@ -4441,12 +4459,22 @@ function handleNativeMessage(json) {
       log("info", `CDP: intercepting computer screenshot (tab ${tabId ?? "active"})`);
       cdpManager.captureScreenshot(tabId).then((cdpResult) => {
         if (cdpResult.data) {
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: {
-              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }]
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: {
+                content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }]
+              }
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP screenshot: ${e.message}`);
+            for (const client of wsClients) {
+              try {
+                client.send(outJson);
+              } catch {
+              }
             }
-          }));
+          }
         } else {
           log("warn", `CDP screenshot failed: ${cdpResult.error}`);
           for (const client of wsClients) {
@@ -4494,12 +4522,22 @@ function handleNativeMessage(json) {
           const croppedRGBA = cropPixels(rgba, width, height, cropX, cropY, cropW, cropH);
           const pngBuf = encodePNG(croppedRGBA, cropW, cropH);
           const b64 = pngBuf.toString("base64");
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: {
-              content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }]
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: {
+                content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }]
+              }
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP zoom: ${e.message}`);
+            for (const client of wsClients) {
+              try {
+                client.send(outJson);
+              } catch {
+              }
             }
-          }));
+          }
         } catch (cropErr) {
           log("warn", `CDP zoom crop failed: ${cropErr.message}`);
           for (const client of wsClients) {
@@ -4537,10 +4575,20 @@ function handleNativeMessage(json) {
       log("info", `CDP: intercepting computer ${action} (tab ${tabId ?? "active"})`);
       cdpManager.dispatchComputerAction(action, parsed.params ?? {}, tabId).then((cdpResult) => {
         if (cdpResult.result) {
-          sendToNativeHost(JSON.stringify({
-            type: "tool_response",
-            result: { result: cdpResult.result }
-          }));
+          try {
+            sendToNativeHost(JSON.stringify({
+              type: "tool_response",
+              result: { result: cdpResult.result }
+            }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP ${action}: ${e.message}`);
+            for (const client of wsClients) {
+              try {
+                client.send(outJson);
+              } catch {
+              }
+            }
+          }
         } else {
           log("warn", `CDP ${action} failed: ${cdpResult.error}`);
           for (const client of wsClients) {
@@ -4566,7 +4614,17 @@ function handleNativeMessage(json) {
       if (width && height) {
         log("info", `CDP: intercepting resize_window (${width}\xD7${height})`);
         cdpManager.setDeviceMetrics(width, height, parsed.params?.tabId).then((r) => {
-          sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+          try {
+            sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+          } catch (e) {
+            log("warn", `sendToNativeHost failed after CDP resize: ${e.message}`);
+            for (const client of wsClients) {
+              try {
+                client.send(outJson);
+              } catch {
+              }
+            }
+          }
         }).catch(() => {
           for (const client of wsClients) {
             try {
@@ -4585,10 +4643,14 @@ function handleNativeMessage(json) {
       const cdpRequests = cdpManager.getNetworkRequests(tabId, since, typeFilter);
       if (cdpRequests.length > 0) {
         log("info", `CDP: returning ${cdpRequests.length} network requests`);
-        sendToNativeHost(JSON.stringify({
-          type: "tool_response",
-          result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" }
-        }));
+        try {
+          sendToNativeHost(JSON.stringify({
+            type: "tool_response",
+            result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" }
+          }));
+        } catch (e) {
+          log("warn", `sendToNativeHost failed for network requests: ${e.message}`);
+        }
         return;
       }
     }
@@ -4839,12 +4901,20 @@ var init_claude_chrome_bridge = __esm({
             this.ws = null;
             this.sessionMap.clear();
             this.tabTargetMap.clear();
+            if (this.pending.size > 0) {
+              log("warn", `CDP: rejecting ${this.pending.size} pending commands on WS close`);
+              this.pending.forEach((p) => {
+                clearTimeout(p.timer);
+                p.reject(new Error("CDP WebSocket closed"));
+              });
+              this.pending.clear();
+            }
             this.scheduleExpBackoff();
           });
           this.ws.addEventListener("message", (ev) => {
             try {
               const data = JSON.parse(String(ev.data));
-              if (data.id !== void 0) {
+              if (typeof data.id === "number") {
                 const p = this.pending.get(data.id);
                 if (p) {
                   clearTimeout(p.timer);
@@ -4858,7 +4928,13 @@ var init_claude_chrome_bridge = __esm({
                 if (sessionId) {
                   const p = data.params;
                   const resp = p.response;
-                  if (!this.networkEvents.has(sessionId)) this.networkEvents.set(sessionId, []);
+                  if (!this.networkEvents.has(sessionId)) {
+                    if (this.networkEvents.size >= 20) {
+                      const oldestKey = this.networkEvents.keys().next().value;
+                      if (oldestKey) this.networkEvents.delete(oldestKey);
+                    }
+                    this.networkEvents.set(sessionId, []);
+                  }
                   const buf = this.networkEvents.get(sessionId);
                   buf.push({
                     url: resp?.url ?? "",
@@ -4867,7 +4943,7 @@ var init_claude_chrome_bridge = __esm({
                     type: p.type ?? "other",
                     timestamp: Date.now()
                   });
-                  if (buf.length > 500) buf.shift();
+                  if (buf.length > 200) buf.shift();
                 }
               }
             } catch {
@@ -5595,9 +5671,23 @@ var init_claude_chrome_bridge = __esm({
             });
             lastToolName = body.method;
             lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
+            const MAX_PENDING_TOOLS = 50;
+            const totalQueued = pendingToolMap.size + Array.from(busyTabs.values()).reduce((acc, arr) => acc + arr.length, 0);
+            if (totalQueued >= MAX_PENDING_TOOLS) {
+              return new Response(
+                JSON.stringify({ error: "Too many pending tool requests" }),
+                { status: 429, headers: { "Content-Type": "application/json" } }
+              );
+            }
             const tabBusy = [...pendingToolMap.values()].some((e) => e.tabId === tabId);
             log("info", `HTTP /tool: ${body.method} [${requestId}] tab=${tabId} busy=${tabBusy} pending=${pendingToolMap.size}`);
             const result = await new Promise((resolve3) => {
+              let settled = false;
+              const safeResolve = (val) => {
+                if (settled) return;
+                settled = true;
+                resolve3(val);
+              };
               const timeout = setTimeout(() => {
                 if (pendingToolMap.has(requestId)) {
                   pendingToolMap.delete(requestId);
@@ -5610,13 +5700,13 @@ var init_claude_chrome_bridge = __esm({
                     if (queue.length === 0) busyTabs.delete(tabId);
                   }
                 }
-                resolve3({ type: "tool_response", error: "Tool call timed out (30s)" });
+                safeResolve({ type: "tool_response", error: "Tool call timed out (30s)" });
               }, HTTP_TOOL_TIMEOUT_MS);
               if (tabBusy) {
                 if (!busyTabs.has(tabId)) busyTabs.set(tabId, []);
-                busyTabs.get(tabId).push({ requestJson: toolRequest, resolve: resolve3, timeout, requestId, tabId });
+                busyTabs.get(tabId).push({ requestJson: toolRequest, resolve: safeResolve, timeout, requestId, tabId });
               } else {
-                pendingToolMap.set(requestId, { resolve: resolve3, timeout, tabId });
+                pendingToolMap.set(requestId, { resolve: safeResolve, timeout, tabId });
                 sendToolRequest(requestId, toolRequest);
               }
             });

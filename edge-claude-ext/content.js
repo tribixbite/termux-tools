@@ -9,14 +9,17 @@
 
 /** @type {Map<string, Element>} */
 const refMap = new Map();
+/** Reverse index: Element → ref string for O(1) lookup (WeakMap avoids memory leaks) */
+const refReverseMap = new WeakMap();
 let refCounter = 0;
 
 function getOrCreateRef(el) {
-  for (const [ref, elem] of refMap) {
-    if (elem === el) return ref;
-  }
+  // O(1) reverse lookup instead of O(n) refMap scan
+  const existing = refReverseMap.get(el);
+  if (existing && refMap.has(existing)) return existing;
   const ref = `ref_${++refCounter}`;
   refMap.set(ref, el);
+  refReverseMap.set(el, ref);
   return ref;
 }
 

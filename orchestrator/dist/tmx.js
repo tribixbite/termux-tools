@@ -34,7 +34,7 @@ var import_node_path8 = require("node:path");
 // src/ipc.ts
 var net = __toESM(require("node:net"));
 var import_node_fs = require("node:fs");
-var IpcServer = class {
+var IpcServer = class _IpcServer {
   server = null;
   socketPath;
   handler;
@@ -66,11 +66,19 @@ var IpcServer = class {
       });
     });
   }
+  static MAX_IPC_BUFFER_SIZE = 1 * 1024 * 1024;
+  // 1MB
   /** Handle a single client connection */
   handleConnection(conn) {
     let buffer = "";
     conn.on("data", (data) => {
       buffer += data.toString();
+      if (buffer.length > _IpcServer.MAX_IPC_BUFFER_SIZE) {
+        this.log.warn(`IPC buffer exceeded ${_IpcServer.MAX_IPC_BUFFER_SIZE} bytes, dropping connection`);
+        buffer = "";
+        conn.destroy();
+        return;
+      }
       let newlineIdx;
       while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
         const line = buffer.slice(0, newlineIdx).trim();
@@ -1237,6 +1245,7 @@ function isInTmux(pid) {
     try {
       const stat = (0, import_node_fs6.readFileSync)(`/proc/${current}/stat`, "utf-8");
       const closeParen = stat.lastIndexOf(")");
+      if (closeParen < 0) return false;
       const afterComm = stat.slice(closeParen + 2);
       const fields = afterComm.split(" ");
       ppid = parseInt(fields[1], 10);
@@ -1794,10 +1803,11 @@ var MemoryMonitor = class _MemoryMonitor {
   /** Get PID of the shell inside a tmux session pane */
   getSessionPid(sessionName) {
     try {
-      const output = (0, import_node_child_process5.execSync)(
-        `tmux list-panes -t "${sessionName}" -F "#{pane_pid}" 2>/dev/null`,
-        { encoding: "utf-8", timeout: 5e3 }
-      ).trim();
+      const result = (0, import_node_child_process5.spawnSync)("tmux", ["list-panes", "-t", sessionName, "-F", "#{pane_pid}"], {
+        encoding: "utf-8",
+        timeout: 5e3
+      });
+      const output = (result.stdout ?? "").trim();
       const pid = parseInt(output.split("\n")[0], 10);
       return isNaN(pid) ? null : pid;
     } catch {
@@ -2078,7 +2088,7 @@ var BatteryMonitor = class {
         const data = JSON.parse(result.stdout);
         return {
           percentage: data.percentage,
-          charging: data.status === "CHARGING" || data.status === "FULL" || data.plugged !== "UNPLUGGED",
+          charging: data.status === "CHARGING" || data.status === "FULL" || data.plugged !== "UNPLUGGED" && data.status !== "DISCHARGING",
           temperature: data.temperature,
           health: data.health ?? "UNKNOWN"
         };
@@ -2785,6 +2795,7 @@ var Daemon = class _Daemon {
   registryFlushTimer = null;
   /** Pending auto-restart timers — tracked so shutdown() can cancel them */
   restartTimers = /* @__PURE__ */ new Set();
+  autoTabsTimer = null;
   /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
   adoptedPids = /* @__PURE__ */ new Map();
   adbSerial = null;
@@ -2889,7 +2900,8 @@ var Daemon = class _Daemon {
     }
     const timedOut = await this.startAllSessions(bootDeadline);
     this.startCron();
-    setTimeout(() => {
+    this.autoTabsTimer = setTimeout(() => {
+      this.autoTabsTimer = null;
       try {
         const tabResult = this.cmdTabs();
         if (tabResult.ok) {
@@ -2943,6 +2955,10 @@ var Daemon = class _Daemon {
     if (this.registryFlushTimer) {
       clearInterval(this.registryFlushTimer);
       this.registryFlushTimer = null;
+    }
+    if (this.autoTabsTimer) {
+      clearTimeout(this.autoTabsTimer);
+      this.autoTabsTimer = null;
     }
     for (const timer of this.restartTimers) {
       clearTimeout(timer);
@@ -3547,9 +3563,18 @@ var Daemon = class _Daemon {
     }
     const activeCount = activeNames.length;
     const title = `tmx \u25B6 ${activeCount}/${totalRunning}`;
+    const MAX_NAMES = 10;
     const parts = [];
-    if (activeNames.length > 0) parts.push(`active: ${activeNames.join(", ")}`);
-    if (idleNames.length > 0) parts.push(`idle: ${idleNames.join(", ")}`);
+    if (activeNames.length > 0) {
+      const shown = activeNames.slice(0, MAX_NAMES);
+      const extra = activeNames.length - shown.length;
+      parts.push(`active: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
+    if (idleNames.length > 0) {
+      const shown = idleNames.slice(0, MAX_NAMES);
+      const extra = idleNames.length - shown.length;
+      parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
     notifyWithArgs([
       "--ongoing",

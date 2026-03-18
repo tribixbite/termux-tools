@@ -390,6 +390,16 @@ class CdpManager {
         this.ws = null;
         this.sessionMap.clear();
         this.tabTargetMap.clear();
+        // Immediately reject all in-flight CDP commands so callers don't hang
+        // waiting for individual 15s timeouts
+        if (this.pending.size > 0) {
+          log("warn", `CDP: rejecting ${this.pending.size} pending commands on WS close`);
+          this.pending.forEach((p) => {
+            clearTimeout(p.timer);
+            p.reject(new Error("CDP WebSocket closed"));
+          });
+          this.pending.clear();
+        }
         // Auto-reconnect with exponential backoff
         this.scheduleExpBackoff();
       });
@@ -397,8 +407,9 @@ class CdpManager {
       this.ws.addEventListener("message", (ev) => {
         try {
           const data = JSON.parse(String(ev.data)) as { id?: number; result?: unknown; error?: { message: string }; method?: string; params?: Record<string, unknown> };
-          if (data.id !== undefined) {
-            // Response to a pending command
+          if (typeof data.id === "number") {
+            // Response to a pending command (must be numeric — CDP events with
+            // string IDs or undefined should not match pending commands)
             const p = this.pending.get(data.id);
             if (p) {
               clearTimeout(p.timer);
@@ -1460,8 +1471,8 @@ function spawnNativeHost(): void {
     }
   };
 
-  readStdout();
-  readStderr();
+  readStdout().catch((err) => log("error", "readStdout unhandled:", err));
+  readStderr().catch((err) => log("error", "readStderr unhandled:", err));
 
   // Handle process exit
   nativeHost.exited.then((code) => {
