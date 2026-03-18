@@ -9,30 +9,53 @@
 
 LOG_DIR="$HOME/.local/share/tmx/logs"
 SOCKET="$PREFIX/tmp/tmx.sock"
+TMX="$HOME/.local/bin/tmx"
 mkdir -p "$LOG_DIR"
 
-while true; do
-  echo "[$(date)] Starting tmx boot..." >> "$LOG_DIR/watchdog.log"
+# Check if daemon is alive by testing the IPC socket with a status command.
+# Returns 0 if daemon responds, 1 otherwise.
+daemon_alive() {
+  "$TMX" status > /dev/null 2>&1
+}
 
-  # Clean up stale socket from previous daemon crash / OOM kill
-  if [ -S "$SOCKET" ]; then
-    echo "[$(date)] Removing stale socket" >> "$LOG_DIR/watchdog.log"
-    rm -f "$SOCKET" 2>/dev/null
+while true; do
+  # If daemon is already running, skip boot entirely — just attach tmux.
+  if daemon_alive; then
+    echo "[$(date)] Daemon already running, attaching tmux" >> "$LOG_DIR/watchdog.log"
+  else
+    echo "[$(date)] Starting tmx boot..." >> "$LOG_DIR/watchdog.log"
+
+    # Do NOT delete the socket here — isRunning() handles stale detection.
+    # Deleting an active socket causes duplicate daemon spawns.
+
+    "$TMX" boot
+    EXIT_CODE=$?
+
+    if [ $EXIT_CODE -ne 0 ]; then
+      echo "[$(date)] tmx boot failed (code=$EXIT_CODE), retrying in 5s..." >> "$LOG_DIR/watchdog.log"
+      sleep 5
+      continue
+    fi
+
+    echo "[$(date)] Boot succeeded" >> "$LOG_DIR/watchdog.log"
   fi
 
-  tmx boot
-  EXIT_CODE=$?
+  # Wait for tmux sessions to exist before attaching (boot is async).
+  for i in $(seq 1 15); do
+    if tmux has-session 2>/dev/null; then break; fi
+    sleep 1
+  done
 
-  if [ $EXIT_CODE -eq 0 ]; then
-    echo "[$(date)] Boot succeeded, attaching tmux client" >> "$LOG_DIR/watchdog.log"
+  if tmux has-session 2>/dev/null; then
+    echo "[$(date)] Attaching tmux client" >> "$LOG_DIR/watchdog.log"
     # Attach tmux to this terminal — makes the watchdog tab a tmux client.
     # No exec — when tmux exits (daemon shutdown/OOM), the loop continues and reboots.
     tmux attach
     echo "[$(date)] tmux exited, loop will restart daemon" >> "$LOG_DIR/watchdog.log"
-    sleep 2
-    continue
+  else
+    echo "[$(date)] No tmux sessions available, skipping attach" >> "$LOG_DIR/watchdog.log"
   fi
 
-  echo "[$(date)] tmx boot failed (code=$EXIT_CODE), restarting in 5s..." >> "$LOG_DIR/watchdog.log"
-  sleep 5
+  # Brief pause before checking again — prevents tight loop if daemon keeps crashing
+  sleep 3
 done
