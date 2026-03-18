@@ -24,6 +24,7 @@ let ws = null;
 let reconnectAttempts = 0;
 let reconnectTimer = null;
 let keepaliveTimer = null;
+let missedPongs = 0;
 let connectionState = "disconnected"; // disconnected | connecting | connected
 
 // MCP tab group tracking
@@ -93,8 +94,17 @@ function connect() {
     sendMessage({ type: "ping" });
 
     clearInterval(keepaliveTimer);
+    missedPongs = 0;
     keepaliveTimer = setInterval(() => {
       if (ws?.readyState === WebSocket.OPEN) {
+        // 2 missed pongs = bridge is unresponsive, force reconnect.
+        // Uses counter instead of Date.now() to handle Android doze/sleep gracefully.
+        if (missedPongs >= 2) {
+          addLog("warn", "Bridge unresponsive (2 missed pongs) — forcing reconnect");
+          ws.close(4000, "Pong timeout");
+          return;
+        }
+        missedPongs++;
         sendMessage({ type: "ping" });
       }
     }, KEEPALIVE_INTERVAL_MS);
@@ -155,6 +165,7 @@ async function handleBridgeMessage(msg) {
   switch (msg.type) {
     case "pong":
     case "heartbeat":
+      missedPongs = 0;
       break;
 
     case "bridge_connected":
@@ -765,13 +776,20 @@ chrome.runtime.onConnect.addListener((port) => {
 
   port.onDisconnect.addListener(() => {
     contentPorts.delete(tabId);
-    // Clean up any pending requests to prevent memory leaks and stale resolves
+    // Only clean up requests belonging to THIS port — not other tabs' requests.
+    // Uses object identity (pending.port === port) instead of tabId matching
+    // to avoid race conditions on rapid tab reloads where new port connects
+    // before old disconnect fires.
+    let cleaned = 0;
     for (const [reqId, pending] of pendingPortRequests.entries()) {
-      clearTimeout(pending.timer);
-      pending.resolve({ error: `Content port disconnected for tab ${tabId}` });
+      if (pending.port === port) {
+        clearTimeout(pending.timer);
+        pending.resolve({ error: `Content port disconnected for tab ${tabId}` });
+        pendingPortRequests.delete(reqId);
+        cleaned++;
+      }
     }
-    pendingPortRequests.clear();
-    addLog("info", `Content port disconnected for tab ${tabId}, cleared ${pendingPortRequests.size} pending requests`);
+    addLog("info", `Content port disconnected for tab ${tabId}, cleared ${cleaned} pending requests`);
   });
 });
 
@@ -794,7 +812,7 @@ function executeViaPort(port, tabId, action, params) {
       executeViaSendMessage(tabId, action, params).then(resolve).catch(reject);
     }, CONTENT_SCRIPT_TIMEOUT_MS);
 
-    pendingPortRequests.set(reqId, { resolve, timer });
+    pendingPortRequests.set(reqId, { resolve, timer, port });
 
     try {
       port.postMessage({ _reqId: reqId, action, params });
@@ -881,6 +899,9 @@ function broadcastState() {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   mcpTabGroup.delete(tabId);
+  networkRequests.delete(tabId);
+  // contentPorts cleanup is handled by port.onDisconnect, but guard here too
+  contentPorts.delete(tabId);
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {

@@ -21,7 +21,19 @@ function getOrCreateRef(el) {
 }
 
 function resolveRef(refId) {
-  return refMap.get(refId) || null;
+  const el = refMap.get(refId);
+  if (el && !el.isConnected) {
+    refMap.delete(refId);
+    return null;
+  }
+  return el || null;
+}
+
+/** Prune refs to elements no longer in the DOM (SPA navigations, removed nodes) */
+function pruneDeadRefs() {
+  for (const [ref, el] of refMap.entries()) {
+    if (!el.isConnected) refMap.delete(ref);
+  }
 }
 
 // --- Console capture ---------------------------------------------------------
@@ -105,6 +117,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function handleAction(action, params) {
+  // Prune DOM refs detached by SPA navigations before tree-building operations
+  if (action === "read_page" || action === "find" || action === "get_page_text") {
+    pruneDeadRefs();
+  }
   switch (action) {
     case "read_page":
       return readPage(params);

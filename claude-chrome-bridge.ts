@@ -1958,6 +1958,12 @@ const server: BridgeServer = createBridgeServer({
         const parsed = JSON.parse(json);
         log("debug", `WS message type: ${parsed.type}`);
 
+        // Respond to extension keepalive pings so it can detect zombie connections
+        if (parsed.type === "ping") {
+          ws.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
+
         // Cache tab URLs from tabs_context_mcp responses for CDP target mapping
         if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
           const tabs = parsed.result.result.tabs;

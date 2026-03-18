@@ -5664,6 +5664,10 @@ var init_claude_chrome_bridge = __esm({
           try {
             const parsed = JSON.parse(json);
             log("debug", `WS message type: ${parsed.type}`);
+            if (parsed.type === "ping") {
+              ws.send(JSON.stringify({ type: "pong" }));
+              return;
+            }
             if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
               const tabs = parsed.result.result.tabs;
               log("debug", `CDP: caching ${tabs.length} tab URLs from tabs_context_mcp`);
