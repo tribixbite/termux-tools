@@ -15,7 +15,7 @@ mkdir -p "$LOG_DIR"
 # Check if daemon is alive by testing the IPC socket with a status command.
 # Returns 0 if daemon responds, 1 otherwise.
 daemon_alive() {
-  "$TMX" status > /dev/null 2>&1
+  timeout 5 "$TMX" status > /dev/null 2>&1
 }
 
 while true; do

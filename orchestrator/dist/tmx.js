@@ -1902,6 +1902,12 @@ var ActivityDetector = class {
   remove(name) {
     this.snapshots.delete(name);
   }
+  /** Evict stale entries for sessions no longer in the active set */
+  pruneStale(activeNames) {
+    for (const name of this.snapshots.keys()) {
+      if (!activeNames.has(name)) this.snapshots.delete(name);
+    }
+  }
   /**
    * Read utime + stime from /proc/PID/stat.
    * Fields are space-separated; field 14 = utime, field 15 = stime (1-indexed).
@@ -2461,11 +2467,40 @@ data: ${JSON.stringify({ id: clientId })}
   async handleApi(req, res, path) {
     let body = "";
     if (req.method === "POST") {
-      body = await new Promise((resolve4) => {
-        const chunks = [];
-        req.on("data", (chunk) => chunks.push(chunk));
-        req.on("end", () => resolve4(Buffer.concat(chunks).toString()));
-      });
+      try {
+        body = await new Promise((resolve4, reject) => {
+          const chunks = [];
+          let totalLength = 0;
+          const MAX_BODY_SIZE = 1024 * 1024;
+          const timer = setTimeout(() => {
+            req.destroy();
+            reject(new Error("Request body timeout"));
+          }, 1e4);
+          req.on("data", (chunk) => {
+            totalLength += chunk.length;
+            if (totalLength > MAX_BODY_SIZE) {
+              clearTimeout(timer);
+              req.destroy();
+              reject(new Error("Payload too large"));
+            } else {
+              chunks.push(chunk);
+            }
+          });
+          req.on("end", () => {
+            clearTimeout(timer);
+            resolve4(Buffer.concat(chunks).toString());
+          });
+          req.on("error", (err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+      } catch (err) {
+        const status = err.message === "Payload too large" ? 413 : 408;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
     }
     const result = await this.apiHandler(req.method ?? "GET", path, body);
     res.writeHead(result.status, { "Content-Type": "application/json" });
@@ -3316,6 +3351,10 @@ var Daemon = class _Daemon {
   // -- Health & auto-restart --------------------------------------------------
   /** Start periodic health check timer */
   startHealthTimer() {
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthSweepAndRestart();
+    }
     const intervalMs = this.config.orchestrator.health_interval_s * 1e3;
     this.healthTimer = setInterval(() => {
       this.healthSweepAndRestart();
@@ -3324,6 +3363,8 @@ var Daemon = class _Daemon {
   /** Run health sweep and handle auto-restarts for degraded sessions */
   async healthSweepAndRestart() {
     trace("health:sweep:start");
+    const activeNames = new Set(this.config.sessions.map((s) => s.name));
+    this.activity.pruneStale(activeNames);
     this.rescanBareClaudeSessions();
     const results = runHealthSweep(this.config, this.state, this.log, this.adoptedPids);
     for (const session of this.config.sessions) {
@@ -3365,6 +3406,7 @@ var Daemon = class _Daemon {
   // -- Memory monitoring -------------------------------------------------------
   /** Start periodic memory monitoring timer (every 15s) */
   startMemoryTimer() {
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
     this.memoryTimer = setInterval(() => {
       this.memoryPollAndShed();
     }, 15e3);
@@ -3578,6 +3620,7 @@ var Daemon = class _Daemon {
       this.log.debug("Battery monitoring disabled");
       return;
     }
+    if (this.batteryTimer) clearInterval(this.batteryTimer);
     const intervalMs = this.config.battery.poll_interval_s * 1e3;
     this.batteryTimer = setInterval(() => {
       this.batteryPoll();

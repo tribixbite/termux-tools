@@ -33,14 +33,16 @@ async function main() {
 
   const outPath = join(DIST_DIR, OUT_NAME);
 
-  await crx3([EXT_DIR], {
-    keyPath: pemPath,
-    crxPath: outPath,
-  });
-
-  // Clean up temp PEM if we created one
-  if (process.env.CRX_PEM) {
-    require("fs").unlinkSync(pemPath);
+  try {
+    await crx3([EXT_DIR], {
+      keyPath: pemPath,
+      crxPath: outPath,
+    });
+  } finally {
+    // Always clean up temp PEM — even if crx3 throws, don't leave signing key on disk
+    if (process.env.CRX_PEM) {
+      try { require("fs").unlinkSync(pemPath); } catch { /* already gone */ }
+    }
   }
 
   // Also update the "latest" alias for bridge /ext/crx fallback

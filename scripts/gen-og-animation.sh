@@ -3,7 +3,9 @@
 # Shows a tmx boot sequence with sessions coming online
 set -euo pipefail
 
-OUT_DIR="${PREFIX}/tmp/og-frames"
+# Safe fallback for non-Termux environments (set -u would abort on unset PREFIX)
+PREFIX="${PREFIX:-/tmp}"
+OUT_DIR="${PREFIX}/og-frames"
 FINAL="${1:-site/public/og.webp}"
 W=1200
 H=630

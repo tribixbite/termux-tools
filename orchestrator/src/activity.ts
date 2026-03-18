@@ -121,6 +121,13 @@ export class ActivityDetector {
     this.snapshots.delete(name);
   }
 
+  /** Evict stale entries for sessions no longer in the active set */
+  pruneStale(activeNames: Set<string>): void {
+    for (const name of this.snapshots.keys()) {
+      if (!activeNames.has(name)) this.snapshots.delete(name);
+    }
+  }
+
   /**
    * Read utime + stime from /proc/PID/stat.
    * Fields are space-separated; field 14 = utime, field 15 = stime (1-indexed).

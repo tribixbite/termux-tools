@@ -8,12 +8,12 @@ Status key: [ ] pending, [~] in progress, [x] fixed, [-] wontfix
 - [x] **C2** `background.js:882-884` — `networkRequests` Map never cleaned on tab close
 - [x] **C3** `content.js:10-20` — `refMap` grows unbounded across page navigations
 - [x] **C4** `background.js:95-100` — Ping without pong validation; zombie WebSocket detection missing
-- [ ] **C5** `activity.ts:33` — `snapshots` Map never evicts dead sessions
-- [ ] **C6** `http.ts:207-210` — Request body read waits indefinitely (no timeout)
-- [ ] **C7** `daemon.ts` timers — `startXTimer()` functions don't clear existing interval before creating new
-- [ ] **C8** `gen-og-animation.sh:11` — `rm -rf` with unchecked `$PREFIX`
-- [ ] **C9** `build-crx.js:28-43` — PEM key temp file not cleaned up in try/finally
-- [ ] **C10** `watchdog.sh:23` — `daemon_alive()` has no timeout
+- [x] **C5** `activity.ts:33` — `snapshots` Map never evicts dead sessions
+- [x] **C6** `http.ts:207-210` — Request body read waits indefinitely (no timeout)
+- [x] **C7** `daemon.ts` timers — `startXTimer()` functions don't clear existing interval before creating new
+- [x] **C8** `gen-og-animation.sh:11` — `rm -rf` with unchecked `$PREFIX`
+- [x] **C9** `build-crx.js:28-43` — PEM key temp file not cleaned up in try/finally
+- [x] **C10** `watchdog.sh:23` — `daemon_alive()` has no timeout
 
 ## HIGH — Fix Soon
 

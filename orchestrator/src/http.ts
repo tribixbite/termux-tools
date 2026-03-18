@@ -201,14 +201,39 @@ export class DashboardServer {
     res: http.ServerResponse,
     path: string,
   ): Promise<void> {
-    // Read request body for POST
+    // Read request body for POST (with timeout + size limit)
     let body = "";
     if (req.method === "POST") {
-      body = await new Promise<string>((resolve) => {
-        const chunks: Buffer[] = [];
-        req.on("data", (chunk: Buffer) => chunks.push(chunk));
-        req.on("end", () => resolve(Buffer.concat(chunks).toString()));
-      });
+      try {
+        body = await new Promise<string>((resolve, reject) => {
+          const chunks: Buffer[] = [];
+          let totalLength = 0;
+          const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+
+          const timer = setTimeout(() => {
+            req.destroy();
+            reject(new Error("Request body timeout"));
+          }, 10_000);
+
+          req.on("data", (chunk: Buffer) => {
+            totalLength += chunk.length;
+            if (totalLength > MAX_BODY_SIZE) {
+              clearTimeout(timer);
+              req.destroy();
+              reject(new Error("Payload too large"));
+            } else {
+              chunks.push(chunk);
+            }
+          });
+          req.on("end", () => { clearTimeout(timer); resolve(Buffer.concat(chunks).toString()); });
+          req.on("error", (err) => { clearTimeout(timer); reject(err); });
+        });
+      } catch (err) {
+        const status = (err as Error).message === "Payload too large" ? 413 : 408;
+        res.writeHead(status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: (err as Error).message }));
+        return;
+      }
     }
 
     const result = await this.apiHandler(req.method ?? "GET", path, body);

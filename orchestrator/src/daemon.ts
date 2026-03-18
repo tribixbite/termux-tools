@@ -1028,6 +1028,10 @@ export class Daemon {
 
   /** Start periodic health check timer */
   private startHealthTimer(): void {
+    if (this.healthTimer) {
+      clearInterval(this.healthTimer);
+      this.healthSweepAndRestart(); // Prevent starvation on rapid SIGHUP reloads
+    }
     const intervalMs = this.config.orchestrator.health_interval_s * 1000;
     this.healthTimer = setInterval(() => {
       this.healthSweepAndRestart();
@@ -1037,6 +1041,11 @@ export class Daemon {
   /** Run health sweep and handle auto-restarts for degraded sessions */
   private async healthSweepAndRestart(): Promise<void> {
     trace("health:sweep:start");
+
+    // Prune stale activity snapshots for sessions no longer in config
+    const activeNames = new Set(this.config.sessions.map((s) => s.name));
+    this.activity.pruneStale(activeNames);
+
     // Re-scan for newly started bare Claude sessions
     this.rescanBareClaudeSessions();
 
@@ -1090,6 +1099,7 @@ export class Daemon {
 
   /** Start periodic memory monitoring timer (every 15s) */
   private startMemoryTimer(): void {
+    if (this.memoryTimer) clearInterval(this.memoryTimer);
     this.memoryTimer = setInterval(() => {
       this.memoryPollAndShed();
     }, 15_000);
@@ -1364,6 +1374,7 @@ export class Daemon {
       this.log.debug("Battery monitoring disabled");
       return;
     }
+    if (this.batteryTimer) clearInterval(this.batteryTimer);
     const intervalMs = this.config.battery.poll_interval_s * 1000;
     this.batteryTimer = setInterval(() => {
       this.batteryPoll();
