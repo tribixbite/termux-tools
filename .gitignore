@@ -5,3 +5,14 @@ edge-claude-ext.pem
 node_modules/
 dist/
 .env
+
+# Build artifacts & caches
+*.lock
+.astro/
+.playwright-mcp/
+
+# Temp files
+strace_log.txt
+__cmake_systeminformation/
+*.crx
+*.zip
