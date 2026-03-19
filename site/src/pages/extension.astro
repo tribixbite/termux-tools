@@ -19,7 +19,7 @@ import Footer from "../components/Footer.astro";
 
       <div class="relative mx-auto max-w-4xl text-center">
         <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
-          <span class="text-terminal-amber">ext</span> claude-code-bridge <span class="text-terminal-amber">v1.7.0</span>
+          <span class="text-terminal-amber">ext</span> claude-code-bridge <span class="text-terminal-amber">v1.9.1</span>
         </div>
 
         <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
@@ -116,11 +116,12 @@ import Footer from "../components/Footer.astro";
 <span class="text-terminal-dim">│</span>     ├── WebSocket client → <span class="text-terminal-cyan">ws://127.0.0.1:18963</span>        <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     ├── chrome.tabs API (navigate, list, create)        <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     ├── chrome.scripting (JS execution)                  <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>     ├── Persistent port messaging (reliable on Android)  <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     └── 15s heartbeat / auto-reconnect                  <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>                                                         <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>  <span class="text-terminal-bright">content.js</span> (injected per-tab)                         <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     ├── DOM interaction (click, type, scroll)            <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>     ├── Accessibility tree builder                       <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>     ├── Accessibility tree with WeakMap ref index         <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     ├── Form input with native setter + event dispatch    <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>     └── Console interceptor (log, warn, error)           <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>                                                         <span class="text-terminal-dim">│</span>
@@ -170,10 +171,11 @@ import Footer from "../components/Footer.astro";
                 { perm: "tabs", why: "List, navigate, and create browser tabs" },
                 { perm: "scripting", why: "Execute JavaScript and inject content scripts" },
                 { perm: "activeTab", why: "Access the currently active tab" },
-                { perm: "nativeMessaging", why: "Communicate with the bridge process" },
+                { perm: "webRequest", why: "Monitor network requests for CDP integration" },
+                { perm: "cookies", why: "Access cookies for authenticated page context" },
                 { perm: "<all_urls>", why: "Content script injection on any page" },
               ].map((p, i) => (
-                <tr class={i < 4 ? "border-b border-terminal-border/30" : ""}>
+                <tr class={i < 5 ? "border-b border-terminal-border/30" : ""}>
                   <td class="px-4 py-2.5 text-terminal-bright">{p.perm}</td>
                   <td class="px-4 py-2.5 text-terminal-dim">{p.why}</td>
                 </tr>

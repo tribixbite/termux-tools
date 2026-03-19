@@ -66,6 +66,31 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 |----------|---------|-------------|
 | `BRIDGE_PORT` | `18963` | WebSocket/HTTP server port |
 | `BRIDGE_URL` | `http://127.0.0.1:18963` | Bridge URL for MCP relay |
+| `BRIDGE_TOKEN` | *(empty)* | Optional shared secret for auth |
+| `BRIDGE_LOG_LEVEL` | `info` | debug, info, warn, error |
+| `CDP_PORT` | `9223` | ADB forward port for Chrome DevTools Protocol |
+
+## Changelog
+
+### 1.2.2
+
+- Fix CDP pending commands hanging on WebSocket close (reject immediately)
+- Fix unhandled rejection in native host stdout/stderr readers
+- Add `typeof data.id === "number"` guard for CDP message handler
+- Add `MAX_PENDING_PORT_REQUESTS` (100) size cap in extension
+- Add 60s max recording duration for GIF creator
+- Add WeakMap reverse index for O(1) element ref lookup in content script
+- Bump extension to v1.9.1
+
+### 1.2.1
+
+- Fix watchdog socket deletion cascade
+- Tighten path traversal check, fix FD leak
+- Validate JS runtime before launching in url-opener
+
+### 1.1.0
+
+- Initial npm release with MCP server, FIFO queue, multi-session support
 
 ## License
 

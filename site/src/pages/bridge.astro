@@ -19,7 +19,7 @@ import Footer from "../components/Footer.astro";
 
       <div class="relative mx-auto max-w-4xl text-center">
         <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
-          <span class="text-terminal-cyan">$</span> claude-chrome-android <span class="text-terminal-amber">v1.1.0</span>
+          <span class="text-terminal-cyan">$</span> claude-chrome-android <span class="text-terminal-amber">v1.2.2</span>
         </div>
 
         <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
@@ -97,7 +97,8 @@ import Footer from "../components/Footer.astro";
             <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Auto-Recovery</h3>
             <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
               Lazy-spawn native host on first connection.<br>
-              Auto-restart on crash, 15s heartbeat.
+              Auto-restart on crash, 15s heartbeat.<br>
+              CDP reconnect with exponential backoff.
             </p>
           </div>
         </div>
@@ -196,18 +197,22 @@ import Footer from "../components/Footer.astro";
           {[
             { name: "read_page", desc: "Read accessibility tree + full page text", priority: "P0" },
             { name: "navigate", desc: "Navigate a tab to a URL", priority: "P0" },
-            { name: "javascript_tool", desc: "Execute JS via chrome.scripting or content script", priority: "P0" },
+            { name: "javascript_tool", desc: "Execute JS via CDP or content script fallback", priority: "P0" },
             { name: "computer", desc: "Click, type, scroll via content script events", priority: "P1" },
             { name: "find", desc: "Find elements by text, role, or aria-label", priority: "P1" },
             { name: "form_input", desc: "Fill form fields with React/Vue compatible dispatch", priority: "P1" },
             { name: "tabs_context_mcp", desc: "List open tabs with URLs and titles", priority: "P1" },
             { name: "tabs_create_mcp", desc: "Open a new tab", priority: "P1" },
             { name: "get_page_text", desc: "Get full page text content", priority: "P1" },
+            { name: "switch_browser", desc: "Switch between Chrome, Edge, and Edge Canary", priority: "P1" },
             { name: "read_console_messages", desc: "Read intercepted console.log output", priority: "P2" },
             { name: "read_network_requests", desc: "Monitor network requests via CDP", priority: "P2" },
-            { name: "gif_creator", desc: "Record multi-step interactions as GIF", priority: "P2" },
+            { name: "gif_creator", desc: "Record multi-step interactions as GIF (60s max)", priority: "P2" },
             { name: "upload_image", desc: "Upload an image file to a page", priority: "P2" },
-            { name: "resize_window", desc: "Resize browser viewport", priority: "P2" },
+            { name: "resize_window", desc: "Resize browser viewport via CDP", priority: "P2" },
+            { name: "shortcuts_list", desc: "List available keyboard shortcuts on the page", priority: "P2" },
+            { name: "shortcuts_execute", desc: "Execute a keyboard shortcut", priority: "P2" },
+            { name: "update_plan", desc: "Update plan display in the browser", priority: "P2" },
           ].map((t) => (
             <div class="flex items-start gap-3 rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-3">
               <span class={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-[family-name:var(--font-mono)] text-[10px] font-medium ${
