@@ -3328,12 +3328,23 @@ var Daemon = class _Daemon {
   }
   /**
    * Verify the resolved ADB device is this device (not an external phone).
-   * Checks that the serial IP matches localhost or this device's local IP.
+   * When only one device is connected, it must be this device — skip IP matching.
+   * IP matching is only needed when multiple devices are online to disambiguate.
    */
   isLocalAdbDevice() {
     const serial = this.resolveAdbSerial();
     if (!serial) return false;
     if (serial.startsWith("127.0.0.1:") || serial.startsWith("localhost:")) return true;
+    try {
+      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
+        encoding: "utf-8",
+        timeout: 5e3,
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+      const onlineCount = (result.stdout ?? "").split("\n").filter((l) => l.includes("	device")).length;
+      if (onlineCount === 1) return true;
+    } catch {
+    }
     const localIp = this.getLocalIp();
     if (localIp && serial.startsWith(`${localIp}:`)) return true;
     return false;
