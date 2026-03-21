@@ -11,7 +11,7 @@
 
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, chmodSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
 import { Logger } from "./log.js";
@@ -341,13 +341,16 @@ export class Daemon {
       await this.fixAdb();
     }
 
-    // Step 2: Start sessions in dependency order (with boot timeout)
+    // Step 2: Resolve which Claude sessions to start based on recency
+    this.resolveBootSessions();
+
+    // Step 3: Start sessions in dependency order (with boot timeout)
     const timedOut = await this.startAllSessions(bootDeadline);
 
-    // Step 3: Start cron daemon if not running
+    // Step 4: Start cron daemon if not running
     this.startCron();
 
-    // Step 4: Restore Termux tabs for non-headless running sessions.
+    // Step 5: Restore Termux tabs for non-headless running sessions.
     // Uses TermuxService service_execute intent to create real Termux tabs
     // that attach to tmux sessions. Brief delay to let sessions stabilize.
     this.autoTabsTimer = setTimeout(() => {
@@ -363,7 +366,7 @@ export class Daemon {
       }
     }, 3000);
 
-    // Step 5: Mark boot complete
+    // Step 6: Mark boot complete
     this.state.setBootComplete(true);
     this.wake.evaluate("boot_end", this.state.getState().sessions);
 
@@ -1284,6 +1287,93 @@ export class Daemon {
     }
   }
 
+  /**
+   * Resolve which Claude sessions to auto-start based on recency from history.jsonl.
+   * Non-claude sessions (services/daemons) are untouched — they always start.
+   * Called during boot() after mergeRegistrySessions() but before startAllSessions().
+   */
+  private resolveBootSessions(): void {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = join(home, ".claude", "history.jsonl");
+    const recent = parseRecentProjects(historyPath, 1000);
+    const { auto_start, visible } = this.config.boot;
+
+    // Build path→config lookup for all current sessions
+    const configByPath = new Map<string, SessionConfig>();
+    for (const s of this.config.sessions) {
+      if (s.path) configByPath.set(resolve(s.path), s);
+    }
+
+    // Track which claude sessions are "recent" and their rank
+    const recentClaude: { config: SessionConfig; rank: number }[] = [];
+    let rank = 0;
+
+    for (const proj of recent) {
+      const resolvedPath = resolve(proj.path);
+      const existing = configByPath.get(resolvedPath);
+
+      if (existing) {
+        // Known session — track recency rank if it's a claude session
+        if (existing.type === "claude" && existing.enabled) {
+          recentClaude.push({ config: existing, rank: rank++ });
+        }
+      } else {
+        // Untracked project — auto-register if within visible count
+        if (rank < visible) {
+          const name = deriveName(proj.path);
+          // Skip if name conflicts with existing config
+          if (!this.config.sessions.find((s) => s.name === name)) {
+            // Add to registry for persistence across restarts
+            this.registry.add({ name, path: resolvedPath, priority: 50, auto_go: false });
+            // Add to live config
+            const newConfig: SessionConfig = {
+              name, type: "claude", path: resolvedPath, command: undefined,
+              auto_go: false, priority: 50, depends_on: [], headless: false,
+              env: {}, health: undefined, max_restarts: 3, restart_backoff_s: 5,
+              enabled: true, bare: false,
+            };
+            this.config.sessions.push(newConfig);
+            configByPath.set(resolvedPath, newConfig);
+            recentClaude.push({ config: newConfig, rank: rank++ });
+          }
+        }
+      }
+    }
+
+    // Partition claude sessions: auto-start vs visible-only vs hidden
+    const autoStartNames = new Set<string>();
+    const visibleNames = new Set<string>();
+
+    for (const { config, rank: r } of recentClaude) {
+      if (r < auto_start) {
+        autoStartNames.add(config.name);
+      } else if (r < visible) {
+        visibleNames.add(config.name);
+      }
+    }
+
+    // Disable claude sessions not in auto-start set; visible ones get dashboard play button
+    for (const s of this.config.sessions) {
+      if (s.type !== "claude") continue; // services/daemons untouched
+      if (autoStartNames.has(s.name)) continue; // will auto-start
+      if (visibleNames.has(s.name)) {
+        // Visible on dashboard but don't auto-start
+        s.enabled = false;
+        continue;
+      }
+      // Not in recent history or beyond visible limit — hide
+      if (!autoStartNames.has(s.name)) {
+        s.enabled = false;
+      }
+    }
+
+    // Re-init state entries for any newly added sessions
+    this.state.initFromConfig(this.config.sessions);
+
+    this.log.info(`Boot recency: auto-start=[${[...autoStartNames].join(",")}] ` +
+      `visible=[${[...visibleNames].join(",")}]`);
+  }
+
   /** Open command — register and start a new dynamic Claude session */
   private async cmdOpen(path: string, name?: string, autoGo = false, priority = 50): Promise<IpcResponse> {
     // Validate path
@@ -2117,11 +2207,17 @@ export class Daemon {
     };
   }
 
-  /** Start command — start one or all sessions */
+  /** Start command — start one or all sessions (re-enables boot-disabled sessions on demand) */
   private async cmdStart(name?: string): Promise<IpcResponse> {
     if (name) {
       const resolved = this.resolveName(name);
       if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+      // Re-enable if disabled by boot recency filtering (on-demand play)
+      const sessionConfig = this.config.sessions.find((s) => s.name === resolved);
+      if (sessionConfig && !sessionConfig.enabled) {
+        sessionConfig.enabled = true;
+        this.log.info(`Re-enabled session '${resolved}' for on-demand start`, { session: resolved });
+      }
       const success = await this.startSession(resolved);
       return { ok: success, data: success ? `Started '${resolved}'` : `Failed to start '${resolved}'` };
     }

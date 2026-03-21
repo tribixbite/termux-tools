@@ -11,6 +11,7 @@ import type {
   OrchestratorConfig,
   AdbConfig,
   BatteryConfig,
+  BootConfig,
   SessionConfig,
   HealthCheckConfig,
   HealthDefaults,
@@ -221,6 +222,13 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     poll_interval_s: asNumber(batRaw.poll_interval_s, "battery.poll_interval_s", 60),
   };
 
+  // Boot recency config
+  const bootRaw = (raw.boot ?? {}) as Record<string, unknown>;
+  const boot: BootConfig = {
+    auto_start: asNumber(bootRaw.auto_start, "boot.auto_start", 6),
+    visible: asNumber(bootRaw.visible, "boot.visible", 10),
+  };
+
   // Health defaults
   const hdRaw = (raw.health_defaults ?? {}) as Record<string, Record<string, unknown>>;
   const health_defaults: HealthDefaults = {};
@@ -329,7 +337,7 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     throw new Error(`Config validation failed:\n  ${errors.join("\n  ")}`);
   }
 
-  return { orchestrator, adb, battery, sessions, health_defaults };
+  return { orchestrator, adb, battery, boot, sessions, health_defaults };
 }
 
 // -- Type coercion helpers ----------------------------------------------------

@@ -439,6 +439,11 @@ function runConfig(): void {
   console.log(`  poll_every:  ${config.battery.poll_interval_s}s`);
   console.log();
 
+  console.log(`${BOLD}Boot${RESET}`);
+  console.log(`  auto_start:  ${config.boot.auto_start}`);
+  console.log(`  visible:     ${config.boot.visible}`);
+  console.log();
+
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET}`);
   printSessionTable(config.sessions.map((s) => ({
     name: s.name,

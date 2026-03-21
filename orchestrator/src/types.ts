@@ -100,6 +100,14 @@ export interface AdbConfig {
   boot_delay_s: number;
 }
 
+/** Boot recency configuration — controls which Claude sessions auto-start */
+export interface BootConfig {
+  /** Auto-start the N most recently used Claude sessions (default 6) */
+  auto_start: number;
+  /** Show up to N recent sessions on dashboard with play button (default 10) */
+  visible: number;
+}
+
 /** Battery monitoring configuration block */
 export interface BatteryConfig {
   /** Enable battery monitoring (default true) */
@@ -142,6 +150,7 @@ export interface TmxConfig {
   orchestrator: OrchestratorConfig;
   adb: AdbConfig;
   battery: BatteryConfig;
+  boot: BootConfig;
   sessions: SessionConfig[];
   health_defaults: HealthDefaults;
 }

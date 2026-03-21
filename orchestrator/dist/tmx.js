@@ -46,7 +46,7 @@ var IpcServer = class _IpcServer {
   }
   /** Start listening. Cleans up stale socket first. */
   start() {
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       if ((0, import_node_fs.existsSync)(this.socketPath)) {
         this.log.debug("Removing stale socket file");
         try {
@@ -62,7 +62,7 @@ var IpcServer = class _IpcServer {
       });
       this.server.listen(this.socketPath, () => {
         this.log.info(`IPC server listening on ${this.socketPath}`);
-        resolve4();
+        resolve5();
       });
     });
   }
@@ -158,7 +158,7 @@ var IpcClient = class {
   }
   /** Send a command to the daemon and return the response */
   send(cmd, timeoutMs = 3e4) {
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       const conn = net.createConnection(this.socketPath);
       let buffer = "";
       let resolved = false;
@@ -181,7 +181,7 @@ var IpcClient = class {
           resolved = true;
           conn.end();
           try {
-            resolve4(JSON.parse(line));
+            resolve5(JSON.parse(line));
           } catch {
             reject(new Error(`Invalid response: ${line}`));
           }
@@ -381,6 +381,11 @@ function validateConfig(raw) {
     low_threshold_pct: asNumber(batRaw.low_threshold_pct, "battery.low_threshold_pct", 10),
     poll_interval_s: asNumber(batRaw.poll_interval_s, "battery.poll_interval_s", 60)
   };
+  const bootRaw = raw.boot ?? {};
+  const boot = {
+    auto_start: asNumber(bootRaw.auto_start, "boot.auto_start", 6),
+    visible: asNumber(bootRaw.visible, "boot.visible", 10)
+  };
   const hdRaw = raw.health_defaults ?? {};
   const health_defaults = {};
   for (const type of VALID_SESSION_TYPES) {
@@ -467,7 +472,7 @@ function validateConfig(raw) {
     throw new Error(`Config validation failed:
   ${errors.join("\n  ")}`);
   }
-  return { orchestrator, adb, battery, sessions, health_defaults };
+  return { orchestrator, adb, battery, boot, sessions, health_defaults };
 }
 function asString(val, path, fallback) {
   if (val == null) return fallback;
@@ -1515,7 +1520,7 @@ function createTermuxTab(sessionName, log) {
   return true;
 }
 function sleep(ms) {
-  return new Promise((resolve4) => setTimeout(resolve4, ms));
+  return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
 
 // src/health.ts
@@ -2435,7 +2440,7 @@ var DashboardServer = class {
   }
   /** Attempt to bind the HTTP server once */
   tryListen() {
-    return new Promise((resolve4, reject) => {
+    return new Promise((resolve5, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.on("error", (err) => {
         try {
@@ -2447,7 +2452,7 @@ var DashboardServer = class {
       });
       this.server.listen(this.port, "0.0.0.0", () => {
         this.log.info(`Dashboard server listening on http://0.0.0.0:${this.port}`);
-        resolve4();
+        resolve5();
       });
     });
   }
@@ -2535,7 +2540,7 @@ data: ${JSON.stringify({ id: clientId })}
     let body = "";
     if (req.method === "POST") {
       try {
-        body = await new Promise((resolve4, reject) => {
+        body = await new Promise((resolve5, reject) => {
           const chunks = [];
           let totalLength = 0;
           const MAX_BODY_SIZE = 1024 * 1024;
@@ -2555,7 +2560,7 @@ data: ${JSON.stringify({ id: clientId })}
           });
           req.on("end", () => {
             clearTimeout(timer);
-            resolve4(Buffer.concat(chunks).toString());
+            resolve5(Buffer.concat(chunks).toString());
           });
           req.on("error", (err) => {
             clearTimeout(timer);
@@ -2671,7 +2676,7 @@ data: ${JSON.stringify({ id: clientId })}
 
 // src/daemon.ts
 function sleep2(ms) {
-  return new Promise((resolve4) => setTimeout(resolve4, ms));
+  return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
 var TRACE_PATH = (0, import_node_path7.join)(
   process.env.HOME ?? "/data/data/com.termux/files/home",
@@ -2881,8 +2886,8 @@ var Daemon = class _Daemon {
     }, 5 * 60 * 1e3);
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
-    await new Promise((resolve4) => {
-      this.shutdownResolve = resolve4;
+    await new Promise((resolve5) => {
+      this.shutdownResolve = resolve5;
     });
   }
   /** Full boot sequence: ADB fix → dependency-ordered start → cron */
@@ -2898,6 +2903,7 @@ var Daemon = class _Daemon {
       }
       await this.fixAdb();
     }
+    this.resolveBootSessions();
     const timedOut = await this.startAllSessions(bootDeadline);
     this.startCron();
     this.autoTabsTimer = setTimeout(() => {
@@ -3620,6 +3626,80 @@ var Daemon = class _Daemon {
       this.log.info(`Merged registry session '${rc.name}' (${rc.path})`, { session: rc.name });
     }
   }
+  /**
+   * Resolve which Claude sessions to auto-start based on recency from history.jsonl.
+   * Non-claude sessions (services/daemons) are untouched — they always start.
+   * Called during boot() after mergeRegistrySessions() but before startAllSessions().
+   */
+  resolveBootSessions() {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+    const recent = parseRecentProjects(historyPath, 1e3);
+    const { auto_start, visible } = this.config.boot;
+    const configByPath = /* @__PURE__ */ new Map();
+    for (const s of this.config.sessions) {
+      if (s.path) configByPath.set((0, import_node_path7.resolve)(s.path), s);
+    }
+    const recentClaude = [];
+    let rank = 0;
+    for (const proj of recent) {
+      const resolvedPath = (0, import_node_path7.resolve)(proj.path);
+      const existing = configByPath.get(resolvedPath);
+      if (existing) {
+        if (existing.type === "claude" && existing.enabled) {
+          recentClaude.push({ config: existing, rank: rank++ });
+        }
+      } else {
+        if (rank < visible) {
+          const name = deriveName(proj.path);
+          if (!this.config.sessions.find((s) => s.name === name)) {
+            this.registry.add({ name, path: resolvedPath, priority: 50, auto_go: false });
+            const newConfig = {
+              name,
+              type: "claude",
+              path: resolvedPath,
+              command: void 0,
+              auto_go: false,
+              priority: 50,
+              depends_on: [],
+              headless: false,
+              env: {},
+              health: void 0,
+              max_restarts: 3,
+              restart_backoff_s: 5,
+              enabled: true,
+              bare: false
+            };
+            this.config.sessions.push(newConfig);
+            configByPath.set(resolvedPath, newConfig);
+            recentClaude.push({ config: newConfig, rank: rank++ });
+          }
+        }
+      }
+    }
+    const autoStartNames = /* @__PURE__ */ new Set();
+    const visibleNames = /* @__PURE__ */ new Set();
+    for (const { config, rank: r } of recentClaude) {
+      if (r < auto_start) {
+        autoStartNames.add(config.name);
+      } else if (r < visible) {
+        visibleNames.add(config.name);
+      }
+    }
+    for (const s of this.config.sessions) {
+      if (s.type !== "claude") continue;
+      if (autoStartNames.has(s.name)) continue;
+      if (visibleNames.has(s.name)) {
+        s.enabled = false;
+        continue;
+      }
+      if (!autoStartNames.has(s.name)) {
+        s.enabled = false;
+      }
+    }
+    this.state.initFromConfig(this.config.sessions);
+    this.log.info(`Boot recency: auto-start=[${[...autoStartNames].join(",")}] visible=[${[...visibleNames].join(",")}]`);
+  }
   /** Open command — register and start a new dynamic Claude session */
   async cmdOpen(path, name, autoGo = false, priority = 50) {
     if (!(0, import_node_fs13.existsSync)(path)) {
@@ -4326,11 +4406,16 @@ var Daemon = class _Daemon {
       }
     };
   }
-  /** Start command — start one or all sessions */
+  /** Start command — start one or all sessions (re-enables boot-disabled sessions on demand) */
   async cmdStart(name) {
     if (name) {
       const resolved = this.resolveName(name);
       if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+      const sessionConfig = this.config.sessions.find((s) => s.name === resolved);
+      if (sessionConfig && !sessionConfig.enabled) {
+        sessionConfig.enabled = true;
+        this.log.info(`Re-enabled session '${resolved}' for on-demand start`, { session: resolved });
+      }
       const success = await this.startSession(resolved);
       return { ok: success, data: success ? `Started '${resolved}'` : `Failed to start '${resolved}'` };
     }
@@ -4874,6 +4959,10 @@ function runConfig() {
   console.log(`  low_thresh:  ${config.battery.low_threshold_pct}%`);
   console.log(`  poll_every:  ${config.battery.poll_interval_s}s`);
   console.log();
+  console.log(`${BOLD}Boot${RESET2}`);
+  console.log(`  auto_start:  ${config.boot.auto_start}`);
+  console.log(`  visible:     ${config.boot.visible}`);
+  console.log();
   console.log(`${BOLD}Sessions (${config.sessions.length})${RESET2}`);
   printSessionTable(config.sessions.map((s) => ({
     name: s.name,
@@ -5234,7 +5323,7 @@ function getConfigFlag() {
   return void 0;
 }
 function sleep3(ms) {
-  return new Promise((resolve4) => setTimeout(resolve4, ms));
+  return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
 function getFlag(args2, flag) {
   const idx = args2.indexOf(flag);
