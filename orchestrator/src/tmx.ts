@@ -570,6 +570,26 @@ async function runIpcCommand(): Promise<void> {
     process.exit(1);
   }
 
+  // If socket was cleaned (Termux crash) but daemon is alive via HTTP,
+  // ask daemon to re-create socket immediately via HTTP, then wait briefly.
+  const socketPath = client.socketPath;
+  if (!existsSync(socketPath)) {
+    console.log(`${DIM}Socket missing (Termux crash?) — requesting daemon re-create it...${RESET}`);
+    try {
+      await fetch("http://127.0.0.1:18970/api/fix-socket", { method: "POST" });
+    } catch { /* daemon will self-heal on next sweep anyway */ }
+    // Brief wait for socket file to appear
+    for (let i = 0; i < 5; i++) {
+      await sleep(500);
+      if (existsSync(socketPath)) break;
+    }
+    if (!existsSync(socketPath)) {
+      console.error(`${RED}Socket not re-created. Try: tmx shutdown && tmx boot${RESET}`);
+      process.exit(1);
+    }
+    console.log(`${GREEN}Socket re-created${RESET}`);
+  }
+
   let cmd: IpcCommand;
 
   switch (command) {

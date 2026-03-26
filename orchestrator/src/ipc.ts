@@ -145,7 +145,7 @@ export class IpcServer {
  * Used by the CLI process.
  */
 export class IpcClient {
-  private socketPath: string;
+  readonly socketPath: string;
 
   constructor(socketPath: string) {
     this.socketPath = socketPath;
@@ -153,7 +153,11 @@ export class IpcClient {
 
   /** Check if the daemon is running (socket exists and is connectable) */
   async isRunning(): Promise<boolean> {
-    if (!existsSync(this.socketPath)) return false;
+    if (!existsSync(this.socketPath)) {
+      // Socket file missing — might be tmpdir cleanup after Termux crash.
+      // Check if daemon is still alive via HTTP dashboard before declaring dead.
+      return this.checkHttpFallback();
+    }
     try {
       // Use a short 3s timeout — if daemon is alive it responds instantly
       const resp = await this.send({ cmd: "status" }, 3_000);
@@ -170,6 +174,25 @@ export class IpcClient {
       try {
         unlinkSync(this.socketPath);
       } catch { /* already gone or permission issue — either way, not running */ }
+      return false;
+    }
+  }
+
+  /**
+   * HTTP fallback check — when socket is missing, probe the dashboard port.
+   * This catches the case where Termux crashed (cleaning $PREFIX/tmp/) but the
+   * daemon process survived. The daemon's health sweep will re-create the socket.
+   */
+  private async checkHttpFallback(): Promise<boolean> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      const resp = await fetch("http://127.0.0.1:18970/api/status", {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      return resp.ok;
+    } catch {
       return false;
     }
   }

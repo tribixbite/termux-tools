@@ -1077,9 +1077,33 @@ export class Daemon {
     }, intervalMs);
   }
 
+  /** Re-create IPC socket if it was removed (e.g. Termux crash cleans $PREFIX/tmp) */
+  private async ensureSocket(): Promise<void> {
+    const socketPath = this.config.orchestrator.socket;
+    if (!existsSync(socketPath)) {
+      this.log.warn("IPC socket missing (tmpdir cleaned?) — recreating");
+      this.ipc.stop(); // clean up old server state
+      // Re-create the IPC server with the same handler
+      this.ipc = new IpcServer(
+        socketPath,
+        (cmd) => this.handleIpcCommand(cmd),
+        this.log,
+      );
+      try {
+        await this.ipc.start();
+        this.log.info("IPC socket re-created successfully");
+      } catch (err) {
+        this.log.error(`Failed to re-create IPC socket: ${err}`);
+      }
+    }
+  }
+
   /** Run health sweep and handle auto-restarts for degraded sessions */
   private async healthSweepAndRestart(): Promise<void> {
     trace("health:sweep:start");
+
+    // Self-heal: re-create IPC socket if tmpdir was cleaned
+    await this.ensureSocket();
 
     // Prune stale activity snapshots for sessions no longer in config
     const activeNames = new Set(this.config.sessions.map((s) => s.name));
@@ -1911,6 +1935,12 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
           resp = await this.cmdClose(name);
+          break;
+        case "fix-socket":
+          // CLI hits this when socket is missing but HTTP is alive
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          await this.ensureSocket();
+          resp = { ok: true };
           break;
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };

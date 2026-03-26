@@ -140,7 +140,9 @@ var IpcClient = class {
   }
   /** Check if the daemon is running (socket exists and is connectable) */
   async isRunning() {
-    if (!(0, import_node_fs.existsSync)(this.socketPath)) return false;
+    if (!(0, import_node_fs.existsSync)(this.socketPath)) {
+      return this.checkHttpFallback();
+    }
     try {
       const resp = await this.send({ cmd: "status" }, 3e3);
       return resp.ok;
@@ -153,6 +155,24 @@ var IpcClient = class {
         (0, import_node_fs.unlinkSync)(this.socketPath);
       } catch {
       }
+      return false;
+    }
+  }
+  /**
+   * HTTP fallback check — when socket is missing, probe the dashboard port.
+   * This catches the case where Termux crashed (cleaning $PREFIX/tmp/) but the
+   * daemon process survived. The daemon's health sweep will re-create the socket.
+   */
+  async checkHttpFallback() {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2e3);
+      const resp = await fetch("http://127.0.0.1:18970/api/status", {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+      return resp.ok;
+    } catch {
       return false;
     }
   }
@@ -1364,7 +1384,11 @@ function createSession(config, log) {
   tmux("set-option", "-g", "set-titles-string", "#S");
   switch (type) {
     case "claude":
-      sendKeys(name, "cc", true);
+      if (config.session_id) {
+        sendKeys(name, `claude --resume ${config.session_id} --dangerously-skip-permissions`, true);
+      } else {
+        sendKeys(name, "cc", true);
+      }
       break;
     case "daemon":
       if (command2) {
@@ -2251,10 +2275,19 @@ var Registry = class {
   find(name) {
     return this.data.sessions.find((e) => e.name === name);
   }
-  /** Find an entry by path */
+  /** Find first entry by path */
   findByPath(path) {
     const abs = (0, import_node_path5.resolve)(path);
     return this.data.sessions.find((e) => e.path === abs);
+  }
+  /** Find all entries sharing a path (multi-instance) */
+  findAllByPath(path) {
+    const abs = (0, import_node_path5.resolve)(path);
+    return this.data.sessions.filter((e) => e.path === abs);
+  }
+  /** Find entry by Claude session ID */
+  findBySessionId(sessionId) {
+    return this.data.sessions.find((e) => e.session_id === sessionId);
   }
   /** Add a new entry. Returns the entry, or null if name conflict. */
   add(entry) {
@@ -2317,7 +2350,8 @@ var Registry = class {
       max_restarts: 3,
       restart_backoff_s: 5,
       enabled: true,
-      bare: false
+      bare: false,
+      session_id: e.session_id
     }));
   }
   // -- Persistence ------------------------------------------------------------
@@ -2387,6 +2421,72 @@ function deriveName(path) {
 }
 function isValidName(name) {
   return NAME_PATTERN2.test(name);
+}
+function findNamedSessions(historyPath, maxAgeDays = 7) {
+  if (!(0, import_node_fs11.existsSync)(historyPath)) return [];
+  try {
+    const content = (0, import_node_fs11.readFileSync)(historyPath, "utf-8");
+    const lines = content.trim().split("\n");
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1e3;
+    const recentById = /* @__PURE__ */ new Map();
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line);
+        if (!entry.project || !entry.timestamp || !entry.sessionId) continue;
+        if (entry.timestamp < cutoff) continue;
+        const existing = recentById.get(entry.sessionId);
+        if (!existing || entry.timestamp > existing.timestamp) {
+          recentById.set(entry.sessionId, { path: entry.project, timestamp: entry.timestamp });
+        }
+      } catch {
+      }
+    }
+    const claudeDir = (0, import_node_path5.dirname)(historyPath);
+    const projectsDir = (0, import_node_path5.join)(claudeDir, "projects");
+    const results = [];
+    for (const [sessionId, info] of recentById) {
+      const projectDirName = info.path.replace(/[^a-zA-Z0-9]/g, "-");
+      const sessionJsonl = (0, import_node_path5.join)(projectsDir, projectDirName, `${sessionId}.jsonl`);
+      if (!(0, import_node_fs11.existsSync)(sessionJsonl)) continue;
+      try {
+        const sessionContent = (0, import_node_fs11.readFileSync)(sessionJsonl, "utf-8");
+        let customTitle = null;
+        for (const sLine of sessionContent.split("\n")) {
+          if (!sLine.includes("custom-title")) continue;
+          try {
+            const entry = JSON.parse(sLine);
+            if (entry.type === "custom-title" && entry.customTitle) {
+              customTitle = entry.customTitle;
+            }
+          } catch {
+          }
+        }
+        if (customTitle && customTitle.length < 30 && !customTitle.includes("(Fork)")) {
+          results.push({
+            title: customTitle,
+            session_id: sessionId,
+            path: info.path,
+            last_active: new Date(info.timestamp).toISOString()
+          });
+        }
+      } catch {
+      }
+    }
+    results.sort((a, b) => b.last_active.localeCompare(a.last_active));
+    return results;
+  } catch {
+    return [];
+  }
+}
+function nextSuffix(baseName, existingNames) {
+  const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-(\\d+))?$`);
+  const nums = existingNames.map((n) => {
+    const m = n.match(pattern);
+    if (!m) return NaN;
+    return m[1] ? parseInt(m[1], 10) : 1;
+  }).filter((n) => !isNaN(n));
+  const max = nums.length > 0 ? Math.max(...nums) : 0;
+  return `${baseName}-${max + 1}`;
 }
 
 // src/http.ts
@@ -3459,9 +3559,29 @@ var Daemon = class _Daemon {
       this.healthSweepAndRestart();
     }, intervalMs);
   }
+  /** Re-create IPC socket if it was removed (e.g. Termux crash cleans $PREFIX/tmp) */
+  async ensureSocket() {
+    const socketPath = this.config.orchestrator.socket;
+    if (!(0, import_node_fs13.existsSync)(socketPath)) {
+      this.log.warn("IPC socket missing (tmpdir cleaned?) \u2014 recreating");
+      this.ipc.stop();
+      this.ipc = new IpcServer(
+        socketPath,
+        (cmd) => this.handleIpcCommand(cmd),
+        this.log
+      );
+      try {
+        await this.ipc.start();
+        this.log.info("IPC socket re-created successfully");
+      } catch (err) {
+        this.log.error(`Failed to re-create IPC socket: ${err}`);
+      }
+    }
+  }
   /** Run health sweep and handle auto-restarts for degraded sessions */
   async healthSweepAndRestart() {
     trace("health:sweep:start");
+    await this.ensureSocket();
     const activeNames = new Set(this.config.sessions.map((s) => s.name));
     this.activity.pruneStale(activeNames);
     this.rescanBareClaudeSessions();
@@ -3607,7 +3727,7 @@ var Daemon = class _Daemon {
       "--icon",
       "dashboard",
       "--action",
-      "termux-open-url http://localhost:18970"
+      `${resolveTermuxBin3("termux-open-url")} http://localhost:${this.config.orchestrator.dashboard_port}`
     ]);
   }
   // -- Session registry ---------------------------------------------------------
@@ -3627,14 +3747,20 @@ var Daemon = class _Daemon {
     }
   }
   /**
-   * Resolve which Claude sessions to auto-start based on recency from history.jsonl.
+   * Resolve which Claude sessions to auto-start based on recency.
+   * Two types of sessions are started:
+   *   1. Primary instances — one per project path, most recent, uses `cc` (--continue)
+   *   2. Named instances — sessions with a user-assigned title (via /rename),
+   *      resumed by session_id with --resume
+   *
    * Non-claude sessions (services/daemons) are untouched — they always start.
    * Called during boot() after mergeRegistrySessions() but before startAllSessions().
    */
   resolveBootSessions() {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
     const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
-    const recent = parseRecentProjects(historyPath, 1e3);
+    const recentProjects = parseRecentProjects(historyPath, 1e3);
+    const namedSessions = findNamedSessions(historyPath, 7);
     const { auto_start, visible } = this.config.boot;
     const configByPath = /* @__PURE__ */ new Map();
     for (const s of this.config.sessions) {
@@ -3642,40 +3768,80 @@ var Daemon = class _Daemon {
     }
     const recentClaude = [];
     let rank = 0;
-    for (const proj of recent) {
+    for (const proj of recentProjects) {
+      if (rank >= visible) break;
       const resolvedPath = (0, import_node_path7.resolve)(proj.path);
       const existing = configByPath.get(resolvedPath);
       if (existing) {
         if (existing.type === "claude" && existing.enabled) {
+          existing.session_id = void 0;
           recentClaude.push({ config: existing, rank: rank++ });
         }
       } else {
-        if (rank < visible) {
-          const name = deriveName(proj.path);
-          if (!this.config.sessions.find((s) => s.name === name)) {
-            this.registry.add({ name, path: resolvedPath, priority: 50, auto_go: false });
-            const newConfig = {
-              name,
-              type: "claude",
-              path: resolvedPath,
-              command: void 0,
-              auto_go: false,
-              priority: 50,
-              depends_on: [],
-              headless: false,
-              env: {},
-              health: void 0,
-              max_restarts: 3,
-              restart_backoff_s: 5,
-              enabled: true,
-              bare: false
-            };
-            this.config.sessions.push(newConfig);
-            configByPath.set(resolvedPath, newConfig);
-            recentClaude.push({ config: newConfig, rank: rank++ });
-          }
+        const name = deriveName(proj.path);
+        if (!this.config.sessions.find((s) => s.name === name)) {
+          this.registry.add({ name, path: resolvedPath, priority: 50, auto_go: false });
+          const newConfig = {
+            name,
+            type: "claude",
+            path: resolvedPath,
+            command: void 0,
+            auto_go: false,
+            priority: 50,
+            depends_on: [],
+            headless: false,
+            env: {},
+            health: void 0,
+            max_restarts: 3,
+            restart_backoff_s: 5,
+            enabled: true,
+            bare: false
+          };
+          this.config.sessions.push(newConfig);
+          configByPath.set(resolvedPath, newConfig);
+          recentClaude.push({ config: newConfig, rank: rank++ });
         }
       }
+    }
+    const registeredIds = /* @__PURE__ */ new Set();
+    for (const s of this.config.sessions) {
+      if (s.session_id) registeredIds.set(s.session_id);
+    }
+    for (const named of namedSessions) {
+      if (rank >= visible) break;
+      if (registeredIds.has(named.session_id)) continue;
+      const resolvedPath = (0, import_node_path7.resolve)(named.path);
+      const titleName = named.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
+      if (!titleName || !isValidName(titleName)) continue;
+      const existingNames = this.config.sessions.map((s) => s.name);
+      const sessionName = existingNames.includes(titleName) ? nextSuffix(titleName, existingNames.filter((n) => n === titleName || n.match(new RegExp(`^${titleName}-\\d+$`)))) : titleName;
+      this.registry.add({
+        name: sessionName,
+        path: resolvedPath,
+        priority: 50,
+        auto_go: false,
+        session_id: named.session_id
+      });
+      const newConfig = {
+        name: sessionName,
+        type: "claude",
+        path: resolvedPath,
+        command: void 0,
+        auto_go: false,
+        priority: 50,
+        depends_on: [],
+        headless: false,
+        env: {},
+        health: void 0,
+        max_restarts: 3,
+        restart_backoff_s: 5,
+        enabled: true,
+        bare: false,
+        session_id: named.session_id
+      };
+      this.config.sessions.push(newConfig);
+      registeredIds.add(named.session_id);
+      recentClaude.push({ config: newConfig, rank: rank++ });
     }
     const autoStartNames = /* @__PURE__ */ new Set();
     const visibleNames = /* @__PURE__ */ new Set();
@@ -3700,28 +3866,67 @@ var Daemon = class _Daemon {
     this.state.initFromConfig(this.config.sessions);
     this.log.info(`Boot recency: auto-start=[${[...autoStartNames].join(",")}] visible=[${[...visibleNames].join(",")}]`);
   }
-  /** Open command — register and start a new dynamic Claude session */
+  /**
+   * Fuzzy-match a name/fragment to a project path for `tmx open`.
+   * Checks config sessions, registry, and recent history (in that order).
+   * Supports exact, prefix, and substring matching.
+   */
+  resolveOpenTarget(input) {
+    const lower = input.toLowerCase();
+    const configExact = this.config.sessions.find((s) => s.name === lower && s.path);
+    if (configExact?.path) return (0, import_node_path7.resolve)(configExact.path);
+    const regExact = this.registry.find(lower);
+    if (regExact) return regExact.path;
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+    const recent = parseRecentProjects(historyPath, 1e3);
+    const recentExact = recent.find((p) => p.name === lower);
+    if (recentExact) return recentExact.path;
+    const allSources = [
+      ...this.config.sessions.filter((s) => s.path).map((s) => ({ name: s.name, path: s.path })),
+      ...this.registry.entries().map((e) => ({ name: e.name, path: e.path })),
+      ...recent
+    ];
+    const prefixMatches = allSources.filter((s) => s.name.startsWith(lower));
+    if (prefixMatches.length === 1) return (0, import_node_path7.resolve)(prefixMatches[0].path);
+    const substringMatches = allSources.filter((s) => s.name.includes(lower));
+    if (substringMatches.length === 1) return (0, import_node_path7.resolve)(substringMatches[0].path);
+    if (prefixMatches.length > 0) return (0, import_node_path7.resolve)(prefixMatches[0].path);
+    if (substringMatches.length > 0) return (0, import_node_path7.resolve)(substringMatches[0].path);
+    return null;
+  }
+  /** Open command — register and start a new dynamic Claude session (supports multi-instance) */
   async cmdOpen(path, name, autoGo = false, priority = 50) {
-    if (!(0, import_node_fs13.existsSync)(path)) {
-      return { ok: false, error: `Path does not exist: ${path}` };
-    }
-    const sessionName = name ?? deriveName(path);
-    if (!isValidName(sessionName)) {
-      return { ok: false, error: `Invalid session name '${sessionName}' \u2014 must match [a-z0-9-]+` };
-    }
-    const configMatch = this.config.sessions.find((s) => s.name === sessionName);
-    if (configMatch) {
-      const regMatch = this.registry.find(sessionName);
-      if (regMatch) {
-        return { ok: true, data: `Session '${sessionName}' already registered` };
+    let resolvedPath;
+    if ((0, import_node_fs13.existsSync)(path)) {
+      resolvedPath = (0, import_node_path7.resolve)(path);
+    } else {
+      const matched = this.resolveOpenTarget(path);
+      if (!matched) {
+        return { ok: false, error: `No project matching '${path}' found in config or recent history` };
       }
-      return { ok: false, error: `Name '${sessionName}' conflicts with a config session` };
+      resolvedPath = matched;
     }
-    const pathMatch = this.registry.findByPath(path);
-    if (pathMatch) {
-      return { ok: true, data: `Path already registered as '${pathMatch.name}'` };
+    const baseName = name ?? deriveName(path);
+    if (!isValidName(baseName)) {
+      return { ok: false, error: `Invalid session name '${baseName}' \u2014 must match [a-z0-9-]+` };
     }
-    const entry = this.registry.add({ name: sessionName, path, priority, auto_go: autoGo });
+    const existingByPath = this.config.sessions.filter(
+      (s) => s.path && (0, import_node_path7.resolve)(s.path) === resolvedPath
+    );
+    let sessionName;
+    if (existingByPath.length === 0) {
+      const nameConflict = this.config.sessions.find((s) => s.name === baseName);
+      if (nameConflict) {
+        return { ok: false, error: `Name '${baseName}' conflicts with an existing session at a different path` };
+      }
+      sessionName = baseName;
+    } else {
+      const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-\\d+)?$`);
+      const existingNames = this.config.sessions.filter((s) => pattern.test(s.name)).map((s) => s.name);
+      sessionName = nextSuffix(baseName, existingNames);
+    }
+    const entry = this.registry.add({ name: sessionName, path: resolvedPath, priority, auto_go: autoGo });
     if (!entry) {
       return { ok: false, error: `Failed to register session '${sessionName}'` };
     }
@@ -4052,6 +4257,24 @@ var Daemon = class _Daemon {
             return this.adbDisconnectAll();
           }
           return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
+        case "recent":
+          resp = this.cmdRecent(20);
+          break;
+        case "open":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Path or name required" } };
+          resp = await this.cmdOpen(name);
+          break;
+        case "close":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = await this.cmdClose(name);
+          break;
+        case "fix-socket":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          await this.ensureSocket();
+          resp = { ok: true };
+          break;
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -4410,7 +4633,9 @@ var Daemon = class _Daemon {
   async cmdStart(name) {
     if (name) {
       const resolved = this.resolveName(name);
-      if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+      if (!resolved) {
+        return this.cmdOpen(name);
+      }
       const sessionConfig = this.config.sessions.find((s) => s.name === resolved);
       if (sessionConfig && !sessionConfig.enabled) {
         sessionConfig.enabled = true;
@@ -5060,6 +5285,23 @@ async function runIpcCommand() {
   if (!running) {
     console.error(`${RED}Daemon not running. Start with: tmx boot${RESET2}`);
     process.exit(1);
+  }
+  const socketPath = client.socketPath;
+  if (!(0, import_node_fs15.existsSync)(socketPath)) {
+    console.log(`${DIM2}Socket missing (Termux crash?) \u2014 requesting daemon re-create it...${RESET2}`);
+    try {
+      await fetch("http://127.0.0.1:18970/api/fix-socket", { method: "POST" });
+    } catch {
+    }
+    for (let i = 0; i < 5; i++) {
+      await sleep3(500);
+      if ((0, import_node_fs15.existsSync)(socketPath)) break;
+    }
+    if (!(0, import_node_fs15.existsSync)(socketPath)) {
+      console.error(`${RED}Socket not re-created. Try: tmx shutdown && tmx boot${RESET2}`);
+      process.exit(1);
+    }
+    console.log(`${GREEN}Socket re-created${RESET2}`);
   }
   let cmd;
   switch (command) {
