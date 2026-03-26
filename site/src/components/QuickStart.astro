@@ -2,32 +2,43 @@
 import CodeBlock from "./CodeBlock.svelte";
 
 const installCode = `# Install required packages
-pkg install tmux termux-api
+pkg install tmux termux-api bun
 
 # Install Termux:Boot and Termux:API from F-Droid
 # (required for boot persistence and notifications)
 
-# Clone the repo
+# Clone and build the orchestrator
 git clone https://github.com/tribixbite/termux-tools ~/git/termux-tools
-cd ~/git/termux-tools
+cd ~/git/termux-tools/orchestrator
+bun install && bun run build
 
-# Copy configuration templates
-cp examples/startup.sh.example ~/.termux/boot/startup.sh
-mkdir -p ~/.config/termux-boot
-cp examples/repos.conf.example ~/.config/termux-boot/repos.conf
-cp examples/bash_aliases.example ~/.bash_aliases
-chmod +x ~/.termux/boot/startup.sh
+# Symlink the CLI
+mkdir -p ~/.local/bin
+ln -sf $(pwd)/dist/tmx.js ~/.local/bin/tmx
 
-# Reload shell to get aliases
-source ~/.bashrc`;
+# Install watchdog as boot script
+cp watchdog.sh ~/.termux/boot/startup.sh
+chmod +x ~/.termux/boot/startup.sh`;
 
-const configCode = `# ~/.config/termux-boot/repos.conf
-# Format: REPOS["path"]="auto_go:enabled"
+const configCode = `# ~/.config/tmx/tmx.toml
 
-declare -A REPOS
-REPOS["$HOME/git/swype/cleverkeys"]="1:1"   # auto-go + enabled
-REPOS["$HOME/git/termux-tools"]="0:1"       # enabled, no auto-go
-REPOS["$HOME/git/my-project"]="0:1"         # add your projects`;
+[orchestrator]
+dashboard_port = 18970
+
+[boot]
+auto_start = 6      # auto-start top 6 recent sessions
+visible = 10         # show 10 on dashboard with play button
+
+[[session]]
+name = "cleverkeys"
+type = "claude"
+path = "$HOME/git/swype/cleverkeys"
+
+[[session]]
+name = "my-project"
+type = "claude"
+path = "$HOME/git/my-project"
+auto_go = true       # send 'go' after startup`;
 ---
 
 <section id="quickstart" class="px-4 py-16 sm:px-6 lg:px-8">
@@ -51,14 +62,14 @@ REPOS["$HOME/git/my-project"]="0:1"         # add your projects`;
 
       <div>
         <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">2. Configure Your Projects</h3>
-        <CodeBlock code={configCode} title="repos.conf" client:visible />
+        <CodeBlock code={configCode} title="tmx.toml" client:visible />
       </div>
 
       <div>
-        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">3. Reboot</h3>
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">3. Boot</h3>
         <p class="text-sm text-terminal-dim">
-          Reboot your device. Termux:Boot will run <code class="text-terminal-green">startup.sh</code>,
-          creating a tmux session for each enabled repo. Use <code class="text-terminal-green">tm &lt;search&gt;</code> to switch between them.
+          Run <code class="text-terminal-green">tmx boot</code> to start the daemon, or reboot your device
+          and Termux:Boot will run the watchdog automatically. Dashboard at <code class="text-terminal-green">http://localhost:18970</code>.
         </p>
       </div>
     </div>

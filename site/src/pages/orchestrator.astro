@@ -196,14 +196,20 @@ import Footer from "../components/Footer.astro";
         <div class="mt-6 space-y-3">
           {[
             { cmd: "tmx boot", desc: "Start daemon + all sessions in dependency order" },
-            { cmd: "tmx status", desc: "Show daemon uptime, memory, and session table" },
+            { cmd: "tmx status", desc: "Show daemon uptime, memory, battery, and session table" },
             { cmd: "tmx health", desc: "Run health checks on all sessions" },
             { cmd: "tmx go <name>", desc: "Send \"go\" to a Claude session waiting for input" },
+            { cmd: "tmx start <name>", desc: "Start a stopped session (fuzzy-matches names)" },
+            { cmd: "tmx stop <name>", desc: "Stop a running session" },
+            { cmd: "tmx restart <name>", desc: "Stop + start a session" },
+            { cmd: "tmx open <path>", desc: "Open a new Claude session dynamically" },
+            { cmd: "tmx close <name>", desc: "Stop and remove a dynamic session from registry" },
+            { cmd: "tmx recent", desc: "List recent Claude projects from history.jsonl" },
             { cmd: "tmx tabs", desc: "Open Termux tabs for all running sessions" },
             { cmd: "tmx memory", desc: "Show system memory and per-session RSS" },
             { cmd: "tmx config", desc: "Validate and display parsed tmx.toml" },
+            { cmd: "tmx upgrade", desc: "Rebuild, shutdown daemon, let watchdog auto-restart" },
             { cmd: "tmx shutdown", desc: "Gracefully stop all sessions and the daemon" },
-            { cmd: "tmx migrate", desc: "Convert legacy repos.conf to tmx.toml format" },
           ].map((c) => (
             <div class="flex items-baseline gap-3 font-[family-name:var(--font-mono)] text-sm">
               <code class="text-terminal-green shrink-0">{c.cmd}</code>
@@ -230,9 +236,9 @@ import Footer from "../components/Footer.astro";
           <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
             <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">Overview</h3>
             <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-              System gauges (memory, processes, ADB).<br>
-              Session table with stop/restart/go controls.<br>
-              Collapsible cards for CFC bridge status.
+              System gauges (memory, battery, ADB).<br>
+              Session table with start/stop/close controls.<br>
+              Recent projects panel with search + play.
             </p>
           </div>
           <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
@@ -278,20 +284,23 @@ import Footer from "../components/Footer.astro";
             </thead>
             <tbody>
               {[
-                { path: "/api/state", method: "GET", desc: "Full daemon state (sessions, memory, health)" },
+                { path: "/api/status", method: "GET", desc: "Full daemon state (sessions, memory, battery)" },
                 { path: "/api/events", method: "SSE", desc: "Real-time state push via Server-Sent Events" },
                 { path: "/api/start/:name", method: "POST", desc: "Start a stopped session" },
                 { path: "/api/stop/:name", method: "POST", desc: "Stop a running session" },
                 { path: "/api/restart/:name", method: "POST", desc: "Stop + start a session" },
                 { path: "/api/go/:name", method: "POST", desc: "Send \"go\" to a Claude session" },
-                { path: "/api/tab/:name", method: "POST", desc: "Switch tmux client to session + bring Termux to foreground" },
+                { path: "/api/open/:name", method: "POST", desc: "Open/register a session dynamically" },
+                { path: "/api/close/:name", method: "POST", desc: "Stop and remove a dynamic session" },
+                { path: "/api/recent", method: "GET", desc: "Recent Claude projects from history.jsonl" },
+                { path: "/api/tab/:name", method: "POST", desc: "Open Termux tab + bring to foreground" },
                 { path: "/api/memory", method: "GET", desc: "System memory + per-session RSS" },
                 { path: "/api/processes", method: "GET", desc: "Android app list via adb shell ps" },
                 { path: "/api/kill/:pkg", method: "POST", desc: "Force-stop an Android app" },
                 { path: "/api/adb", method: "GET", desc: "List connected ADB devices" },
                 { path: "/api/adb/connect", method: "POST", desc: "Run wireless ADB scan" },
               ].map((v, i) => (
-                <tr class={i < 11 ? "border-b border-terminal-border/30" : ""}>
+                <tr class={i < 14 ? "border-b border-terminal-border/30" : ""}>
                   <td class="px-4 py-2.5 text-terminal-bright">{v.path}</td>
                   <td class={`px-4 py-2.5 ${v.method === "SSE" ? "text-terminal-cyan" : v.method === "POST" ? "text-terminal-amber" : "text-terminal-green"}`}>{v.method}</td>
                   <td class="px-4 py-2.5 text-terminal-dim">{v.desc}</td>

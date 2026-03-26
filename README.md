@@ -13,13 +13,16 @@ with dependency-ordered startup, health monitoring, battery management, and a we
 tmx boot              # Start daemon + boot all sessions + create Termux tabs
 tmx status            # Show daemon status, all sessions, battery, memory
 tmx health            # Run health checks
+tmx start <name>      # Start a stopped session (fuzzy-matches names)
+tmx stop <name>       # Stop a running session
+tmx go <name>         # Send Enter to a waiting Claude session
+tmx open <path|name>  # Open a new Claude session dynamically (fuzzy match)
+tmx close <name>      # Stop + remove a dynamic session from registry
+tmx recent            # List recent Claude projects from history.jsonl
 tmx tabs              # Recreate Termux tabs for tmux sessions
-tmx recent            # List recent Claude projects from history
-tmx open ~/git/foo    # Open a new Claude session dynamically
-tmx go termux-tools   # Send Enter to a waiting Claude session
 tmx memory            # Show system + per-session memory usage
 tmx upgrade           # Rebuild, shutdown daemon, let watchdog auto-restart
-tmx shutdown          # Graceful shutdown
+tmx shutdown          # Graceful shutdown (sessions orphaned for re-adoption)
 ```
 
 **Features:**
@@ -27,16 +30,19 @@ tmx shutdown          # Graceful shutdown
 - Dependency-ordered parallel startup (topological sort)
 - Health checks (tmux_alive, http, process, custom) with auto-restart
 - Battery monitoring — disables radios below threshold when not charging
-- Memory pressure detection with OOM shedding (stops idle sessions)
-- Persistent status bar notification — shows active/idle session counts, taps open dashboard
-- Phantom process count is informational only (phantom killer disabled via `device_config`)
-- `tmx upgrade` — rebuilds, shuts down daemon, watchdog auto-restarts with new build
+- Memory pressure detection (normal/warning/critical/emergency from /proc/meminfo)
+- Boot recency — auto-starts only the N most recently used Claude sessions
+- Multi-instance sessions — multiple Claude instances per project with named session resume
+- Fuzzy matching — `tmx start torch` / `tmx open embeddy` match by prefix or substring
 - Dynamic session registry — `tmx open`/`tmx close` survive daemon restarts
 - Web dashboard on port 18970 (Astro 5 + Svelte 5 + SSE real-time updates)
+  - Session controls: start/stop/restart/go/close
+  - Recent projects panel with search and play buttons
+  - System memory, battery, ADB, CFC bridge status gauges
+- Persistent status bar notification — taps open dashboard
+- `tmx upgrade` — rebuilds, shuts down daemon, watchdog auto-restarts with new build
 - Watchdog bash loop survives Android OOM kills
 - Termux tab creation via TermuxService intents (Android 16 compatible)
-
-**Managed sessions:** termux-tools, stoatally, cleverkeys, craftmatic, torch, torch-template, digr (Claude sessions), plus termux-x11 and playwright (headless services).
 
 ### CFC Bridge (`bridge/`)
 

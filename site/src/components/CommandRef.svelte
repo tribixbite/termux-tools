@@ -17,51 +17,49 @@
 
   const tabs: Tab[] = [
     {
-      id: "switching",
-      label: "Switching",
+      id: "core",
+      label: "Core",
       commands: [
-        { cmd: "tm <search>", desc: "Fuzzy-search switch to session/window" },
-        { cmd: "tmgo <search>", desc: "Send 'go' to session without switching" },
-        { cmd: "tmb0-5", desc: "Jump to window 0–5" },
-        { cmd: "tn / tp", desc: "Next / previous window" },
-        { cmd: "tl", desc: "Last (most recent) window" },
-        { cmd: "tw", desc: "Interactive window picker" },
+        { cmd: "tmx boot", desc: "Start daemon + boot all sessions in dependency order" },
+        { cmd: "tmx status", desc: "Show daemon uptime, sessions, memory, battery" },
+        { cmd: "tmx health", desc: "Run health checks on all sessions now" },
+        { cmd: "tmx config", desc: "Validate and display parsed tmx.toml" },
+        { cmd: "tmx upgrade", desc: "Rebuild, shutdown, and let watchdog auto-restart" },
+        { cmd: "tmx shutdown", desc: "Gracefully stop daemon (sessions orphaned)" },
       ],
     },
     {
-      id: "management",
+      id: "sessions",
       label: "Sessions",
       commands: [
-        { cmd: "tmbs", desc: "List all tmux sessions" },
-        { cmd: "tmbi", desc: "Show session info" },
-        { cmd: "tmbr", desc: "Restart all sessions" },
-        { cmd: "tmbk", desc: "Kill boot session" },
-        { cmd: "tmba <repo>", desc: "Add repo (temporary)" },
-        { cmd: "tmbp <repo>", desc: "Add repo (permanent)" },
+        { cmd: "tmx go <name>", desc: "Send 'go' to a Claude session waiting for input" },
+        { cmd: "tmx open <path>", desc: "Open a new Claude session dynamically" },
+        { cmd: "tmx close <name>", desc: "Stop and remove a dynamic session" },
+        { cmd: "tmx start <name>", desc: "Start a stopped session (fuzzy-matches names)" },
+        { cmd: "tmx stop <name>", desc: "Stop a running session" },
+        { cmd: "tmx restart <name>", desc: "Stop + start a session" },
       ],
     },
     {
-      id: "panes",
-      label: "Panes",
+      id: "monitoring",
+      label: "Monitoring",
       commands: [
-        { cmd: "tsh", desc: "Split horizontally (left/right)" },
-        { cmd: "tsv", desc: "Split vertically (top/bottom)" },
-        { cmd: "tz", desc: "Zoom / unzoom pane" },
-        { cmd: "tkp", desc: "Kill current pane" },
-        { cmd: "t1-4", desc: "Select pane by number" },
-        { cmd: "tu / tdown", desc: "Navigate up / down" },
+        { cmd: "tmx memory", desc: "System memory + per-session RSS + pressure level" },
+        { cmd: "tmx tabs", desc: "Open Termux tabs for all running tmux sessions" },
+        { cmd: "tmx recent", desc: "List recent Claude projects from history.jsonl" },
+        { cmd: "tmx send <n> <text>", desc: "Send raw text to a session's tmux pane" },
       ],
     },
     {
-      id: "automation",
-      label: "Automation",
+      id: "api",
+      label: "REST API",
       commands: [
-        { cmd: "tsend <text>", desc: "Send text to current window" },
-        { cmd: "tsendw N <text>", desc: "Send text to window N" },
-        { cmd: "td", desc: "Detach from session" },
-        { cmd: "tnw", desc: "New window" },
-        { cmd: "trn <name>", desc: "Rename window" },
-        { cmd: "tk", desc: "Kill current window" },
+        { cmd: "GET /api/status", desc: "Full daemon state (sessions, memory, battery)" },
+        { cmd: "GET /api/events", desc: "SSE stream for real-time state updates" },
+        { cmd: "POST /api/start/:name", desc: "Start a session via HTTP" },
+        { cmd: "POST /api/stop/:name", desc: "Stop a session via HTTP" },
+        { cmd: "GET /api/recent", desc: "Recent Claude projects from history" },
+        { cmd: "POST /api/open/:name", desc: "Open/register a session via HTTP" },
       ],
     },
   ];
@@ -112,7 +110,7 @@
     </div>
 
     <p class="mt-4 text-center font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-      No more <code class="text-terminal-amber">Ctrl+b</code> — all commands are direct shell aliases
+      Dashboard at <code class="text-terminal-amber">http://localhost:18970</code> &mdash; REST API on the same port
     </p>
   </div>
 </section>
