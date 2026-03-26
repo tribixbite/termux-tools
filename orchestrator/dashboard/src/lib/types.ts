@@ -90,3 +90,12 @@ export interface AdbStatus {
   devices: AdbDevice[];
   connecting?: boolean;
 }
+
+/** Recent Claude project from history.jsonl */
+export interface RecentProject {
+  name: string;
+  path: string;
+  last_active: string;
+  session_id: string;
+  status: "running" | "registered" | "config" | "untracked";
+}

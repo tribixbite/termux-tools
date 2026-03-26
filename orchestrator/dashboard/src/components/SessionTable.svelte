@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { startSession, stopSession, restartSession, goSession, openTab } from "../lib/api";
+  import { startSession, stopSession, restartSession, goSession, openTab, closeSession } from "../lib/api";
   import { store, refreshStatus } from "../lib/store.svelte";
   import type { DaemonStatus, SessionState } from "../lib/types";
   import SessionCard from "./SessionCard.svelte";
@@ -50,6 +50,17 @@
       actionError = `Open tab failed for ${name}: ${(err as Error).message}`;
     }
   }
+
+  async function handleClose(e: Event, name: string) {
+    e.stopPropagation();
+    actionError = null;
+    try {
+      await closeSession(name);
+      await refreshStatus();
+    } catch (err) {
+      actionError = `Close failed for ${name}: ${(err as Error).message}`;
+    }
+  }
 </script>
 
 {#if error}
@@ -96,6 +107,7 @@
               <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
             {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
               <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
+              <button class="btn-icon danger" onclick={(e) => handleClose(e, session.name)} title="Remove">&#x2715;</button>
             {/if}
           </td>
         </tr>

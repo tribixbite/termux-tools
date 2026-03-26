@@ -1899,6 +1899,19 @@ export class Daemon {
             return this.adbDisconnectAll();
           }
           return { status: 400, data: { error: `Unknown ADB action: ${name}` } };
+        case "recent":
+          resp = this.cmdRecent(20);
+          break;
+        case "open":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Path or name required" } };
+          resp = await this.cmdOpen(name);
+          break;
+        case "close":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = await this.cmdClose(name);
+          break;
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
       }

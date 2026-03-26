@@ -5,7 +5,7 @@
  * fetch wrappers for REST endpoints.
  */
 
-import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth } from "./types";
+import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject } from "./types";
 
 /** Callback type for state updates */
 export type StateCallback = (data: DaemonStatus) => void;
@@ -145,38 +145,67 @@ export async function fetchBridgeHealth(): Promise<BridgeHealth> {
   }
 }
 
+/** POST with error checking — throws on non-2xx responses */
+async function checkedPost(url: string, body?: string): Promise<void> {
+  const opts: RequestInit = { method: "POST" };
+  if (body) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = body;
+  }
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
 /** Start a session */
 export async function startSession(name: string): Promise<void> {
-  await fetch(`/api/start/${encodeURIComponent(name)}`, { method: "POST" });
+  await checkedPost(`/api/start/${encodeURIComponent(name)}`);
 }
 
 /** Stop a session */
 export async function stopSession(name: string): Promise<void> {
-  await fetch(`/api/stop/${encodeURIComponent(name)}`, { method: "POST" });
+  await checkedPost(`/api/stop/${encodeURIComponent(name)}`);
 }
 
 /** Restart a session */
 export async function restartSession(name: string): Promise<void> {
-  await fetch(`/api/restart/${encodeURIComponent(name)}`, { method: "POST" });
+  await checkedPost(`/api/restart/${encodeURIComponent(name)}`);
 }
 
 /** Send "go" to a Claude session */
 export async function goSession(name: string): Promise<void> {
-  await fetch(`/api/go/${encodeURIComponent(name)}`, { method: "POST" });
+  await checkedPost(`/api/go/${encodeURIComponent(name)}`);
 }
 
 /** Send text to a session */
 export async function sendToSession(name: string, text: string): Promise<void> {
-  await fetch(`/api/send/${encodeURIComponent(name)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text }),
-  });
+  await checkedPost(
+    `/api/send/${encodeURIComponent(name)}`,
+    JSON.stringify({ text }),
+  );
 }
 
 /** Open a Termux tab attached to a session */
 export async function openTab(name: string): Promise<void> {
-  await fetch(`/api/tab/${encodeURIComponent(name)}`, { method: "POST" });
+  await checkedPost(`/api/tab/${encodeURIComponent(name)}`);
+}
+
+/** Fetch recent Claude projects from history */
+export async function fetchRecent(): Promise<RecentProject[]> {
+  const res = await fetch("/api/recent");
+  return checkedJson<RecentProject[]>(res);
+}
+
+/** Open/start a session by name or path (fuzzy matched) */
+export async function openSession(nameOrPath: string): Promise<void> {
+  await checkedPost(`/api/open/${encodeURIComponent(nameOrPath)}`);
+}
+
+/** Close/remove a session from registry */
+export async function closeSession(name: string): Promise<void> {
+  await checkedPost(`/api/close/${encodeURIComponent(name)}`);
 }
 
 /** Android app info from the daemon */
