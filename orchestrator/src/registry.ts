@@ -25,6 +25,8 @@ export interface RegistryEntry {
   priority: number;
   /** Auto-send "go" after startup */
   auto_go: boolean;
+  /** Claude session ID for --resume (multi-instance support) */
+  session_id?: string;
 }
 
 /** Persisted registry data */
@@ -77,10 +79,21 @@ export class Registry {
     return this.data.sessions.find((e) => e.name === name);
   }
 
-  /** Find an entry by path */
+  /** Find first entry by path */
   findByPath(path: string): RegistryEntry | undefined {
     const abs = resolve(path);
     return this.data.sessions.find((e) => e.path === abs);
+  }
+
+  /** Find all entries sharing a path (multi-instance) */
+  findAllByPath(path: string): RegistryEntry[] {
+    const abs = resolve(path);
+    return this.data.sessions.filter((e) => e.path === abs);
+  }
+
+  /** Find entry by Claude session ID */
+  findBySessionId(sessionId: string): RegistryEntry | undefined {
+    return this.data.sessions.find((e) => e.session_id === sessionId);
   }
 
   /** Add a new entry. Returns the entry, or null if name conflict. */
@@ -152,6 +165,7 @@ export class Registry {
       restart_backoff_s: 5,
       enabled: true,
       bare: false,
+      session_id: e.session_id,
     }));
   }
 
@@ -251,4 +265,78 @@ export function deriveName(path: string): string {
 /** Validate a session name */
 export function isValidName(name: string): boolean {
   return NAME_PATTERN.test(name);
+}
+
+/**
+ * Parse history.jsonl to find recent Claude sessions (per session ID, not per path).
+ * Unlike parseRecentProjects() which deduplicates by path, this returns one entry
+ * per unique (path, sessionId) pair — enabling multi-instance boot.
+ * Only includes sessions active within maxAgeDays.
+ */
+export function parseRecentSessions(historyPath: string, maxAgeDays = 7): Array<{
+  name: string;
+  path: string;
+  session_id: string;
+  last_active: string;
+}> {
+  if (!existsSync(historyPath)) return [];
+
+  try {
+    const content = readFileSync(historyPath, "utf-8");
+    const lines = content.trim().split("\n");
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+
+    // Deduplicate by sessionId, keeping latest timestamp per session
+    const bySession = new Map<string, { path: string; timestamp: number }>();
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line) as HistoryEntry;
+        if (!entry.project || !entry.timestamp || !entry.sessionId) continue;
+        if (entry.timestamp < cutoff) continue;
+        const existing = bySession.get(entry.sessionId);
+        if (!existing || entry.timestamp > existing.timestamp) {
+          bySession.set(entry.sessionId, {
+            path: entry.project,
+            timestamp: entry.timestamp,
+          });
+        }
+      } catch { /* skip malformed lines */ }
+    }
+
+    // Convert to sorted array (most recent first)
+    const results: Array<{
+      name: string;
+      path: string;
+      session_id: string;
+      last_active: string;
+    }> = [];
+
+    for (const [sessionId, info] of bySession) {
+      results.push({
+        name: deriveName(info.path),
+        path: info.path,
+        session_id: sessionId,
+        last_active: new Date(info.timestamp).toISOString(),
+      });
+    }
+
+    results.sort((a, b) => b.last_active.localeCompare(a.last_active));
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+/** Find next available suffixed name: torch → torch-2 → torch-3 */
+export function nextSuffix(baseName: string, existingNames: string[]): string {
+  const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-(\\d+))?$`);
+  const nums = existingNames
+    .map((n) => {
+      const m = n.match(pattern);
+      if (!m) return NaN;
+      return m[1] ? parseInt(m[1], 10) : 1; // bare name counts as 1
+    })
+    .filter((n) => !isNaN(n));
+  const max = nums.length > 0 ? Math.max(...nums) : 0;
+  return `${baseName}-${max + 1}`;
 }

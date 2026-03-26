@@ -382,10 +382,13 @@ export function createSession(config: SessionConfig, log: Logger): boolean {
   // Start the appropriate process inside the session
   switch (type) {
     case "claude":
-      // Use the cc alias (claude --continue --dangerously-skip-permissions).
-      // --continue resumes the last conversation in the project directory.
-      // LD_PRELOAD injection (above) ensures /usr/bin/env shebang works.
-      sendKeys(name, "cc", true);
+      if (config.session_id) {
+        // Multi-instance: resume a specific Claude session by ID
+        sendKeys(name, `claude --resume ${config.session_id} --dangerously-skip-permissions`, true);
+      } else {
+        // Default: --continue resumes the last conversation in the project directory
+        sendKeys(name, "cc", true);
+      }
       break;
 
     case "daemon":

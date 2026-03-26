@@ -86,6 +86,8 @@ export interface SessionConfig {
   enabled: boolean;
   /** Spawn as detached process instead of tmux session (for commands that crash in tmux PTY) */
   bare: boolean;
+  /** Claude session ID for --resume (multi-instance support) */
+  session_id?: string;
 }
 
 /** ADB configuration block */
