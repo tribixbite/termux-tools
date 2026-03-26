@@ -45,6 +45,26 @@ import Footer from "../components/Footer.astro";
             CLI Reference
           </a>
         </div>
+
+        <!-- Section nav -->
+        <nav class="mt-8 flex flex-wrap justify-center gap-2">
+          {[
+            { href: "#architecture",      label: "Architecture" },
+            { href: "#configuration",     label: "Configuration" },
+            { href: "#cli",               label: "CLI" },
+            { href: "#dashboard",         label: "Dashboard" },
+            { href: "#rest-api",          label: "REST API" },
+            { href: "#session-lifecycle", label: "Session Lifecycle" },
+            { href: "#crash-resilience",  label: "Crash Resilience" },
+            { href: "#build-install",     label: "Build & Install" },
+            { href: "#requirements",      label: "Requirements" },
+          ].map(({ href, label }) => (
+            <a href={href}
+              class="rounded border border-terminal-border/50 px-3 py-1 font-[family-name:var(--font-mono)] text-xs text-terminal-dim transition-colors hover:border-terminal-green hover:text-terminal-green">
+              {label}
+            </a>
+          ))}
+        </nav>
       </div>
     </section>
 
@@ -103,7 +123,7 @@ import Footer from "../components/Footer.astro";
     </section>
 
     <!-- Configuration -->
-    <section id="config" class="px-4 py-16 sm:px-6 lg:px-8">
+    <section id="configuration" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
           <span class="text-terminal-green">#</span> Configuration
@@ -262,7 +282,7 @@ import Footer from "../components/Footer.astro";
     </section>
 
     <!-- REST API -->
-    <section id="api" class="px-4 py-16 sm:px-6 lg:px-8">
+    <section id="rest-api" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
           <span class="text-terminal-green">#</span> REST API
@@ -313,7 +333,7 @@ import Footer from "../components/Footer.astro";
     </section>
 
     <!-- Session Lifecycle -->
-    <section id="lifecycle" class="px-4 py-16 sm:px-6 lg:px-8">
+    <section id="session-lifecycle" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
           <span class="text-terminal-green">#</span> Session Lifecycle
@@ -448,7 +468,7 @@ import Footer from "../components/Footer.astro";
     </section>
 
     <!-- Build & Install -->
-    <section id="install" class="px-4 py-16 sm:px-6 lg:px-8">
+    <section id="build-install" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
           <span class="text-terminal-green">#</span> Build &amp; Install
