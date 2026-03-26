@@ -1262,7 +1262,7 @@ export class Daemon {
       "--title", title,
       "--content", content,
       "--icon", "dashboard",
-      "--action", "termux-open-url http://localhost:18970",
+      "--action", `${resolveTermuxBin("termux-open-url")} http://localhost:${this.config.orchestrator.dashboard_port}`,
     ]);
   }
 
