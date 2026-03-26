@@ -27,11 +27,11 @@ const features = [
   },
   {
     icon: "🔄",
-    title: "Watchdog Recovery",
-    description: "Bash loop survives Android OOM kills and auto-restarts the daemon. Wake lock persists, sessions orphaned safely for re-adoption on restart.",
+    title: "Crash Resilience",
+    description: "All processes detach from Termux (PPid: 1) — sessions survive app kills. IPC socket self-heals after tmpfs cleanup. Watchdog auto-restarts daemon after OOM.",
     commands: [
       { cmd: "watchdog.sh", desc: "boot script in ~/.termux/boot/" },
-      { cmd: "tmx upgrade", desc: "rebuild + auto-restart" },
+      { cmd: "/api/fix-socket", desc: "instant IPC socket recovery" },
       { cmd: "tmx health", desc: "run health checks now" },
     ],
     color: "terminal-cyan",

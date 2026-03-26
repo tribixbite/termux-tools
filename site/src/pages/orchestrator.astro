@@ -346,30 +346,103 @@ import Footer from "../components/Footer.astro";
       </div>
     </section>
 
-    <!-- Watchdog -->
-    <section id="watchdog" class="px-4 py-16 sm:px-6 lg:px-8">
+    <!-- Crash Resilience -->
+    <section id="resilience" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
-          <span class="text-terminal-green">#</span> Watchdog
+          <span class="text-terminal-green">#</span> Crash Resilience
         </h2>
 
-        <p class="mb-4 text-sm text-terminal-dim">
-          The <code class="text-terminal-green">watchdog.sh</code> script runs as a bash loop and restarts the daemon
-          if it gets OOM-killed by Android's low memory killer. It also handles the initial boot sequence.
+        <p class="mb-6 text-sm text-terminal-dim">
+          Android routinely kills the Termux app &mdash; OOM killer, battery optimization, user swipe-away.
+          TMX is designed so that <strong class="text-terminal-bright">every running session survives</strong> and the daemon recovers automatically.
         </p>
 
-        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
-          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">typical boot flow</div>
+        <!-- Why sessions survive -->
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-medium text-terminal-amber">Process Independence</h3>
+        <div class="mb-6 overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
           <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
-            <div class="text-terminal-dim">$ <span class="text-terminal-bright">tmx boot</span></div>
-            <div class="text-terminal-dim">  watchdog.sh starts in background</div>
-            <div class="text-terminal-dim">  watchdog spawns <span class="text-terminal-green">tmx daemon</span></div>
-            <div class="text-terminal-dim">  daemon reads tmx.toml</div>
-            <div class="text-terminal-dim">  dependency sort &rarr; parallel start within each depth</div>
-            <div class="text-terminal-dim">  claude sessions: poll readiness &rarr; send "go"</div>
-            <div class="text-terminal-dim">  health check loop starts (poll_interval_s)</div>
-            <div class="text-terminal-dim">  dashboard available at <span class="text-terminal-green">:18970</span></div>
+            <div class="text-terminal-dim"><span class="text-terminal-bright">tmux server</span> (PPid: 1)</div>
+            <div class="text-terminal-dim">  &boxv;&boxh;&boxh; claude-session-1 &boxh;&boxh; node claude</div>
+            <div class="text-terminal-dim">  &boxv;&boxh;&boxh; claude-session-2 &boxh;&boxh; node claude</div>
+            <div class="text-terminal-dim">  &boxvr;&boxh;&boxh; service-session &boxh;&boxh;&boxh; custom cmd</div>
+            <div class="text-terminal-dim">&nbsp;</div>
+            <div class="text-terminal-dim"><span class="text-terminal-bright">tmx daemon</span> (PPid: 1, detached)</div>
+            <div class="text-terminal-dim">  &boxv;&boxh;&boxh; IPC socket: <span class="text-terminal-amber">$PREFIX/tmp/tmx.sock</span></div>
+            <div class="text-terminal-dim">  &boxvr;&boxh;&boxh; HTTP dashboard: <span class="text-terminal-green">:18970</span></div>
+            <div class="text-terminal-dim">&nbsp;</div>
+            <div class="text-terminal-dim"><span class="text-terminal-bright">watchdog.sh</span> (PPid: 1, bash loop)</div>
+            <div class="text-terminal-dim">&nbsp;</div>
+            <div class="text-terminal-red">Termux app killed &rarr; only the terminal UI dies</div>
+            <div class="text-terminal-green">All three process trees survive (parented to init)</div>
           </div>
+        </div>
+
+        <p class="mb-6 text-sm text-terminal-dim">
+          When <code class="text-terminal-green">tmx boot</code> runs, it forks the daemon and watchdog as detached
+          processes with <code>PPid: 1</code> (parented to init). The tmux server is similarly independent.
+          When Android kills the Termux app, only the terminal UI process dies &mdash; all session processes,
+          the daemon, and the watchdog continue running undisturbed.
+        </p>
+
+        <!-- Socket self-healing -->
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-medium text-terminal-amber">Socket Self-Healing</h3>
+        <p class="mb-4 text-sm text-terminal-dim">
+          One thing <em>does</em> break: <code class="text-terminal-amber">$PREFIX/tmp/</code> is a tmpfs that gets cleaned
+          when the Termux app crashes. The IPC socket file vanishes even though the daemon is alive.
+        </p>
+
+        <div class="mb-6 overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">recovery flow (&lt;1s)</div>
+          <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
+            <div class="text-terminal-dim">1. CLI runs <span class="text-terminal-bright">tmx status</span></div>
+            <div class="text-terminal-dim">2. Socket missing &rarr; probe <span class="text-terminal-green">HTTP :18970</span> &rarr; daemon alive</div>
+            <div class="text-terminal-dim">3. CLI POSTs <span class="text-terminal-amber">/api/fix-socket</span></div>
+            <div class="text-terminal-dim">4. Daemon re-creates IPC socket immediately</div>
+            <div class="text-terminal-dim">5. CLI connects via socket &rarr; <span class="text-terminal-green">normal operation resumes</span></div>
+          </div>
+        </div>
+
+        <p class="mb-8 text-sm text-terminal-dim">
+          The daemon also checks for socket presence during each health sweep (every
+          <code>health_interval_s</code>) and recreates it proactively. Between sweeps,
+          the CLI triggers instant recreation via the HTTP API.
+        </p>
+
+        <!-- Watchdog -->
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-medium text-terminal-amber">Watchdog</h3>
+        <p class="mb-4 text-sm text-terminal-dim">
+          <code class="text-terminal-green">watchdog.sh</code> is a bash loop that monitors the daemon process.
+          If the daemon itself gets SIGKILL'd (Android low-memory killer), the watchdog
+          restarts it. Sessions remain attached to tmux and get re-adopted on restart.
+        </p>
+
+        <div class="mb-6 overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">watchdog loop</div>
+          <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
+            <div class="text-terminal-dim"><span class="text-terminal-bright">while true:</span></div>
+            <div class="text-terminal-dim">  check daemon_alive() via IPC + HTTP</div>
+            <div class="text-terminal-dim">  if dead &rarr; <span class="text-terminal-green">tmx boot</span> (daemon re-adopts sessions)</div>
+            <div class="text-terminal-dim">  sleep 60</div>
+          </div>
+        </div>
+
+        <!-- Defense layers summary -->
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-medium text-terminal-amber">Defense Layers</h3>
+        <div class="grid gap-3 sm:grid-cols-2">
+          {[
+            { layer: "Wake lock", desc: "Acquired once, never released. Prevents Android from killing background processes." },
+            { layer: "Phantom fix", desc: "Disables phantom process killer, Doze standby, and app idle for Termux + Edge." },
+            { layer: "Process detach", desc: "Daemon, watchdog, and tmux all run as PPid: 1 — independent of Termux app." },
+            { layer: "Socket self-heal", desc: "IPC socket recreated via HTTP API when tmpfs is cleaned. Recovery in <1s." },
+            { layer: "Watchdog loop", desc: "Bash loop restarts daemon after OOM kill. Sessions persist in tmux for re-adoption." },
+            { layer: "Trace log", desc: "appendFileSync log survives crashes. Check last line to see what daemon was doing before SIGKILL." },
+          ].map(({ layer, desc }) => (
+            <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-3">
+              <h4 class="mb-1 font-[family-name:var(--font-mono)] text-xs font-medium text-terminal-green">{layer}</h4>
+              <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{desc}</p>
+            </div>
+          ))}
         </div>
       </div>
     </section>
