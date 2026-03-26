@@ -24,7 +24,7 @@ import { runHealthSweep } from "./health.js";
 import { MemoryMonitor } from "./memory.js";
 import { ActivityDetector } from "./activity.js";
 import { BatteryMonitor } from "./battery.js";
-import { Registry, parseRecentProjects, parseRecentSessions, deriveName, isValidName, nextSuffix } from "./registry.js";
+import { Registry, parseRecentProjects, findNamedSessions, deriveName, isValidName, nextSuffix } from "./registry.js";
 import type { RecentProject } from "./registry.js";
 import { DashboardServer } from "./http.js";
 import {
@@ -1288,98 +1288,98 @@ export class Daemon {
   }
 
   /**
-   * Resolve which Claude sessions to auto-start based on recency from history.jsonl.
-   * Supports multi-instance: multiple sessions can share the same project path,
-   * each with a unique session_id for --resume. Non-claude sessions always start.
+   * Resolve which Claude sessions to auto-start based on recency.
+   * Two types of sessions are started:
+   *   1. Primary instances — one per project path, most recent, uses `cc` (--continue)
+   *   2. Named instances — sessions with a user-assigned title (via /rename),
+   *      resumed by session_id with --resume
+   *
+   * Non-claude sessions (services/daemons) are untouched — they always start.
    * Called during boot() after mergeRegistrySessions() but before startAllSessions().
    */
   private resolveBootSessions(): void {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
     const historyPath = join(home, ".claude", "history.jsonl");
-    const recentSessions = parseRecentSessions(historyPath, 7);
+    const recentProjects = parseRecentProjects(historyPath, 1000);
+    const namedSessions = findNamedSessions(historyPath, 7);
     const { auto_start, visible } = this.config.boot;
 
-    // Build session_id→config and path→configs lookups
-    const configBySessionId = new Map<string, SessionConfig>();
-    const configsByPath = new Map<string, SessionConfig[]>();
+    // Build path→config lookup (one entry per path for primary matching)
+    const configByPath = new Map<string, SessionConfig>();
     for (const s of this.config.sessions) {
-      if (s.session_id) configBySessionId.set(s.session_id, s);
-      if (s.path) {
-        const rp = resolve(s.path);
-        const arr = configsByPath.get(rp) ?? [];
-        arr.push(s);
-        configsByPath.set(rp, arr);
+      if (s.path) configByPath.set(resolve(s.path), s);
+    }
+
+    // Track ranked claude sessions for partitioning
+    const recentClaude: { config: SessionConfig; rank: number }[] = [];
+    let rank = 0;
+
+    // --- Phase 1: Primary instances (one per project, no session_id, uses cc) ---
+    for (const proj of recentProjects) {
+      if (rank >= visible) break;
+
+      const resolvedPath = resolve(proj.path);
+      const existing = configByPath.get(resolvedPath);
+
+      if (existing) {
+        if (existing.type === "claude" && existing.enabled) {
+          // Primary instance uses cc (--continue), no session_id
+          existing.session_id = undefined;
+          recentClaude.push({ config: existing, rank: rank++ });
+        }
+      } else {
+        // Untracked project — auto-register
+        const name = deriveName(proj.path);
+        if (!this.config.sessions.find((s) => s.name === name)) {
+          this.registry.add({ name, path: resolvedPath, priority: 50, auto_go: false });
+          const newConfig: SessionConfig = {
+            name, type: "claude", path: resolvedPath, command: undefined,
+            auto_go: false, priority: 50, depends_on: [], headless: false,
+            env: {}, health: undefined, max_restarts: 3, restart_backoff_s: 5,
+            enabled: true, bare: false,
+          };
+          this.config.sessions.push(newConfig);
+          configByPath.set(resolvedPath, newConfig);
+          recentClaude.push({ config: newConfig, rank: rank++ });
+        }
       }
     }
 
-    // Track which claude sessions are "recent" and their rank
-    const recentClaude: { config: SessionConfig; rank: number }[] = [];
-    const matched = new Set<string>(); // config names already matched
-    let rank = 0;
+    // --- Phase 2: Named sessions (user-renamed via /rename, resumed by session_id) ---
+    const registeredIds = new Set<string>();
+    // Check existing config/registry for already-registered named sessions
+    for (const s of this.config.sessions) {
+      if (s.session_id) registeredIds.set(s.session_id);
+    }
 
-    for (const sess of recentSessions) {
-      if (rank >= visible) break; // no need to process beyond visible limit
+    for (const named of namedSessions) {
+      if (rank >= visible) break;
+      if (registeredIds.has(named.session_id)) continue;
 
-      const resolvedPath = resolve(sess.path);
+      const resolvedPath = resolve(named.path);
+      // Sanitize title to valid session name
+      const titleName = named.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
+      if (!titleName || !isValidName(titleName)) continue;
 
-      // Match by session_id first (exact match to existing config/registry)
-      const byId = configBySessionId.get(sess.session_id);
-      if (byId && !matched.has(byId.name)) {
-        if (byId.type === "claude" && byId.enabled) {
-          matched.add(byId.name);
-          recentClaude.push({ config: byId, rank: rank++ });
-        }
-        continue;
-      }
+      // Check name conflicts — suffix if needed
+      const existingNames = this.config.sessions.map((s) => s.name);
+      const sessionName = existingNames.includes(titleName)
+        ? nextSuffix(titleName, existingNames.filter((n) => n === titleName || n.match(new RegExp(`^${titleName}-\\d+$`))))
+        : titleName;
 
-      // Match by path — find an unmatched config session at this path
-      const pathConfigs = configsByPath.get(resolvedPath) ?? [];
-      const unmatchedConfig = pathConfigs.find(
-        (s) => s.type === "claude" && s.enabled && !matched.has(s.name) && !s.session_id,
-      );
-      if (unmatchedConfig) {
-        // Assign the session_id to this config entry for --resume
-        unmatchedConfig.session_id = sess.session_id;
-        matched.add(unmatchedConfig.name);
-        recentClaude.push({ config: unmatchedConfig, rank: rank++ });
-        continue;
-      }
-
-      // Untracked session — auto-register with suffixed name if within visible count
-      const baseName = deriveName(sess.path);
-      const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:-\\d+)?$`);
-      const existingNames = this.config.sessions
-        .filter((s) => pattern.test(s.name))
-        .map((s) => s.name);
-
-      const sessionName = existingNames.length === 0
-        ? baseName
-        : nextSuffix(baseName, existingNames);
-
-      // Skip if derived name is invalid
-      if (!isValidName(sessionName)) continue;
-
-      // Register for persistence
       this.registry.add({
         name: sessionName, path: resolvedPath, priority: 50,
-        auto_go: false, session_id: sess.session_id,
+        auto_go: false, session_id: named.session_id,
       });
 
       const newConfig: SessionConfig = {
         name: sessionName, type: "claude", path: resolvedPath, command: undefined,
         auto_go: false, priority: 50, depends_on: [], headless: false,
         env: {}, health: undefined, max_restarts: 3, restart_backoff_s: 5,
-        enabled: true, bare: false, session_id: sess.session_id,
+        enabled: true, bare: false, session_id: named.session_id,
       };
       this.config.sessions.push(newConfig);
-
-      // Update lookups
-      const arr = configsByPath.get(resolvedPath) ?? [];
-      arr.push(newConfig);
-      configsByPath.set(resolvedPath, arr);
-      configBySessionId.set(sess.session_id, newConfig);
-
-      matched.add(sessionName);
+      registeredIds.add(named.session_id);
       recentClaude.push({ config: newConfig, rank: rank++ });
     }
 
@@ -1397,14 +1397,14 @@ export class Daemon {
 
     // Disable claude sessions not in auto-start set
     for (const s of this.config.sessions) {
-      if (s.type !== "claude") continue; // services/daemons untouched
-      if (autoStartNames.has(s.name)) continue; // will auto-start
+      if (s.type !== "claude") continue;
+      if (autoStartNames.has(s.name)) continue;
       if (visibleNames.has(s.name)) {
-        s.enabled = false; // visible on dashboard but don't auto-start
+        s.enabled = false;
         continue;
       }
       if (!autoStartNames.has(s.name)) {
-        s.enabled = false; // not recent — hide
+        s.enabled = false;
       }
     }
 

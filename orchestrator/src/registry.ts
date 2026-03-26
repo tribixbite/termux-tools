@@ -7,8 +7,8 @@
  * Claude Code's ~/.claude/history.jsonl.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type { SessionConfig, SessionType } from "./types.js";
 
 /** A dynamically registered Claude session */
@@ -267,18 +267,25 @@ export function isValidName(name: string): boolean {
   return NAME_PATTERN.test(name);
 }
 
-/**
- * Parse history.jsonl to find recent Claude sessions (per session ID, not per path).
- * Unlike parseRecentProjects() which deduplicates by path, this returns one entry
- * per unique (path, sessionId) pair — enabling multi-instance boot.
- * Only includes sessions active within maxAgeDays.
- */
-export function parseRecentSessions(historyPath: string, maxAgeDays = 7): Array<{
-  name: string;
-  path: string;
+/** A named Claude session discovered from session JSONL custom-title entries */
+export interface NamedSession {
+  /** User-assigned session title (from /rename) */
+  title: string;
+  /** Claude session UUID */
   session_id: string;
+  /** Project path */
+  path: string;
+  /** Most recent activity timestamp (ISO) */
   last_active: string;
-}> {
+}
+
+/**
+ * Find Claude sessions that have user-assigned names (via /rename).
+ * Scans history.jsonl for recent sessions, then checks each session's JSONL
+ * for `type: "custom-title"` entries. Only returns sessions with short titles
+ * (< 30 chars) active within maxAgeDays — these are intentional named sessions.
+ */
+export function findNamedSessions(historyPath: string, maxAgeDays = 7): NamedSession[] {
   if (!existsSync(historyPath)) return [];
 
   try {
@@ -286,38 +293,56 @@ export function parseRecentSessions(historyPath: string, maxAgeDays = 7): Array<
     const lines = content.trim().split("\n");
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    // Deduplicate by sessionId, keeping latest timestamp per session
-    const bySession = new Map<string, { path: string; timestamp: number }>();
+    // Collect recent sessions: sessionId → { path, timestamp }
+    const recentById = new Map<string, { path: string; timestamp: number }>();
     for (const line of lines) {
       try {
         const entry = JSON.parse(line) as HistoryEntry;
         if (!entry.project || !entry.timestamp || !entry.sessionId) continue;
         if (entry.timestamp < cutoff) continue;
-        const existing = bySession.get(entry.sessionId);
+        const existing = recentById.get(entry.sessionId);
         if (!existing || entry.timestamp > existing.timestamp) {
-          bySession.set(entry.sessionId, {
-            path: entry.project,
-            timestamp: entry.timestamp,
-          });
+          recentById.set(entry.sessionId, { path: entry.project, timestamp: entry.timestamp });
         }
-      } catch { /* skip malformed lines */ }
+      } catch { /* skip malformed */ }
     }
 
-    // Convert to sorted array (most recent first)
-    const results: Array<{
-      name: string;
-      path: string;
-      session_id: string;
-      last_active: string;
-    }> = [];
+    // Scan each session's JSONL for custom-title entries
+    const claudeDir = dirname(historyPath); // ~/.claude
+    const projectsDir = join(claudeDir, "projects");
+    const results: NamedSession[] = [];
 
-    for (const [sessionId, info] of bySession) {
-      results.push({
-        name: deriveName(info.path),
-        path: info.path,
-        session_id: sessionId,
-        last_active: new Date(info.timestamp).toISOString(),
-      });
+    for (const [sessionId, info] of recentById) {
+      // Derive project dir name from path (same encoding Claude uses: all non-alnum to -)
+      const projectDirName = info.path.replace(/[^a-zA-Z0-9]/g, "-");
+      const sessionJsonl = join(projectsDir, projectDirName, `${sessionId}.jsonl`);
+
+      if (!existsSync(sessionJsonl)) continue;
+
+      try {
+        const sessionContent = readFileSync(sessionJsonl, "utf-8");
+        // Find the LAST custom-title entry (most recent rename)
+        let customTitle: string | null = null;
+        for (const sLine of sessionContent.split("\n")) {
+          if (!sLine.includes("custom-title")) continue;
+          try {
+            const entry = JSON.parse(sLine) as { type: string; customTitle?: string };
+            if (entry.type === "custom-title" && entry.customTitle) {
+              customTitle = entry.customTitle;
+            }
+          } catch { /* skip */ }
+        }
+
+        // Only include sessions with short, meaningful titles
+        if (customTitle && customTitle.length < 30 && !customTitle.includes("(Fork)")) {
+          results.push({
+            title: customTitle,
+            session_id: sessionId,
+            path: info.path,
+            last_active: new Date(info.timestamp).toISOString(),
+          });
+        }
+      } catch { /* skip unreadable */ }
     }
 
     results.sort((a, b) => b.last_active.localeCompare(a.last_active));
