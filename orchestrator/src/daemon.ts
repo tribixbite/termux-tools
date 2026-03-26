@@ -1415,14 +1415,66 @@ export class Daemon {
       `visible=[${[...visibleNames].join(",")}]`);
   }
 
+  /**
+   * Fuzzy-match a name/fragment to a project path for `tmx open`.
+   * Checks config sessions, registry, and recent history (in that order).
+   * Supports exact, prefix, and substring matching.
+   */
+  private resolveOpenTarget(input: string): string | null {
+    const lower = input.toLowerCase();
+
+    // 1. Exact match against config session names
+    const configExact = this.config.sessions.find((s) => s.name === lower && s.path);
+    if (configExact?.path) return resolve(configExact.path);
+
+    // 2. Exact match against registry entries
+    const regExact = this.registry.find(lower);
+    if (regExact) return regExact.path;
+
+    // 3. Search recent projects from history.jsonl
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const historyPath = join(home, ".claude", "history.jsonl");
+    const recent = parseRecentProjects(historyPath, 1000);
+
+    // Exact name match in recent
+    const recentExact = recent.find((p) => p.name === lower);
+    if (recentExact) return recentExact.path;
+
+    // 4. Prefix match across all sources
+    const allSources: Array<{ name: string; path: string }> = [
+      ...this.config.sessions.filter((s) => s.path).map((s) => ({ name: s.name, path: s.path! })),
+      ...this.registry.entries().map((e) => ({ name: e.name, path: e.path })),
+      ...recent,
+    ];
+
+    const prefixMatches = allSources.filter((s) => s.name.startsWith(lower));
+    if (prefixMatches.length === 1) return resolve(prefixMatches[0].path);
+
+    // 5. Substring match
+    const substringMatches = allSources.filter((s) => s.name.includes(lower));
+    if (substringMatches.length === 1) return resolve(substringMatches[0].path);
+
+    // Multiple matches — pick the first (most recent from history, or config order)
+    if (prefixMatches.length > 0) return resolve(prefixMatches[0].path);
+    if (substringMatches.length > 0) return resolve(substringMatches[0].path);
+
+    return null;
+  }
+
   /** Open command — register and start a new dynamic Claude session (supports multi-instance) */
   private async cmdOpen(path: string, name?: string, autoGo = false, priority = 50): Promise<IpcResponse> {
-    // Validate path
-    if (!existsSync(path)) {
-      return { ok: false, error: `Path does not exist: ${path}` };
-    }
+    let resolvedPath: string;
 
-    const resolvedPath = resolve(path);
+    if (existsSync(path)) {
+      resolvedPath = resolve(path);
+    } else {
+      // Not a valid path — fuzzy match against session names and recent projects
+      const matched = this.resolveOpenTarget(path);
+      if (!matched) {
+        return { ok: false, error: `No project matching '${path}' found in config or recent history` };
+      }
+      resolvedPath = matched;
+    }
     const baseName = name ?? deriveName(path);
     if (!isValidName(baseName)) {
       return { ok: false, error: `Invalid session name '${baseName}' — must match [a-z0-9-]+` };
@@ -2257,7 +2309,10 @@ export class Daemon {
   private async cmdStart(name?: string): Promise<IpcResponse> {
     if (name) {
       const resolved = this.resolveName(name);
-      if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+      if (!resolved) {
+        // Not a loaded session — try fuzzy-matching to open it
+        return this.cmdOpen(name);
+      }
       // Re-enable if disabled by boot recency filtering (on-demand play)
       const sessionConfig = this.config.sessions.find((s) => s.name === resolved);
       if (sessionConfig && !sessionConfig.enabled) {
