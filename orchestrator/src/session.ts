@@ -631,72 +631,99 @@ export function getSessionPanePids(sessionName: string): number[] {
 }
 
 /**
- * Suspend a session by sending SIGSTOP to all pane process groups.
- * SIGSTOP'd processes use zero CPU and their pages can be swapped out
- * by the kernel, freeing physical RAM without losing state.
- * Returns true if at least one process group was signaled.
+ * Find all descendant PIDs of a root process by walking /proc.
+ * Catches detached children (setsid, double-fork) that process group
+ * signals would miss. Returns the full tree including the root PID.
  */
-export function suspendSession(sessionName: string, log: Logger): boolean {
-  const pids = getSessionPanePids(sessionName);
-  if (pids.length === 0) {
-    log.warn(`Cannot suspend '${sessionName}' — no pane PIDs found`, { session: sessionName });
+function findProcessTree(rootPid: number): number[] {
+  // Build pid→ppid map from /proc
+  const ppidMap = new Map<number, number>();
+  try {
+    const result = spawnSync("ps", ["-e", "-o", "pid=,ppid="], {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (result.stdout) {
+      for (const line of result.stdout.trim().split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          ppidMap.set(parseInt(parts[0], 10), parseInt(parts[1], 10));
+        }
+      }
+    }
+  } catch {
+    return [rootPid]; // Fallback: just the root
+  }
+
+  // BFS to find all descendants
+  const tree: number[] = [rootPid];
+  const stack = [rootPid];
+  while (stack.length > 0) {
+    const parent = stack.pop()!;
+    for (const [pid, ppid] of ppidMap) {
+      if (ppid === parent && pid !== rootPid) {
+        tree.push(pid);
+        stack.push(pid);
+      }
+    }
+  }
+  return tree;
+}
+
+/**
+ * Send a signal to an entire session's process tree.
+ * For each pane PID: walks the full descendant tree via /proc and signals
+ * every process individually. This catches detached children (MCP servers,
+ * LSP, background tasks) that process group signals miss.
+ */
+function signalSessionTree(sessionName: string, signal: "SIGSTOP" | "SIGCONT", log: Logger): boolean {
+  const panePids = getSessionPanePids(sessionName);
+  if (panePids.length === 0) {
+    log.warn(`Cannot signal '${sessionName}' — no pane PIDs found`, { session: sessionName });
     return false;
   }
 
   let signaled = 0;
-  for (const pid of pids) {
+  const allPids = new Set<number>();
+
+  for (const panePid of panePids) {
+    const tree = findProcessTree(panePid);
+    for (const pid of tree) allPids.add(pid);
+  }
+
+  for (const pid of allPids) {
     try {
-      // Send SIGSTOP to the entire process group (negative PID)
-      process.kill(-pid, "SIGSTOP");
+      process.kill(pid, signal);
       signaled++;
-    } catch (err) {
-      // ESRCH = no such process (already dead), EPERM = no permission
-      // Try sending to just the process if group kill fails
-      try {
-        process.kill(pid, "SIGSTOP");
-        signaled++;
-      } catch {
-        log.debug(`Failed to SIGSTOP PID ${pid}: ${err}`, { session: sessionName });
-      }
+    } catch {
+      // ESRCH (already dead) or EPERM — skip silently
     }
   }
 
   if (signaled > 0) {
-    log.info(`Suspended '${sessionName}' (${signaled} process groups stopped)`, { session: sessionName });
+    log.info(`${signal} '${sessionName}' (${signaled}/${allPids.size} processes)`, { session: sessionName });
   }
   return signaled > 0;
 }
 
 /**
- * Resume a suspended session by sending SIGCONT to all pane process groups.
- * Returns true if at least one process group was signaled.
+ * Suspend a session by sending SIGSTOP to all processes in the tree.
+ * Walks /proc to find detached children (MCP servers, LSP, background tasks)
+ * that process group signals would miss.
+ * SIGSTOP'd processes use zero CPU and their pages become cold for zRAM.
+ * Returns true if at least one process was signaled.
+ */
+export function suspendSession(sessionName: string, log: Logger): boolean {
+  return signalSessionTree(sessionName, "SIGSTOP", log);
+}
+
+/**
+ * Resume a suspended session by sending SIGCONT to all processes in the tree.
+ * Returns true if at least one process was signaled.
  */
 export function resumeSession(sessionName: string, log: Logger): boolean {
-  const pids = getSessionPanePids(sessionName);
-  if (pids.length === 0) {
-    log.warn(`Cannot resume '${sessionName}' — no pane PIDs found`, { session: sessionName });
-    return false;
-  }
-
-  let signaled = 0;
-  for (const pid of pids) {
-    try {
-      process.kill(-pid, "SIGCONT");
-      signaled++;
-    } catch {
-      try {
-        process.kill(pid, "SIGCONT");
-        signaled++;
-      } catch {
-        // Process may have exited while suspended
-      }
-    }
-  }
-
-  if (signaled > 0) {
-    log.info(`Resumed '${sessionName}' (${signaled} process groups continued)`, { session: sessionName });
-  }
-  return signaled > 0;
+  return signalSessionTree(sessionName, "SIGCONT", log);
 }
 
 /** Promise-based sleep */

@@ -55,7 +55,7 @@ export class MemoryMonitor {
   private psCache: { entries: PsEntry[]; ts: number } | null = null;
   private static readonly PS_CACHE_TTL_MS = 5_000;
 
-  constructor(log: Logger, warningMb = 1500, criticalMb = 800, emergencyMb = 500) {
+  constructor(log: Logger, warningMb = 2000, criticalMb = 1200, emergencyMb = 800) {
     this.log = log;
     this.warningMb = warningMb;
     this.criticalMb = criticalMb;

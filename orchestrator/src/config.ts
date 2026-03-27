@@ -197,9 +197,9 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     wake_lock_policy: asEnum(orc.wake_lock_policy, VALID_WAKE_POLICIES,
       "orchestrator.wake_lock_policy", "active_sessions") as WakeLockPolicy,
     dashboard_port: asNumber(orc.dashboard_port, "orchestrator.dashboard_port", 18970),
-    memory_warning_mb: asNumber(orc.memory_warning_mb, "orchestrator.memory_warning_mb", 1500),
-    memory_critical_mb: asNumber(orc.memory_critical_mb, "orchestrator.memory_critical_mb", 800),
-    memory_emergency_mb: asNumber(orc.memory_emergency_mb, "orchestrator.memory_emergency_mb", 500),
+    memory_warning_mb: asNumber(orc.memory_warning_mb, "orchestrator.memory_warning_mb", 2000),
+    memory_critical_mb: asNumber(orc.memory_critical_mb, "orchestrator.memory_critical_mb", 1200),
+    memory_emergency_mb: asNumber(orc.memory_emergency_mb, "orchestrator.memory_emergency_mb", 800),
   };
 
   // ADB section

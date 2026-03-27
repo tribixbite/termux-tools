@@ -378,9 +378,9 @@ function validateConfig(raw) {
       "active_sessions"
     ),
     dashboard_port: asNumber(orc.dashboard_port, "orchestrator.dashboard_port", 18970),
-    memory_warning_mb: asNumber(orc.memory_warning_mb, "orchestrator.memory_warning_mb", 1500),
-    memory_critical_mb: asNumber(orc.memory_critical_mb, "orchestrator.memory_critical_mb", 800),
-    memory_emergency_mb: asNumber(orc.memory_emergency_mb, "orchestrator.memory_emergency_mb", 500)
+    memory_warning_mb: asNumber(orc.memory_warning_mb, "orchestrator.memory_warning_mb", 2e3),
+    memory_critical_mb: asNumber(orc.memory_critical_mb, "orchestrator.memory_critical_mb", 1200),
+    memory_emergency_mb: asNumber(orc.memory_emergency_mb, "orchestrator.memory_emergency_mb", 800)
   };
   const adbRaw = raw.adb ?? {};
   const adb = {
@@ -1566,54 +1566,67 @@ function getSessionPanePids(sessionName) {
   if (!output) return [];
   return output.split("\n").map((s) => s.trim()).filter(Boolean).map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
 }
-function suspendSession(sessionName, log) {
-  const pids = getSessionPanePids(sessionName);
-  if (pids.length === 0) {
-    log.warn(`Cannot suspend '${sessionName}' \u2014 no pane PIDs found`, { session: sessionName });
-    return false;
+function findProcessTree(rootPid) {
+  const ppidMap = /* @__PURE__ */ new Map();
+  try {
+    const result = (0, import_node_child_process3.spawnSync)("ps", ["-e", "-o", "pid=,ppid="], {
+      encoding: "utf-8",
+      timeout: 5e3,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (result.stdout) {
+      for (const line of result.stdout.trim().split("\n")) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 2) {
+          ppidMap.set(parseInt(parts[0], 10), parseInt(parts[1], 10));
+        }
+      }
+    }
+  } catch {
+    return [rootPid];
   }
-  let signaled = 0;
-  for (const pid of pids) {
-    try {
-      process.kill(-pid, "SIGSTOP");
-      signaled++;
-    } catch (err) {
-      try {
-        process.kill(pid, "SIGSTOP");
-        signaled++;
-      } catch {
-        log.debug(`Failed to SIGSTOP PID ${pid}: ${err}`, { session: sessionName });
+  const tree = [rootPid];
+  const stack = [rootPid];
+  while (stack.length > 0) {
+    const parent = stack.pop();
+    for (const [pid, ppid] of ppidMap) {
+      if (ppid === parent && pid !== rootPid) {
+        tree.push(pid);
+        stack.push(pid);
       }
     }
   }
+  return tree;
+}
+function signalSessionTree(sessionName, signal, log) {
+  const panePids = getSessionPanePids(sessionName);
+  if (panePids.length === 0) {
+    log.warn(`Cannot signal '${sessionName}' \u2014 no pane PIDs found`, { session: sessionName });
+    return false;
+  }
+  let signaled = 0;
+  const allPids = /* @__PURE__ */ new Set();
+  for (const panePid of panePids) {
+    const tree = findProcessTree(panePid);
+    for (const pid of tree) allPids.add(pid);
+  }
+  for (const pid of allPids) {
+    try {
+      process.kill(pid, signal);
+      signaled++;
+    } catch {
+    }
+  }
   if (signaled > 0) {
-    log.info(`Suspended '${sessionName}' (${signaled} process groups stopped)`, { session: sessionName });
+    log.info(`${signal} '${sessionName}' (${signaled}/${allPids.size} processes)`, { session: sessionName });
   }
   return signaled > 0;
 }
+function suspendSession(sessionName, log) {
+  return signalSessionTree(sessionName, "SIGSTOP", log);
+}
 function resumeSession(sessionName, log) {
-  const pids = getSessionPanePids(sessionName);
-  if (pids.length === 0) {
-    log.warn(`Cannot resume '${sessionName}' \u2014 no pane PIDs found`, { session: sessionName });
-    return false;
-  }
-  let signaled = 0;
-  for (const pid of pids) {
-    try {
-      process.kill(-pid, "SIGCONT");
-      signaled++;
-    } catch {
-      try {
-        process.kill(pid, "SIGCONT");
-        signaled++;
-      } catch {
-      }
-    }
-  }
-  if (signaled > 0) {
-    log.info(`Resumed '${sessionName}' (${signaled} process groups continued)`, { session: sessionName });
-  }
-  return signaled > 0;
+  return signalSessionTree(sessionName, "SIGCONT", log);
 }
 function sleep(ms) {
   return new Promise((resolve5) => setTimeout(resolve5, ms));
@@ -1809,7 +1822,7 @@ var MemoryMonitor = class _MemoryMonitor {
   /** Cached ps output with TTL to avoid blocking execSync on every call */
   psCache = null;
   static PS_CACHE_TTL_MS = 5e3;
-  constructor(log, warningMb = 1500, criticalMb = 800, emergencyMb = 500) {
+  constructor(log, warningMb = 2e3, criticalMb = 1200, emergencyMb = 800) {
     this.log = log;
     this.warningMb = warningMb;
     this.criticalMb = criticalMb;
@@ -3316,6 +3329,7 @@ var Daemon = class _Daemon {
     if (s.suspended) {
       resumeSession(name, this.log);
       this.state.setSuspended(name, false);
+      await sleep2(500);
     }
     this.state.transition(name, "stopping");
     const stopped = await stopSession(name, this.log);
@@ -3600,9 +3614,9 @@ var Daemon = class _Daemon {
         (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(
           "sh",
           "-c",
-          `echo -900 > /proc/${termuxPid}/oom_score_adj`
+          `echo -200 > /proc/${termuxPid}/oom_score_adj`
         ), { timeout: 1e4, stdio: "ignore" });
-        this.log.info(`Set oom_score_adj=-900 for Termux PID ${termuxPid}`);
+        this.log.info(`Set oom_score_adj=-200 for Termux PID ${termuxPid}`);
       }
     } catch (err) {
       this.log.debug(`oom_score_adj failed (non-critical): ${err}`);
@@ -3734,12 +3748,12 @@ var Daemon = class _Daemon {
     trace("health:sweep:done");
   }
   // -- Memory monitoring -------------------------------------------------------
-  /** Start periodic memory monitoring timer (every 15s) */
+  /** Start periodic memory monitoring timer (every 5s — fast enough to catch burst OOM) */
   startMemoryTimer() {
     if (this.memoryTimer) clearInterval(this.memoryTimer);
     this.memoryTimer = setInterval(() => {
       this.memoryPollAndShed();
-    }, 15e3);
+    }, 5e3);
     this.memoryPollAndShed();
   }
   /** Poll system memory and update per-session RSS/activity */
@@ -3799,15 +3813,18 @@ var Daemon = class _Daemon {
       }
       candidates.sort((a, b) => b.rss - a.rss);
       if (candidates.length > 0) {
-        const target = candidates[0];
+        const limit = pressure === "emergency" ? candidates.length : 1;
+        const targets = candidates.slice(0, limit);
+        const names = targets.map((t) => t.name);
         this.log.warn(
-          `Memory ${pressure}: auto-suspending '${target.name}' (RSS ${target.rss}MB)`,
-          { session: target.name }
+          `Memory ${pressure}: auto-suspending ${names.join(", ")}`
         );
-        if (suspendSession(target.name, this.log)) {
-          this.state.setSuspended(target.name, true, true);
-          notify("tmx", `Paused '${target.name}' \u2014 memory ${pressure}`, `tmx-autosuspend`);
+        for (const target of targets) {
+          if (suspendSession(target.name, this.log)) {
+            this.state.setSuspended(target.name, true, true);
+          }
         }
+        notify("tmx", `Paused ${names.join(", ")} \u2014 memory ${pressure}`, `tmx-autosuspend`);
       }
     } else if (pressure === "normal") {
       const sessions = this.state.getState().sessions;

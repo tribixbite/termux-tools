@@ -677,6 +677,8 @@ export class Daemon {
     if (s.suspended) {
       resumeSession(name, this.log);
       this.state.setSuspended(name, false);
+      // Brief delay for process to schedule and handle signals after SIGCONT
+      await sleep(500);
     }
 
     this.state.transition(name, "stopping");
@@ -1033,7 +1035,9 @@ export class Daemon {
 
     // 5. OOM score adjustment — make Termux less likely to be killed by LMK
     // oom_score_adj ranges from -1000 (never kill) to 1000 (kill first).
-    // -900 is very aggressive but appropriate for a developer device.
+    // -200 is moderate — enough to survive pressure spikes without starving
+    // foreground apps. Logcat shows Termux main process already at adj=0
+    // (foreground), so this mainly protects against transient demotion.
     try {
       // Get Termux's main PID from the app process
       const pidResult = spawnSync(ADB_BIN, this.adbShellArgs(
@@ -1042,9 +1046,9 @@ export class Daemon {
       const termuxPid = pidResult.stdout?.trim();
       if (termuxPid && /^\d+$/.test(termuxPid)) {
         spawnSync(ADB_BIN, this.adbShellArgs(
-          "sh", "-c", `echo -900 > /proc/${termuxPid}/oom_score_adj`,
+          "sh", "-c", `echo -200 > /proc/${termuxPid}/oom_score_adj`,
         ), { timeout: 10_000, stdio: "ignore" });
-        this.log.info(`Set oom_score_adj=-900 for Termux PID ${termuxPid}`);
+        this.log.info(`Set oom_score_adj=-200 for Termux PID ${termuxPid}`);
       }
     } catch (err) {
       this.log.debug(`oom_score_adj failed (non-critical): ${err}`);
@@ -1208,12 +1212,12 @@ export class Daemon {
 
   // -- Memory monitoring -------------------------------------------------------
 
-  /** Start periodic memory monitoring timer (every 15s) */
+  /** Start periodic memory monitoring timer (every 5s — fast enough to catch burst OOM) */
   private startMemoryTimer(): void {
     if (this.memoryTimer) clearInterval(this.memoryTimer);
     this.memoryTimer = setInterval(() => {
       this.memoryPollAndShed();
-    }, 15_000);
+    }, 5_000);
     // Run an initial poll immediately
     this.memoryPollAndShed();
   }
@@ -1298,17 +1302,21 @@ export class Daemon {
       }
       candidates.sort((a, b) => b.rss - a.rss);
 
-      // Suspend one idle session per poll cycle to avoid over-freezing
       if (candidates.length > 0) {
-        const target = candidates[0];
+        // Emergency: suspend ALL idle sessions immediately (lmkd kills come in bursts)
+        // Critical: suspend one per cycle to avoid over-freezing
+        const limit = pressure === "emergency" ? candidates.length : 1;
+        const targets = candidates.slice(0, limit);
+        const names = targets.map((t) => t.name);
         this.log.warn(
-          `Memory ${pressure}: auto-suspending '${target.name}' (RSS ${target.rss}MB)`,
-          { session: target.name },
+          `Memory ${pressure}: auto-suspending ${names.join(", ")}`,
         );
-        if (suspendSession(target.name, this.log)) {
-          this.state.setSuspended(target.name, true, true); // auto=true
-          notify("tmx", `Paused '${target.name}' — memory ${pressure}`, `tmx-autosuspend`);
+        for (const target of targets) {
+          if (suspendSession(target.name, this.log)) {
+            this.state.setSuspended(target.name, true, true); // auto=true
+          }
         }
+        notify("tmx", `Paused ${names.join(", ")} — memory ${pressure}`, `tmx-autosuspend`);
       }
     } else if (pressure === "normal") {
       // Auto-resume sessions that were auto-suspended (not manually suspended)
