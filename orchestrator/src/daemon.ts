@@ -1567,20 +1567,20 @@ export class Daemon {
     const resolved = this.resolveName(name);
     if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
 
-    // Verify it's a registry session, not config
-    const regEntry = this.registry.find(resolved);
-    if (!regEntry) {
-      return { ok: false, error: `'${resolved}' is a config session — use 'tmx stop' instead` };
-    }
-
-    // Stop the session
+    // Stop the session if it's running
     await this.stopSessionByName(resolved);
 
-    // Remove from registry
-    this.registry.remove(resolved);
+    // Remove from registry if dynamically opened
+    const regEntry = this.registry.find(resolved);
+    if (regEntry) {
+      this.registry.remove(resolved);
+    }
 
-    // Remove from live config
+    // Remove from live session list (config sessions reappear on next boot)
     this.config.sessions = this.config.sessions.filter((s) => s.name !== resolved);
+
+    // Remove session state so it vanishes from dashboard immediately
+    this.state.removeSession(resolved);
 
     this.log.info(`Closed session '${resolved}'`, { session: resolved });
     return { ok: true, data: `Closed '${resolved}'` };

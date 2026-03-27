@@ -83,6 +83,14 @@ export class StateManager {
     this.persist();
   }
 
+  /** Remove a session from state entirely */
+  removeSession(name: string): void {
+    if (this.state.sessions[name]) {
+      delete this.state.sessions[name];
+      this.persist();
+    }
+  }
+
   /** Transition a session to a new status with validation */
   transition(name: string, to: SessionStatus, error?: string): boolean {
     const session = this.state.sessions[name];
