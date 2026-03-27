@@ -121,6 +121,11 @@ async function main(): Promise<void> {
     case "tabs":
     case "open":
     case "close":
+    case "suspend":
+    case "resume":
+    case "suspend-others":
+    case "suspend-all":
+    case "resume-all":
       return runIpcCommand();
 
     default:
@@ -654,6 +659,33 @@ async function runIpcCommand(): Promise<void> {
     case "recent":
       cmd = { cmd: "recent", count: subArgs[0] ? parseInt(subArgs[0], 10) : undefined };
       break;
+    case "suspend":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx suspend <session-name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "suspend", name: subArgs[0] };
+      break;
+    case "resume":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx resume <session-name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "resume", name: subArgs[0] };
+      break;
+    case "suspend-others":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx suspend-others <session-to-keep>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "suspend-others", name: subArgs[0] };
+      break;
+    case "suspend-all":
+      cmd = { cmd: "suspend-all" };
+      break;
+    case "resume-all":
+      cmd = { cmd: "resume-all" };
+      break;
     default:
       // Try as fuzzy session name → status
       cmd = { cmd: "status", name: command };
@@ -783,8 +815,9 @@ function formatDaemonStatus(data: DaemonStatusData): void {
     for (const s of data.sessions) {
       const status = STATUS_COLORS[s.status] ?? s.status;
       const uptime = s.uptime ?? "-";
-      // Activity indicator
-      const actIcon = s.activity === "active" ? `${GREEN}run${RESET}`
+      // Activity indicator — suspended overrides activity classification
+      const actIcon = (s as { suspended?: boolean }).suspended ? `${CYAN}paused${RESET}`
+        : s.activity === "active" ? `${GREEN}run${RESET}`
         : s.activity === "idle" ? `${YELLOW}idle${RESET}`
         : s.activity === "stopped" ? `${DIM}stop${RESET}`
         : `${DIM}-${RESET}`;
@@ -949,6 +982,11 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}open${RESET} <path> [opts]     Register and start a dynamic Claude session
   ${CYAN}close${RESET} <name>          Stop and unregister a dynamic session
   ${CYAN}recent${RESET} [count]        Show recently active Claude projects
+  ${CYAN}suspend${RESET} <name>         Freeze a session (SIGSTOP — zero CPU, swappable RAM)
+  ${CYAN}resume${RESET} <name>         Unfreeze a suspended session (SIGCONT)
+  ${CYAN}suspend-others${RESET} <name> Suspend all except named session (free RAM for builds)
+  ${CYAN}suspend-all${RESET}           Suspend all running sessions
+  ${CYAN}resume-all${RESET}            Resume all suspended sessions
   ${CYAN}go${RESET} <name>             Send "go" to a Claude session
   ${CYAN}send${RESET} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET}                Start daemon (foreground)

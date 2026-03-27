@@ -179,6 +179,10 @@ export interface SessionState {
   rss_mb: number | null;
   /** CPU activity classification (from activity detector) */
   activity: "active" | "idle" | "stopped" | "unknown" | null;
+  /** Whether the session is frozen via SIGSTOP (uses zero CPU, pages can be swapped) */
+  suspended: boolean;
+  /** Whether auto-suspend froze this session (so auto-resume knows to unfreeze it) */
+  auto_suspended: boolean;
 }
 
 /** Full persisted state */
@@ -234,7 +238,12 @@ export type IpcCommand =
   | { cmd: "memory" }
   | { cmd: "open"; path: string; name?: string; auto_go?: boolean; priority?: number }
   | { cmd: "close"; name: string }
-  | { cmd: "recent"; count?: number };
+  | { cmd: "recent"; count?: number }
+  | { cmd: "suspend"; name: string }
+  | { cmd: "resume"; name: string }
+  | { cmd: "suspend-others"; name: string }
+  | { cmd: "suspend-all" }
+  | { cmd: "resume-all" };
 
 /** Response from daemon to CLI */
 export interface IpcResponse {

@@ -24,6 +24,8 @@ export function newSessionState(name: string): SessionState {
     tmux_pid: null,
     rss_mb: null,
     activity: null,
+    suspended: false,
+    auto_suspended: false,
   };
 }
 
@@ -203,6 +205,16 @@ export class StateManager {
   /** Update battery snapshot (transient, not persisted) */
   updateBattery(battery: BatterySnapshot | null): void {
     this.state.battery = battery;
+  }
+
+  /** Mark a session as suspended (SIGSTOP'd) */
+  setSuspended(name: string, suspended: boolean, auto = false): void {
+    const session = this.state.sessions[name];
+    if (!session) return;
+    session.suspended = suspended;
+    if (auto) session.auto_suspended = suspended;
+    if (!suspended) session.auto_suspended = false;
+    this.persist();
   }
 
   /** Force-set a session's status (for adoption/reconciliation) */

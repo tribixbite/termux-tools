@@ -728,7 +728,9 @@ function newSessionState(name) {
     consecutive_failures: 0,
     tmux_pid: null,
     rss_mb: null,
-    activity: null
+    activity: null,
+    suspended: false,
+    auto_suspended: false
   };
 }
 function newDaemonState() {
@@ -774,6 +776,13 @@ var StateManager = class {
       }
     }
     this.persist();
+  }
+  /** Remove a session from state entirely */
+  removeSession(name) {
+    if (this.state.sessions[name]) {
+      delete this.state.sessions[name];
+      this.persist();
+    }
   }
   /** Transition a session to a new status with validation */
   transition(name, to, error) {
@@ -868,6 +877,15 @@ var StateManager = class {
   /** Update battery snapshot (transient, not persisted) */
   updateBattery(battery) {
     this.state.battery = battery;
+  }
+  /** Mark a session as suspended (SIGSTOP'd) */
+  setSuspended(name, suspended, auto = false) {
+    const session = this.state.sessions[name];
+    if (!session) return;
+    session.suspended = suspended;
+    if (auto) session.auto_suspended = suspended;
+    if (!suspended) session.auto_suspended = false;
+    this.persist();
   }
   /** Force-set a session's status (for adoption/reconciliation) */
   forceStatus(name, status) {
@@ -1542,6 +1560,60 @@ function createTermuxTab(sessionName, log) {
     log.warn(`No tmux clients found \u2014 open Termux and run: tmux attach -t ${sessionName}`, { session: sessionName });
   }
   return true;
+}
+function getSessionPanePids(sessionName) {
+  const output = tmux("list-panes", "-t", sessionName, "-F", "#{pane_pid}");
+  if (!output) return [];
+  return output.split("\n").map((s) => s.trim()).filter(Boolean).map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
+}
+function suspendSession(sessionName, log) {
+  const pids = getSessionPanePids(sessionName);
+  if (pids.length === 0) {
+    log.warn(`Cannot suspend '${sessionName}' \u2014 no pane PIDs found`, { session: sessionName });
+    return false;
+  }
+  let signaled = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, "SIGSTOP");
+      signaled++;
+    } catch (err) {
+      try {
+        process.kill(pid, "SIGSTOP");
+        signaled++;
+      } catch {
+        log.debug(`Failed to SIGSTOP PID ${pid}: ${err}`, { session: sessionName });
+      }
+    }
+  }
+  if (signaled > 0) {
+    log.info(`Suspended '${sessionName}' (${signaled} process groups stopped)`, { session: sessionName });
+  }
+  return signaled > 0;
+}
+function resumeSession(sessionName, log) {
+  const pids = getSessionPanePids(sessionName);
+  if (pids.length === 0) {
+    log.warn(`Cannot resume '${sessionName}' \u2014 no pane PIDs found`, { session: sessionName });
+    return false;
+  }
+  let signaled = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, "SIGCONT");
+      signaled++;
+    } catch {
+      try {
+        process.kill(pid, "SIGCONT");
+        signaled++;
+      } catch {
+      }
+    }
+  }
+  if (signaled > 0) {
+    log.info(`Resumed '${sessionName}' (${signaled} process groups continued)`, { session: sessionName });
+  }
+  return signaled > 0;
 }
 function sleep(ms) {
   return new Promise((resolve5) => setTimeout(resolve5, ms));
@@ -3241,6 +3313,10 @@ var Daemon = class _Daemon {
     const s = this.state.getSession(name);
     if (!s) return false;
     if (s.status === "stopped" || s.status === "pending") return true;
+    if (s.suspended) {
+      resumeSession(name, this.log);
+      this.state.setSuspended(name, false);
+    }
     this.state.transition(name, "stopping");
     const stopped = await stopSession(name, this.log);
     if (stopped) {
@@ -3513,6 +3589,40 @@ var Daemon = class _Daemon {
         this.log.warn(`Background allow failed for ${pkg}`, { error: String(err) });
       }
     }
+    try {
+      const pidResult = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(
+        "sh",
+        "-c",
+        "pidof com.termux | head -1"
+      ), { encoding: "utf-8", timeout: 1e4, stdio: ["ignore", "pipe", "pipe"] });
+      const termuxPid = pidResult.stdout?.trim();
+      if (termuxPid && /^\d+$/.test(termuxPid)) {
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(
+          "sh",
+          "-c",
+          `echo -900 > /proc/${termuxPid}/oom_score_adj`
+        ), { timeout: 1e4, stdio: "ignore" });
+        this.log.info(`Set oom_score_adj=-900 for Termux PID ${termuxPid}`);
+      }
+    } catch (err) {
+      this.log.debug(`oom_score_adj failed (non-critical): ${err}`);
+    }
+    for (const pkg of ["com.termux", "com.microsoft.emmx.canary"]) {
+      try {
+        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "activity", "set-inactive", pkg, "false"), {
+          timeout: 1e4,
+          stdio: "ignore"
+        });
+      } catch {
+      }
+    }
+    try {
+      (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("settings", "put", "global", "low_power_trigger_level", "1"), {
+        timeout: 1e4,
+        stdio: "ignore"
+      });
+    } catch {
+    }
     const samsungPkgs = [
       "com.samsung.android.ssco",
       "com.samsung.android.mocca",
@@ -3525,7 +3635,7 @@ var Daemon = class _Daemon {
       }
     }
     trace("adb:fix:complete");
-    this.log.info("Android process protection fixes applied (phantom + doze + standby + background)");
+    this.log.info("Android process protection fixes applied (phantom + doze + standby + background + oom_adj + idle + lmk)");
   }
   /** Start a periodic ADB retry timer */
   startAdbRetryTimer() {
@@ -3589,6 +3699,7 @@ var Daemon = class _Daemon {
     for (const session of this.config.sessions) {
       const s = this.state.getSession(session.name);
       if (!s || s.status !== "degraded") continue;
+      if (s.suspended) continue;
       if (s.restart_count >= session.max_restarts) {
         this.state.transition(
           session.name,
@@ -3667,8 +3778,47 @@ var Daemon = class _Daemon {
       const activityState = this.activity.classifyTree(session.name, pid);
       this.state.updateSessionMetrics(session.name, rss_mb, activityState);
     }
+    this.autoSuspendOnPressure(sysMem?.pressure ?? "normal");
     this.pushSseState();
     this.updateStatusNotification();
+  }
+  /**
+   * Auto-suspend idle sessions when memory pressure is critical/emergency.
+   * Auto-resume previously auto-suspended sessions when pressure returns to normal.
+   * This is the key mechanism that prevents OOM death spirals during heavy builds.
+   */
+  autoSuspendOnPressure(pressure) {
+    if (pressure === "critical" || pressure === "emergency") {
+      const candidates = [];
+      const sessions = this.state.getState().sessions;
+      for (const [name, s] of Object.entries(sessions)) {
+        if (s.suspended) continue;
+        if (s.status !== "running" && s.status !== "degraded") continue;
+        if (s.activity !== "idle") continue;
+        candidates.push({ name, rss: s.rss_mb ?? 0 });
+      }
+      candidates.sort((a, b) => b.rss - a.rss);
+      if (candidates.length > 0) {
+        const target = candidates[0];
+        this.log.warn(
+          `Memory ${pressure}: auto-suspending '${target.name}' (RSS ${target.rss}MB)`,
+          { session: target.name }
+        );
+        if (suspendSession(target.name, this.log)) {
+          this.state.setSuspended(target.name, true, true);
+          notify("tmx", `Paused '${target.name}' \u2014 memory ${pressure}`, `tmx-autosuspend`);
+        }
+      }
+    } else if (pressure === "normal") {
+      const sessions = this.state.getState().sessions;
+      for (const [name, s] of Object.entries(sessions)) {
+        if (!s.auto_suspended) continue;
+        this.log.info(`Memory normal: auto-resuming '${name}'`, { session: name });
+        if (resumeSession(name, this.log)) {
+          this.state.setSuspended(name, false);
+        }
+      }
+    }
   }
   /** Push current state snapshot to all SSE clients */
   pushSseState() {
@@ -3683,15 +3833,28 @@ var Daemon = class _Daemon {
    * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
    * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
    */
+  /**
+   * Update the persistent Android notification with session counts + action buttons.
+   *
+   * Button layout (3 max from termux-notification):
+   * - Button 1: "Pause All" / "Resume All" (toggles based on current state)
+   * - Button 2: "Stop All" — emergency stop for all sessions
+   * - Button 3: "Dashboard" — opens browser to localhost dashboard
+   *
+   * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
+   */
   updateStatusNotification() {
     const sessions = this.state.getState().sessions;
     const activeNames = [];
     const idleNames = [];
+    const suspendedNames = [];
     let totalRunning = 0;
     for (const [name, s] of Object.entries(sessions)) {
       if (s.status === "running" || s.status === "degraded") {
         totalRunning++;
-        if (s.activity === "active") {
+        if (s.suspended) {
+          suspendedNames.push(name);
+        } else if (s.activity === "active") {
           activeNames.push(name);
         } else {
           idleNames.push(name);
@@ -3699,8 +3862,9 @@ var Daemon = class _Daemon {
       }
     }
     const activeCount = activeNames.length;
-    const title = `tmx \u25B6 ${activeCount}/${totalRunning}`;
-    const MAX_NAMES = 10;
+    const suspendedCount = suspendedNames.length;
+    const title = suspendedCount > 0 ? `tmx \u25B6 ${activeCount}/${totalRunning} (${suspendedCount} paused)` : `tmx \u25B6 ${activeCount}/${totalRunning}`;
+    const MAX_NAMES = 8;
     const parts = [];
     if (activeNames.length > 0) {
       const shown = activeNames.slice(0, MAX_NAMES);
@@ -3712,7 +3876,20 @@ var Daemon = class _Daemon {
       const extra = idleNames.length - shown.length;
       parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
+    if (suspendedNames.length > 0) {
+      const shown = suspendedNames.slice(0, MAX_NAMES);
+      const extra = suspendedNames.length - shown.length;
+      parts.push(`paused: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
+    const port = this.config.orchestrator.dashboard_port;
+    const apiBase = `http://127.0.0.1:${port}/api`;
+    const anySuspended = suspendedCount > 0;
+    const toggleLabel = anySuspended ? "Resume All" : "Pause All";
+    const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
+    const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
+    const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
+    const dashboardAction = `${resolveTermuxBin3("termux-open-url")} http://localhost:${port}`;
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
@@ -3727,7 +3904,19 @@ var Daemon = class _Daemon {
       "--icon",
       "dashboard",
       "--action",
-      `${resolveTermuxBin3("termux-open-url")} http://localhost:${this.config.orchestrator.dashboard_port}`
+      dashboardAction,
+      "--button1",
+      toggleLabel,
+      "--button1-action",
+      toggleAction,
+      "--button2",
+      "Stop All",
+      "--button2-action",
+      stopAction,
+      "--button3",
+      "Dashboard",
+      "--button3-action",
+      dashboardAction
     ]);
   }
   // -- Session registry ---------------------------------------------------------
@@ -3959,13 +4148,13 @@ var Daemon = class _Daemon {
   async cmdClose(name) {
     const resolved = this.resolveName(name);
     if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
-    const regEntry = this.registry.find(resolved);
-    if (!regEntry) {
-      return { ok: false, error: `'${resolved}' is a config session \u2014 use 'tmx stop' instead` };
-    }
     await this.stopSessionByName(resolved);
-    this.registry.remove(resolved);
+    const regEntry = this.registry.find(resolved);
+    if (regEntry) {
+      this.registry.remove(resolved);
+    }
     this.config.sessions = this.config.sessions.filter((s) => s.name !== resolved);
+    this.state.removeSession(resolved);
     this.log.info(`Closed session '${resolved}'`, { session: resolved });
     return { ok: true, data: `Closed '${resolved}'` };
   }
@@ -4001,6 +4190,90 @@ var Daemon = class _Daemon {
       };
     });
     return { ok: true, data: results };
+  }
+  // -- Session suspension (SIGSTOP/SIGCONT) ------------------------------------
+  /** Suspend a single session by name — freezes all processes via SIGSTOP */
+  cmdSuspend(name) {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const s = this.state.getSession(resolved);
+    if (!s) return { ok: false, error: `No state for session: ${resolved}` };
+    if (s.suspended) return { ok: true, data: `'${resolved}' already suspended` };
+    if (s.status !== "running" && s.status !== "degraded") {
+      return { ok: false, error: `Cannot suspend '${resolved}' \u2014 status is ${s.status}` };
+    }
+    const ok = suspendSession(resolved, this.log);
+    if (ok) {
+      this.state.setSuspended(resolved, true);
+      this.updateStatusNotification();
+      this.pushSseState();
+    }
+    return { ok, data: ok ? `Suspended '${resolved}'` : `Failed to suspend '${resolved}'` };
+  }
+  /** Resume a single suspended session — unfreezes processes via SIGCONT */
+  cmdResume(name) {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const s = this.state.getSession(resolved);
+    if (!s) return { ok: false, error: `No state for session: ${resolved}` };
+    if (!s.suspended) return { ok: true, data: `'${resolved}' not suspended` };
+    const ok = resumeSession(resolved, this.log);
+    if (ok) {
+      this.state.setSuspended(resolved, false);
+      this.updateStatusNotification();
+      this.pushSseState();
+    }
+    return { ok, data: ok ? `Resumed '${resolved}'` : `Failed to resume '${resolved}'` };
+  }
+  /** Suspend all sessions except the named one — "make room" for a heavy build */
+  cmdSuspendOthers(name) {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const sessions = this.state.getState().sessions;
+    let suspended = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (sName === resolved) continue;
+      if (s.suspended) continue;
+      if (s.status !== "running" && s.status !== "degraded") continue;
+      if (suspendSession(sName, this.log)) {
+        this.state.setSuspended(sName, true);
+        suspended++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Suspended ${suspended} sessions (except '${resolved}')` };
+  }
+  /** Suspend all running sessions */
+  cmdSuspendAll() {
+    const sessions = this.state.getState().sessions;
+    let suspended = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (s.suspended) continue;
+      if (s.status !== "running" && s.status !== "degraded") continue;
+      if (suspendSession(sName, this.log)) {
+        this.state.setSuspended(sName, true);
+        suspended++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Suspended ${suspended} sessions` };
+  }
+  /** Resume all suspended sessions */
+  cmdResumeAll() {
+    const sessions = this.state.getState().sessions;
+    let resumed = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (!s.suspended) continue;
+      if (resumeSession(sName, this.log)) {
+        this.state.setSuspended(sName, false);
+        resumed++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Resumed ${resumed} sessions` };
   }
   // -- Battery monitoring ------------------------------------------------------
   /** Start periodic battery monitoring timer */
@@ -4274,6 +4547,29 @@ var Daemon = class _Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           await this.ensureSocket();
           resp = { ok: true };
+          break;
+        case "suspend":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdSuspend(name);
+          break;
+        case "resume":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdResume(name);
+          break;
+        case "suspend-others":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdSuspendOthers(name);
+          break;
+        case "suspend-all":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = this.cmdSuspendAll();
+          break;
+        case "resume-all":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = this.cmdResumeAll();
           break;
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
@@ -4598,6 +4894,16 @@ var Daemon = class _Daemon {
         return this.cmdClose(cmd.name);
       case "recent":
         return this.cmdRecent(cmd.count);
+      case "suspend":
+        return this.cmdSuspend(cmd.name);
+      case "resume":
+        return this.cmdResume(cmd.name);
+      case "suspend-others":
+        return this.cmdSuspendOthers(cmd.name);
+      case "suspend-all":
+        return this.cmdSuspendAll();
+      case "resume-all":
+        return this.cmdResumeAll();
       default:
         return { ok: false, error: `Unknown command: ${cmd.cmd}` };
     }
@@ -4940,6 +5246,11 @@ async function main() {
     case "tabs":
     case "open":
     case "close":
+    case "suspend":
+    case "resume":
+    case "suspend-others":
+    case "suspend-all":
+    case "resume-all":
       return runIpcCommand();
     default:
       return runIpcCommand();
@@ -5366,6 +5677,33 @@ async function runIpcCommand() {
     case "recent":
       cmd = { cmd: "recent", count: subArgs[0] ? parseInt(subArgs[0], 10) : void 0 };
       break;
+    case "suspend":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx suspend <session-name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "suspend", name: subArgs[0] };
+      break;
+    case "resume":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx resume <session-name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "resume", name: subArgs[0] };
+      break;
+    case "suspend-others":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx suspend-others <session-to-keep>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "suspend-others", name: subArgs[0] };
+      break;
+    case "suspend-all":
+      cmd = { cmd: "suspend-all" };
+      break;
+    case "resume-all":
+      cmd = { cmd: "resume-all" };
+      break;
     default:
       cmd = { cmd: "status", name: command };
       break;
@@ -5465,7 +5803,7 @@ function formatDaemonStatus(data) {
     for (const s of data.sessions) {
       const status = STATUS_COLORS[s.status] ?? s.status;
       const uptime2 = s.uptime ?? "-";
-      const actIcon = s.activity === "active" ? `${GREEN}run${RESET2}` : s.activity === "idle" ? `${YELLOW}idle${RESET2}` : s.activity === "stopped" ? `${DIM2}stop${RESET2}` : `${DIM2}-${RESET2}`;
+      const actIcon = s.suspended ? `${CYAN}paused${RESET2}` : s.activity === "active" ? `${GREEN}run${RESET2}` : s.activity === "idle" ? `${YELLOW}idle${RESET2}` : s.activity === "stopped" ? `${DIM2}stop${RESET2}` : `${DIM2}-${RESET2}`;
       const rss = s.rss_mb != null ? `${s.rss_mb}MB` : "-";
       const health = s.last_health_check ? s.consecutive_failures > 0 ? `${RED}${s.consecutive_failures} fail${RESET2}` : `${GREEN}ok${RESET2}` : `${DIM2}-${RESET2}`;
       console.log(`${s.name.padEnd(22)} ${status.padEnd(27)} ${actIcon.padEnd(17)} ${rss.padEnd(8)} ${uptime2.padEnd(10)} ${health}`);
@@ -5593,6 +5931,11 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}open${RESET2} <path> [opts]     Register and start a dynamic Claude session
   ${CYAN}close${RESET2} <name>          Stop and unregister a dynamic session
   ${CYAN}recent${RESET2} [count]        Show recently active Claude projects
+  ${CYAN}suspend${RESET2} <name>         Freeze a session (SIGSTOP \u2014 zero CPU, swappable RAM)
+  ${CYAN}resume${RESET2} <name>         Unfreeze a suspended session (SIGCONT)
+  ${CYAN}suspend-others${RESET2} <name> Suspend all except named session (free RAM for builds)
+  ${CYAN}suspend-all${RESET2}           Suspend all running sessions
+  ${CYAN}resume-all${RESET2}            Resume all suspended sessions
   ${CYAN}go${RESET2} <name>             Send "go" to a Claude session
   ${CYAN}send${RESET2} <name> <text>    Send arbitrary text to a session
   ${CYAN}daemon${RESET2}                Start daemon (foreground)

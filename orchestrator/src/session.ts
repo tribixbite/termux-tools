@@ -614,6 +614,91 @@ export function createTermuxTab(sessionName: string, log: Logger): boolean {
   return true;
 }
 
+/**
+ * Get all pane PIDs for a tmux session.
+ * Returns an array of PIDs (one per pane). These are the shell processes
+ * running inside each tmux pane — their process groups contain the actual work.
+ */
+export function getSessionPanePids(sessionName: string): number[] {
+  const output = tmux("list-panes", "-t", sessionName, "-F", "#{pane_pid}");
+  if (!output) return [];
+  return output
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => parseInt(s, 10))
+    .filter((n) => !isNaN(n));
+}
+
+/**
+ * Suspend a session by sending SIGSTOP to all pane process groups.
+ * SIGSTOP'd processes use zero CPU and their pages can be swapped out
+ * by the kernel, freeing physical RAM without losing state.
+ * Returns true if at least one process group was signaled.
+ */
+export function suspendSession(sessionName: string, log: Logger): boolean {
+  const pids = getSessionPanePids(sessionName);
+  if (pids.length === 0) {
+    log.warn(`Cannot suspend '${sessionName}' — no pane PIDs found`, { session: sessionName });
+    return false;
+  }
+
+  let signaled = 0;
+  for (const pid of pids) {
+    try {
+      // Send SIGSTOP to the entire process group (negative PID)
+      process.kill(-pid, "SIGSTOP");
+      signaled++;
+    } catch (err) {
+      // ESRCH = no such process (already dead), EPERM = no permission
+      // Try sending to just the process if group kill fails
+      try {
+        process.kill(pid, "SIGSTOP");
+        signaled++;
+      } catch {
+        log.debug(`Failed to SIGSTOP PID ${pid}: ${err}`, { session: sessionName });
+      }
+    }
+  }
+
+  if (signaled > 0) {
+    log.info(`Suspended '${sessionName}' (${signaled} process groups stopped)`, { session: sessionName });
+  }
+  return signaled > 0;
+}
+
+/**
+ * Resume a suspended session by sending SIGCONT to all pane process groups.
+ * Returns true if at least one process group was signaled.
+ */
+export function resumeSession(sessionName: string, log: Logger): boolean {
+  const pids = getSessionPanePids(sessionName);
+  if (pids.length === 0) {
+    log.warn(`Cannot resume '${sessionName}' — no pane PIDs found`, { session: sessionName });
+    return false;
+  }
+
+  let signaled = 0;
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, "SIGCONT");
+      signaled++;
+    } catch {
+      try {
+        process.kill(pid, "SIGCONT");
+        signaled++;
+      } catch {
+        // Process may have exited while suspended
+      }
+    }
+  }
+
+  if (signaled > 0) {
+    log.info(`Resumed '${sessionName}' (${signaled} process groups continued)`, { session: sessionName });
+  }
+  return signaled > 0;
+}
+
 /** Promise-based sleep */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

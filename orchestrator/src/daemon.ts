@@ -41,6 +41,8 @@ import {
   spawnBareProcess,
   ensureTmuxLdPreload,
   bringTermuxToForeground,
+  suspendSession,
+  resumeSession,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -671,6 +673,12 @@ export class Daemon {
 
     if (s.status === "stopped" || s.status === "pending") return true;
 
+    // Resume first if suspended — SIGSTOP'd processes can't respond to graceful shutdown
+    if (s.suspended) {
+      resumeSession(name, this.log);
+      this.state.setSuspended(name, false);
+    }
+
     this.state.transition(name, "stopping");
     const stopped = await stopSession(name, this.log);
     if (stopped) {
@@ -1023,6 +1031,45 @@ export class Daemon {
       }
     }
 
+    // 5. OOM score adjustment — make Termux less likely to be killed by LMK
+    // oom_score_adj ranges from -1000 (never kill) to 1000 (kill first).
+    // -900 is very aggressive but appropriate for a developer device.
+    try {
+      // Get Termux's main PID from the app process
+      const pidResult = spawnSync(ADB_BIN, this.adbShellArgs(
+        "sh", "-c", "pidof com.termux | head -1",
+      ), { encoding: "utf-8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] });
+      const termuxPid = pidResult.stdout?.trim();
+      if (termuxPid && /^\d+$/.test(termuxPid)) {
+        spawnSync(ADB_BIN, this.adbShellArgs(
+          "sh", "-c", `echo -900 > /proc/${termuxPid}/oom_score_adj`,
+        ), { timeout: 10_000, stdio: "ignore" });
+        this.log.info(`Set oom_score_adj=-900 for Termux PID ${termuxPid}`);
+      }
+    } catch (err) {
+      this.log.debug(`oom_score_adj failed (non-critical): ${err}`);
+    }
+
+    // 6. Prevent Android from classifying Termux as idle (which triggers restrictions)
+    for (const pkg of ["com.termux", "com.microsoft.emmx.canary"]) {
+      try {
+        spawnSync(ADB_BIN, this.adbShellArgs("cmd", "activity", "set-inactive", pkg, "false"), {
+          timeout: 10_000, stdio: "ignore",
+        });
+      } catch {
+        // Non-critical — command may not exist on all Android versions
+      }
+    }
+
+    // 7. Lower LMK trigger level to reduce aggressive kills under memory pressure
+    try {
+      spawnSync(ADB_BIN, this.adbShellArgs("settings", "put", "global", "low_power_trigger_level", "1"), {
+        timeout: 10_000, stdio: "ignore",
+      });
+    } catch {
+      // Non-critical
+    }
+
     // Re-enable Samsung sensor packages
     const samsungPkgs = [
       "com.samsung.android.ssco",
@@ -1038,7 +1085,7 @@ export class Daemon {
     }
 
     trace("adb:fix:complete");
-    this.log.info("Android process protection fixes applied (phantom + doze + standby + background)");
+    this.log.info("Android process protection fixes applied (phantom + doze + standby + background + oom_adj + idle + lmk)");
   }
 
   /** Start a periodic ADB retry timer */
@@ -1114,10 +1161,11 @@ export class Daemon {
 
     const results = runHealthSweep(this.config, this.state, this.log, this.adoptedPids);
 
-    // Check for degraded sessions needing restart
+    // Check for degraded sessions needing restart (skip suspended — they're intentionally frozen)
     for (const session of this.config.sessions) {
       const s = this.state.getSession(session.name);
       if (!s || s.status !== "degraded") continue;
+      if (s.suspended) continue;
 
       // Check restart limit
       if (s.restart_count >= session.max_restarts) {
@@ -1221,11 +1269,59 @@ export class Daemon {
       this.state.updateSessionMetrics(session.name, rss_mb, activityState);
     }
 
+    // Auto-suspend/resume based on memory pressure
+    this.autoSuspendOnPressure(sysMem?.pressure ?? "normal");
+
     // Push SSE update with combined state+memory
     this.pushSseState();
 
     // Update persistent status notification in system bar
     this.updateStatusNotification();
+  }
+
+  /**
+   * Auto-suspend idle sessions when memory pressure is critical/emergency.
+   * Auto-resume previously auto-suspended sessions when pressure returns to normal.
+   * This is the key mechanism that prevents OOM death spirals during heavy builds.
+   */
+  private autoSuspendOnPressure(pressure: string): void {
+    if (pressure === "critical" || pressure === "emergency") {
+      // Sort running, non-suspended sessions by RSS descending (biggest first)
+      const candidates: Array<{ name: string; rss: number }> = [];
+      const sessions = this.state.getState().sessions;
+      for (const [name, s] of Object.entries(sessions)) {
+        if (s.suspended) continue;
+        if (s.status !== "running" && s.status !== "degraded") continue;
+        // Only auto-suspend idle sessions — don't freeze active builds
+        if (s.activity !== "idle") continue;
+        candidates.push({ name, rss: s.rss_mb ?? 0 });
+      }
+      candidates.sort((a, b) => b.rss - a.rss);
+
+      // Suspend one idle session per poll cycle to avoid over-freezing
+      if (candidates.length > 0) {
+        const target = candidates[0];
+        this.log.warn(
+          `Memory ${pressure}: auto-suspending '${target.name}' (RSS ${target.rss}MB)`,
+          { session: target.name },
+        );
+        if (suspendSession(target.name, this.log)) {
+          this.state.setSuspended(target.name, true, true); // auto=true
+          notify("tmx", `Paused '${target.name}' — memory ${pressure}`, `tmx-autosuspend`);
+        }
+      }
+    } else if (pressure === "normal") {
+      // Auto-resume sessions that were auto-suspended (not manually suspended)
+      const sessions = this.state.getState().sessions;
+      for (const [name, s] of Object.entries(sessions)) {
+        if (!s.auto_suspended) continue;
+        this.log.info(`Memory normal: auto-resuming '${name}'`, { session: name });
+        if (resumeSession(name, this.log)) {
+          this.state.setSuspended(name, false);
+        }
+      }
+    }
+    // Warning pressure: no action — just monitoring
   }
 
   /** Push current state snapshot to all SSE clients */
@@ -1243,16 +1339,29 @@ export class Daemon {
    * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
    * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
    */
+  /**
+   * Update the persistent Android notification with session counts + action buttons.
+   *
+   * Button layout (3 max from termux-notification):
+   * - Button 1: "Pause All" / "Resume All" (toggles based on current state)
+   * - Button 2: "Stop All" — emergency stop for all sessions
+   * - Button 3: "Dashboard" — opens browser to localhost dashboard
+   *
+   * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
+   */
   private updateStatusNotification(): void {
     const sessions = this.state.getState().sessions;
     const activeNames: string[] = [];
     const idleNames: string[] = [];
+    const suspendedNames: string[] = [];
     let totalRunning = 0;
 
     for (const [name, s] of Object.entries(sessions)) {
       if (s.status === "running" || s.status === "degraded") {
         totalRunning++;
-        if (s.activity === "active") {
+        if (s.suspended) {
+          suspendedNames.push(name);
+        } else if (s.activity === "active") {
           activeNames.push(name);
         } else {
           idleNames.push(name);
@@ -1261,10 +1370,13 @@ export class Daemon {
     }
 
     const activeCount = activeNames.length;
-    const title = `tmx ▶ ${activeCount}/${totalRunning}`;
+    const suspendedCount = suspendedNames.length;
+    const title = suspendedCount > 0
+      ? `tmx ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
+      : `tmx ▶ ${activeCount}/${totalRunning}`;
 
-    // Build content lines showing session names (truncate to avoid Android notification limits)
-    const MAX_NAMES = 10;
+    // Build content lines showing session names
+    const MAX_NAMES = 8;
     const parts: string[] = [];
     if (activeNames.length > 0) {
       const shown = activeNames.slice(0, MAX_NAMES);
@@ -1276,7 +1388,24 @@ export class Daemon {
       const extra = idleNames.length - shown.length;
       parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
+    if (suspendedNames.length > 0) {
+      const shown = suspendedNames.slice(0, MAX_NAMES);
+      const extra = suspendedNames.length - shown.length;
+      parts.push(`paused: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
+    }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
+
+    const port = this.config.orchestrator.dashboard_port;
+    const apiBase = `http://127.0.0.1:${port}/api`;
+
+    // Toggle button: if any sessions are suspended, offer "Resume All", otherwise "Pause All"
+    const anySuspended = suspendedCount > 0;
+    const toggleLabel = anySuspended ? "Resume All" : "Pause All";
+    const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
+    const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
+
+    const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
+    const dashboardAction = `${resolveTermuxBin("termux-open-url")} http://localhost:${port}`;
 
     notifyWithArgs([
       "--ongoing",
@@ -1286,7 +1415,13 @@ export class Daemon {
       "--title", title,
       "--content", content,
       "--icon", "dashboard",
-      "--action", `${resolveTermuxBin("termux-open-url")} http://localhost:${this.config.orchestrator.dashboard_port}`,
+      "--action", dashboardAction,
+      "--button1", toggleLabel,
+      "--button1-action", toggleAction,
+      "--button2", "Stop All",
+      "--button2-action", stopAction,
+      "--button3", "Dashboard",
+      "--button3-action", dashboardAction,
     ]);
   }
 
@@ -1627,6 +1762,96 @@ export class Daemon {
     return { ok: true, data: results };
   }
 
+  // -- Session suspension (SIGSTOP/SIGCONT) ------------------------------------
+
+  /** Suspend a single session by name — freezes all processes via SIGSTOP */
+  private cmdSuspend(name: string): IpcResponse {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const s = this.state.getSession(resolved);
+    if (!s) return { ok: false, error: `No state for session: ${resolved}` };
+    if (s.suspended) return { ok: true, data: `'${resolved}' already suspended` };
+    if (s.status !== "running" && s.status !== "degraded") {
+      return { ok: false, error: `Cannot suspend '${resolved}' — status is ${s.status}` };
+    }
+    const ok = suspendSession(resolved, this.log);
+    if (ok) {
+      this.state.setSuspended(resolved, true);
+      this.updateStatusNotification();
+      this.pushSseState();
+    }
+    return { ok, data: ok ? `Suspended '${resolved}'` : `Failed to suspend '${resolved}'` };
+  }
+
+  /** Resume a single suspended session — unfreezes processes via SIGCONT */
+  private cmdResume(name: string): IpcResponse {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const s = this.state.getSession(resolved);
+    if (!s) return { ok: false, error: `No state for session: ${resolved}` };
+    if (!s.suspended) return { ok: true, data: `'${resolved}' not suspended` };
+    const ok = resumeSession(resolved, this.log);
+    if (ok) {
+      this.state.setSuspended(resolved, false);
+      this.updateStatusNotification();
+      this.pushSseState();
+    }
+    return { ok, data: ok ? `Resumed '${resolved}'` : `Failed to resume '${resolved}'` };
+  }
+
+  /** Suspend all sessions except the named one — "make room" for a heavy build */
+  private cmdSuspendOthers(name: string): IpcResponse {
+    const resolved = this.resolveName(name);
+    if (!resolved) return { ok: false, error: `Unknown session: ${name}` };
+    const sessions = this.state.getState().sessions;
+    let suspended = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (sName === resolved) continue;
+      if (s.suspended) continue;
+      if (s.status !== "running" && s.status !== "degraded") continue;
+      if (suspendSession(sName, this.log)) {
+        this.state.setSuspended(sName, true);
+        suspended++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Suspended ${suspended} sessions (except '${resolved}')` };
+  }
+
+  /** Suspend all running sessions */
+  private cmdSuspendAll(): IpcResponse {
+    const sessions = this.state.getState().sessions;
+    let suspended = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (s.suspended) continue;
+      if (s.status !== "running" && s.status !== "degraded") continue;
+      if (suspendSession(sName, this.log)) {
+        this.state.setSuspended(sName, true);
+        suspended++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Suspended ${suspended} sessions` };
+  }
+
+  /** Resume all suspended sessions */
+  private cmdResumeAll(): IpcResponse {
+    const sessions = this.state.getState().sessions;
+    let resumed = 0;
+    for (const [sName, s] of Object.entries(sessions)) {
+      if (!s.suspended) continue;
+      if (resumeSession(sName, this.log)) {
+        this.state.setSuspended(sName, false);
+        resumed++;
+      }
+    }
+    this.updateStatusNotification();
+    this.pushSseState();
+    return { ok: true, data: `Resumed ${resumed} sessions` };
+  }
+
   // -- Battery monitoring ------------------------------------------------------
 
   /** Start periodic battery monitoring timer */
@@ -1941,6 +2166,29 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           await this.ensureSocket();
           resp = { ok: true };
+          break;
+        case "suspend":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdSuspend(name);
+          break;
+        case "resume":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdResume(name);
+          break;
+        case "suspend-others":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          resp = this.cmdSuspendOthers(name);
+          break;
+        case "suspend-all":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = this.cmdSuspendAll();
+          break;
+        case "resume-all":
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          resp = this.cmdResumeAll();
           break;
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
@@ -2312,6 +2560,21 @@ export class Daemon {
 
       case "recent":
         return this.cmdRecent(cmd.count);
+
+      case "suspend":
+        return this.cmdSuspend(cmd.name);
+
+      case "resume":
+        return this.cmdResume(cmd.name);
+
+      case "suspend-others":
+        return this.cmdSuspendOthers(cmd.name);
+
+      case "suspend-all":
+        return this.cmdSuspendAll();
+
+      case "resume-all":
+        return this.cmdResumeAll();
 
       default:
         return { ok: false, error: `Unknown command: ${(cmd as { cmd: string }).cmd}` };
