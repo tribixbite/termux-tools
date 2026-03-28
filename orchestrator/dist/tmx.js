@@ -3029,6 +3029,12 @@ var Daemon = class _Daemon {
   adoptedPids = /* @__PURE__ */ new Map();
   /** Session names from last notification cycle — used to remove stale per-session notifications */
   _prevNotifiedSessions = [];
+  /** Content hash per session from last notification — only re-emit when changed */
+  _prevNotifContent = /* @__PURE__ */ new Map();
+  /** Summary notification content from last cycle — skip re-emit if unchanged */
+  _prevSummaryContent = "";
+  /** One-shot flag: service notifications cleaned up on first cycle */
+  _serviceNotifsCleared = false;
   adbSerial = null;
   adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -3223,6 +3229,7 @@ var Daemon = class _Daemon {
     removeNotification("tmx-memory");
     for (const session of this.config.sessions) {
       removeNotification(`tmx-fail-${session.name}`);
+      removeNotification(`tmx-${session.name}`);
     }
     this.running = false;
     this.shutdownResolve?.();
@@ -3902,9 +3909,9 @@ var Daemon = class _Daemon {
    * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
    */
   /**
-   * Emit per-session notifications: one notification per active session,
-   * each with a "Tab" button that opens that session's Termux tab.
-   * Plus a summary notification with Pause/Resume All, Stop All, Dashboard.
+   * Emit per-session notifications (one per active non-service session)
+   * and a summary notification. Uses diff-based updates to avoid flickering —
+   * only re-emits a notification when its content actually changes.
    */
   updateStatusNotification() {
     const sessions = this.state.getState().sessions;
@@ -3912,6 +3919,9 @@ var Daemon = class _Daemon {
     const idleNames = [];
     const suspendedNames = [];
     let totalRunning = 0;
+    const serviceNames = new Set(
+      this.config.sessions.filter((c) => c.type === "service").map((c) => c.name)
+    );
     for (const [name, s] of Object.entries(sessions)) {
       if (s.status === "running" || s.status === "degraded") {
         totalRunning++;
@@ -3926,11 +3936,14 @@ var Daemon = class _Daemon {
     }
     const port = this.config.orchestrator.dashboard_port;
     const apiBase = `http://127.0.0.1:${port}/api`;
-    const allRunning = [...activeNames, ...idleNames, ...suspendedNames];
+    const allRunning = [...activeNames, ...idleNames, ...suspendedNames].filter((n) => !serviceNames.has(n)).sort();
     for (const name of allRunning) {
       const s = sessions[name];
       const statusTag = s?.suspended ? "paused" : s?.activity === "active" ? "active" : "idle";
       const rss = s?.rss_mb != null ? ` ${s.rss_mb}MB` : "";
+      const contentKey = `${statusTag}|${s?.rss_mb ?? ""}|${s?.suspended}`;
+      if (this._prevNotifContent.get(name) === contentKey) continue;
+      this._prevNotifContent.set(name, contentKey);
       const tabAction = `curl -sX POST ${apiBase}/tab/${name} >/dev/null 2>&1`;
       const suspendAction = s?.suspended ? `curl -sX POST ${apiBase}/resume/${name} >/dev/null 2>&1` : `curl -sX POST ${apiBase}/suspend/${name} >/dev/null 2>&1`;
       const suspendLabel = s?.suspended ? "Resume" : "Pause";
@@ -3966,9 +3979,16 @@ var Daemon = class _Daemon {
         stopAction
       ]);
     }
-    for (const name of this._prevNotifiedSessions ?? []) {
+    for (const name of this._prevNotifiedSessions) {
       if (!allRunning.includes(name)) {
         removeNotification(`tmx-${name}`);
+        this._prevNotifContent.delete(name);
+      }
+    }
+    if (!this._serviceNotifsCleared) {
+      this._serviceNotifsCleared = true;
+      for (const svcName of serviceNames) {
+        removeNotification(`tmx-${svcName}`);
       }
     }
     this._prevNotifiedSessions = allRunning;
@@ -3978,26 +3998,30 @@ var Daemon = class _Daemon {
     const MAX_NAMES = 8;
     const parts = [];
     if (activeNames.length > 0) {
-      const shown = activeNames.slice(0, MAX_NAMES);
+      const shown = activeNames.sort().slice(0, MAX_NAMES);
       const extra = activeNames.length - shown.length;
       parts.push(`active: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     if (idleNames.length > 0) {
-      const shown = idleNames.slice(0, MAX_NAMES);
+      const shown = idleNames.sort().slice(0, MAX_NAMES);
       const extra = idleNames.length - shown.length;
       parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     if (suspendedNames.length > 0) {
-      const shown = suspendedNames.slice(0, MAX_NAMES);
+      const shown = suspendedNames.sort().slice(0, MAX_NAMES);
       const extra = suspendedNames.length - shown.length;
       parts.push(`paused: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
+    const summaryKey = `${title}|${content}`;
+    if (this._prevSummaryContent === summaryKey) return;
+    this._prevSummaryContent = summaryKey;
     const anySuspended = suspendedCount > 0;
     const toggleLabel = anySuspended ? "Resume All" : "Pause All";
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
-    const dashboardAction = `${resolveTermuxBin3("termux-open-url")} http://localhost:${port}`;
+    const amBin = resolveTermuxBin3("am");
+    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -d http://localhost:${port}`;
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
@@ -4614,6 +4638,10 @@ var Daemon = class _Daemon {
             return { status: 400, data: { error: `'${name}' is a bare (headless) session \u2014 no tmux tab` } };
           }
           if (createTermuxTab(name, this.log)) {
+            try {
+              (0, import_node_child_process7.spawnSync)("tmux", ["select-window", "-t", name], { timeout: 3e3 });
+            } catch {
+            }
             bringTermuxToForeground(this.log);
             return { status: 200, data: { ok: true, session: name } };
           }
@@ -5056,6 +5084,7 @@ var Daemon = class _Daemon {
           const cfg = this.config.sessions.find((c) => c.name === s.name);
           return {
             ...s,
+            type: cfg?.type ?? "daemon",
             path: cfg?.path ?? null,
             has_build_script: cfg?.path ? (0, import_node_fs13.existsSync)((0, import_node_path7.join)(cfg.path, "build-on-termux.sh")) : false,
             uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null

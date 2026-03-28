@@ -199,6 +199,12 @@ export class Daemon {
   private adoptedPids = new Map<string, number>();
   /** Session names from last notification cycle — used to remove stale per-session notifications */
   private _prevNotifiedSessions: string[] = [];
+  /** Content hash per session from last notification — only re-emit when changed */
+  private _prevNotifContent = new Map<string, string>();
+  /** Summary notification content from last cycle — skip re-emit if unchanged */
+  private _prevSummaryContent = "";
+  /** One-shot flag: service notifications cleaned up on first cycle */
+  private _serviceNotifsCleared = false;
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -472,9 +478,10 @@ export class Daemon {
     removeNotification("tmx-status");
     removeNotification("tmx-boot");
     removeNotification("tmx-memory");
-    // Clean up per-session failure notifications
+    // Clean up per-session and failure notifications
     for (const session of this.config.sessions) {
       removeNotification(`tmx-fail-${session.name}`);
+      removeNotification(`tmx-${session.name}`);
     }
 
     this.running = false;
@@ -1361,9 +1368,9 @@ export class Daemon {
    * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
    */
   /**
-   * Emit per-session notifications: one notification per active session,
-   * each with a "Tab" button that opens that session's Termux tab.
-   * Plus a summary notification with Pause/Resume All, Stop All, Dashboard.
+   * Emit per-session notifications (one per active non-service session)
+   * and a summary notification. Uses diff-based updates to avoid flickering —
+   * only re-emits a notification when its content actually changes.
    */
   private updateStatusNotification(): void {
     const sessions = this.state.getState().sessions;
@@ -1371,6 +1378,11 @@ export class Daemon {
     const idleNames: string[] = [];
     const suspendedNames: string[] = [];
     let totalRunning = 0;
+
+    // Build a set of service session names to exclude from notifications
+    const serviceNames = new Set(
+      this.config.sessions.filter((c) => c.type === "service").map((c) => c.name),
+    );
 
     for (const [name, s] of Object.entries(sessions)) {
       if (s.status === "running" || s.status === "degraded") {
@@ -1388,12 +1400,21 @@ export class Daemon {
     const port = this.config.orchestrator.dashboard_port;
     const apiBase = `http://127.0.0.1:${port}/api`;
 
-    // -- Per-session notifications (each with Tab button) --
-    const allRunning = [...activeNames, ...idleNames, ...suspendedNames];
+    // -- Per-session notifications (skip services, stable alpha order) --
+    const allRunning = [...activeNames, ...idleNames, ...suspendedNames]
+      .filter((n) => !serviceNames.has(n))
+      .sort();
+
     for (const name of allRunning) {
       const s = sessions[name];
       const statusTag = s?.suspended ? "paused" : s?.activity === "active" ? "active" : "idle";
       const rss = s?.rss_mb != null ? ` ${s.rss_mb}MB` : "";
+      const contentKey = `${statusTag}|${s?.rss_mb ?? ""}|${s?.suspended}`;
+
+      // Only re-emit notification when content actually changed
+      if (this._prevNotifContent.get(name) === contentKey) continue;
+      this._prevNotifContent.set(name, contentKey);
+
       const tabAction = `curl -sX POST ${apiBase}/tab/${name} >/dev/null 2>&1`;
       const suspendAction = s?.suspended
         ? `curl -sX POST ${apiBase}/resume/${name} >/dev/null 2>&1`
@@ -1421,14 +1442,22 @@ export class Daemon {
     }
 
     // Remove notifications for sessions that are no longer running
-    for (const name of this._prevNotifiedSessions ?? []) {
+    for (const name of this._prevNotifiedSessions) {
       if (!allRunning.includes(name)) {
         removeNotification(`tmx-${name}`);
+        this._prevNotifContent.delete(name);
+      }
+    }
+    // One-shot: remove stale service notifications lingering from previous daemon cycle
+    if (!this._serviceNotifsCleared) {
+      this._serviceNotifsCleared = true;
+      for (const svcName of serviceNames) {
+        removeNotification(`tmx-${svcName}`);
       }
     }
     this._prevNotifiedSessions = allRunning;
 
-    // -- Summary notification --
+    // -- Summary notification (diff-based) --
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
     const title = suspendedCount > 0
@@ -1438,27 +1467,34 @@ export class Daemon {
     const MAX_NAMES = 8;
     const parts: string[] = [];
     if (activeNames.length > 0) {
-      const shown = activeNames.slice(0, MAX_NAMES);
+      const shown = activeNames.sort().slice(0, MAX_NAMES);
       const extra = activeNames.length - shown.length;
       parts.push(`active: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     if (idleNames.length > 0) {
-      const shown = idleNames.slice(0, MAX_NAMES);
+      const shown = idleNames.sort().slice(0, MAX_NAMES);
       const extra = idleNames.length - shown.length;
       parts.push(`idle: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     if (suspendedNames.length > 0) {
-      const shown = suspendedNames.slice(0, MAX_NAMES);
+      const shown = suspendedNames.sort().slice(0, MAX_NAMES);
       const extra = suspendedNames.length - shown.length;
       parts.push(`paused: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
 
+    // Skip re-emit if summary content hasn't changed
+    const summaryKey = `${title}|${content}`;
+    if (this._prevSummaryContent === summaryKey) return;
+    this._prevSummaryContent = summaryKey;
+
     const anySuspended = suspendedCount > 0;
     const toggleLabel = anySuspended ? "Resume All" : "Pause All";
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
-    const dashboardAction = `${resolveTermuxBin("termux-open-url")} http://localhost:${port}`;
+    // Use am start for dashboard — termux-open-url can silently fail on Android
+    const amBin = resolveTermuxBin("am");
+    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -d http://localhost:${port}`;
 
     notifyWithArgs([
       "--ongoing",
@@ -2170,7 +2206,8 @@ export class Daemon {
             return { status: 400, data: { error: `'${name}' is a bare (headless) session — no tmux tab` } };
           }
           if (createTermuxTab(name, this.log)) {
-            // Single am start — only when user explicitly clicks a session
+            // Ensure tmux shows the correct window, then bring Termux to front
+            try { spawnSync("tmux", ["select-window", "-t", name], { timeout: 3000 }); } catch { /* best-effort */ }
             bringTermuxToForeground(this.log);
             return { status: 200, data: { ok: true, session: name } };
           }
@@ -2676,6 +2713,7 @@ export class Daemon {
           const cfg = this.config.sessions.find((c) => c.name === s.name);
           return {
             ...s,
+            type: cfg?.type ?? "daemon",
             path: cfg?.path ?? null,
             has_build_script: cfg?.path ? existsSync(join(cfg.path, "build-on-termux.sh")) : false,
             uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null,

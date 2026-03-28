@@ -5,6 +5,7 @@ import MemoryGauge from "../components/MemoryGauge.svelte";
 import BudgetGauge from "../components/BudgetGauge.svelte";
 import BridgeStatus from "../components/BridgeStatus.svelte";
 import AdbStatus from "../components/AdbStatus.svelte";
+import ServiceStatus from "../components/ServiceStatus.svelte";
 import RecentSessions from "../components/RecentSessions.svelte";
 ---
 
@@ -15,6 +16,7 @@ import RecentSessions from "../components/RecentSessions.svelte";
     <BudgetGauge client:load />
     <BridgeStatus client:load />
     <AdbStatus client:load />
+    <ServiceStatus client:load />
   </div>
 
   <!-- Session table -->

@@ -13,6 +13,8 @@
   /** Derived from shared store — no own SSE/fetch needed */
   const status = $derived<DaemonStatus | null>(store.daemon);
   const error = $derived<string | null>(store.error);
+  /** Non-service sessions only — services go to ServiceStatus card */
+  const sessions = $derived(status?.sessions.filter((s) => s.type !== "service") ?? []);
 
   /** Status dot color class */
   function dotCls(st: string, suspended: boolean): string {
@@ -121,7 +123,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each status.sessions as session (session.name)}
+      {#each sessions as session (session.name)}
         <tr class="session-row" onclick={() => toggleExpand(session.name)}>
           <td class="td-name">
             <span class="dot {dotCls(session.status, session.suspended)}"></span>

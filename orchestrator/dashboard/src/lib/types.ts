@@ -5,6 +5,7 @@
 /** Per-session state from daemon */
 export interface SessionState {
   name: string;
+  type: "claude" | "daemon" | "service";
   status: string;
   uptime_start: string | null;
   restart_count: number;
