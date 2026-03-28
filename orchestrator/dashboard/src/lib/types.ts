@@ -14,6 +14,10 @@ export interface SessionState {
   tmux_pid: number | null;
   rss_mb: number | null;
   activity: "active" | "idle" | "stopped" | "unknown" | null;
+  suspended: boolean;
+  auto_suspended: boolean;
+  path: string | null;
+  has_build_script: boolean;
   uptime: string | null;
 }
 

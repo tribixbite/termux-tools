@@ -192,6 +192,21 @@ export async function openTab(name: string): Promise<void> {
   await checkedPost(`/api/tab/${encodeURIComponent(name)}`);
 }
 
+/** Run build-on-termux.sh in a session's tmux pane */
+export async function runBuild(name: string): Promise<void> {
+  await checkedPost(`/api/run-build/${encodeURIComponent(name)}`);
+}
+
+/** Suspend (SIGSTOP) a session */
+export async function suspendSession(name: string): Promise<void> {
+  await checkedPost(`/api/suspend/${encodeURIComponent(name)}`);
+}
+
+/** Resume (SIGCONT) a session */
+export async function resumeSession(name: string): Promise<void> {
+  await checkedPost(`/api/resume/${encodeURIComponent(name)}`);
+}
+
 /** Fetch recent Claude projects from history */
 export async function fetchRecent(): Promise<RecentProject[]> {
   const res = await fetch("/api/recent");

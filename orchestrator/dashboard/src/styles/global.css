@@ -13,6 +13,7 @@
   --accent-yellow: #d29922;
   --accent-red: #f85149;
   --accent-purple: #bc8cff;
+  --accent-cyan: #22d3ee;
   --border: #30363d;
 }
 
@@ -69,6 +70,7 @@ body {
 .dot-red { background: var(--accent-red); box-shadow: 0 0 4px var(--accent-red); }
 .dot-dim { background: var(--text-muted); }
 .dot-blue { background: var(--accent-blue); box-shadow: 0 0 4px var(--accent-blue); }
+.dot-cyan { background: var(--accent-cyan); box-shadow: 0 0 4px var(--accent-cyan); }
 
 /* Button styles */
 .btn {

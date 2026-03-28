@@ -3906,6 +3906,7 @@ var Daemon = class _Daemon {
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
     const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
+    const tabsAction = `curl -sX POST ${apiBase}/tabs >/dev/null 2>&1`;
     const dashboardAction = `${resolveTermuxBin3("termux-open-url")} http://localhost:${port}`;
     notifyWithArgs([
       "--ongoing",
@@ -3921,7 +3922,7 @@ var Daemon = class _Daemon {
       "--icon",
       "dashboard",
       "--action",
-      dashboardAction,
+      tabsAction,
       "--button1",
       toggleLabel,
       "--button1-action",
@@ -4526,6 +4527,21 @@ var Daemon = class _Daemon {
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
         }
+        case "run-build": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const buildCfg = this.config.sessions.find((s) => s.name === name);
+          if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const scriptPath = (0, import_node_path7.join)(buildCfg.path, "build-on-termux.sh");
+          if (!(0, import_node_fs13.existsSync)(scriptPath)) {
+            return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
+          }
+          if (sendKeys(name, "./build-on-termux.sh", true)) {
+            this.log.info(`Sent build-on-termux.sh to '${name}'`, { session: name });
+            return { status: 200, data: { ok: true, session: name } };
+          }
+          return { status: 500, data: { error: `Failed to send build command to '${name}'` } };
+        }
         case "processes":
           return { status: 200, data: this.getAndroidApps() };
         case "kill":
@@ -4945,10 +4961,15 @@ var Daemon = class _Daemon {
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
         battery: state.battery ?? null,
-        sessions: Object.values(state.sessions).map((s) => ({
-          ...s,
-          uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
-        }))
+        sessions: Object.values(state.sessions).map((s) => {
+          const cfg = this.config.sessions.find((c) => c.name === s.name);
+          return {
+            ...s,
+            path: cfg?.path ?? null,
+            has_build_script: cfg?.path ? (0, import_node_fs13.existsSync)((0, import_node_path7.join)(cfg.path, "build-on-termux.sh")) : false,
+            uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
+          };
+        })
       }
     };
   }

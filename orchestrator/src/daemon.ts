@@ -1413,6 +1413,8 @@ export class Daemon {
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
 
     const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
+    // Tap opens all session tabs in Termux (no browser needed — saves ~1GB RAM)
+    const tabsAction = `curl -sX POST ${apiBase}/tabs >/dev/null 2>&1`;
     const dashboardAction = `${resolveTermuxBin("termux-open-url")} http://localhost:${port}`;
 
     notifyWithArgs([
@@ -1423,7 +1425,7 @@ export class Daemon {
       "--title", title,
       "--content", content,
       "--icon", "dashboard",
-      "--action", dashboardAction,
+      "--action", tabsAction,
       "--button1", toggleLabel,
       "--button1-action", toggleAction,
       "--button2", "Stop All",
@@ -2130,6 +2132,22 @@ export class Daemon {
           }
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
         }
+        case "run-build": {
+          // Run build-on-termux.sh in a session's tmux pane
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const buildCfg = this.config.sessions.find((s: SessionConfig) => s.name === name);
+          if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const scriptPath = join(buildCfg.path, "build-on-termux.sh");
+          if (!existsSync(scriptPath)) {
+            return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
+          }
+          if (sendKeys(name, "./build-on-termux.sh", true)) {
+            this.log.info(`Sent build-on-termux.sh to '${name}'`, { session: name });
+            return { status: 200, data: { ok: true, session: name } };
+          }
+          return { status: 500, data: { error: `Failed to send build command to '${name}'` } };
+        }
         case "processes":
           // List Android apps sorted by RSS (via ADB)
           return { status: 200, data: this.getAndroidApps() };
@@ -2611,10 +2629,15 @@ export class Daemon {
         wake_lock: this.wake.isHeld(),
         memory: state.memory ?? null,
         battery: state.battery ?? null,
-        sessions: Object.values(state.sessions).map((s) => ({
-          ...s,
-          uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null,
-        })),
+        sessions: Object.values(state.sessions).map((s) => {
+          const cfg = this.config.sessions.find((c) => c.name === s.name);
+          return {
+            ...s,
+            path: cfg?.path ?? null,
+            has_build_script: cfg?.path ? existsSync(join(cfg.path, "build-on-termux.sh")) : false,
+            uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null,
+          };
+        }),
       },
     };
   }
