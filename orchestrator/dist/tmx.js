@@ -1566,6 +1566,45 @@ function getSessionPanePids(sessionName) {
   if (!output) return [];
   return output.split("\n").map((s) => s.trim()).filter(Boolean).map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
 }
+function runScriptInTab(scriptPath, cwd, tabName, log) {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const wrapperPath = (0, import_node_path3.join)(prefix, "tmp", `tmx-run-${tabName}.sh`);
+  const env = amEnv();
+  try {
+    (0, import_node_fs6.writeFileSync)(wrapperPath, [
+      `#!/data/data/com.termux/files/usr/bin/bash`,
+      `printf '\\033]0;build:%s\\007' "${tabName}"`,
+      `cd "${cwd}" || exit 1`,
+      `exec "${scriptPath}"`,
+      ""
+    ].join("\n"), { mode: 493 });
+  } catch (err) {
+    log.error(`Failed to create build wrapper: ${err}`);
+    return false;
+  }
+  const result = (0, import_node_child_process3.spawnSync)(resolveTermuxBin("am"), [
+    "startservice",
+    "-n",
+    "com.termux/.app.TermuxService",
+    "-a",
+    "com.termux.service_execute",
+    "-d",
+    `file://${wrapperPath}`,
+    "--ei",
+    "com.termux.execute.session_action",
+    "0",
+    "--es",
+    "com.termux.execute.shell_name",
+    `build:${tabName}`
+  ], { timeout: 5e3, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8", env });
+  if (result.status === 0) {
+    log.info(`Launched build-on-termux.sh for '${tabName}' in new Termux tab`, { session: tabName });
+    bringTermuxToForeground(log);
+    return true;
+  }
+  log.error(`TermuxService failed for build tab: ${result.stderr}`, { session: tabName });
+  return false;
+}
 function findProcessTree(rootPid) {
   const ppidMap = /* @__PURE__ */ new Map();
   try {
@@ -2988,6 +3027,8 @@ var Daemon = class _Daemon {
   autoTabsTimer = null;
   /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
   adoptedPids = /* @__PURE__ */ new Map();
+  /** Session names from last notification cycle — used to remove stale per-session notifications */
+  _prevNotifiedSessions = [];
   adbSerial = null;
   adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -3860,6 +3901,11 @@ var Daemon = class _Daemon {
    *
    * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
    */
+  /**
+   * Emit per-session notifications: one notification per active session,
+   * each with a "Tab" button that opens that session's Termux tab.
+   * Plus a summary notification with Pause/Resume All, Stop All, Dashboard.
+   */
   updateStatusNotification() {
     const sessions = this.state.getState().sessions;
     const activeNames = [];
@@ -3878,6 +3924,54 @@ var Daemon = class _Daemon {
         }
       }
     }
+    const port = this.config.orchestrator.dashboard_port;
+    const apiBase = `http://127.0.0.1:${port}/api`;
+    const allRunning = [...activeNames, ...idleNames, ...suspendedNames];
+    for (const name of allRunning) {
+      const s = sessions[name];
+      const statusTag = s?.suspended ? "paused" : s?.activity === "active" ? "active" : "idle";
+      const rss = s?.rss_mb != null ? ` ${s.rss_mb}MB` : "";
+      const tabAction = `curl -sX POST ${apiBase}/tab/${name} >/dev/null 2>&1`;
+      const suspendAction = s?.suspended ? `curl -sX POST ${apiBase}/resume/${name} >/dev/null 2>&1` : `curl -sX POST ${apiBase}/suspend/${name} >/dev/null 2>&1`;
+      const suspendLabel = s?.suspended ? "Resume" : "Pause";
+      const stopAction = `curl -sX POST ${apiBase}/stop/${name} >/dev/null 2>&1`;
+      notifyWithArgs([
+        "--ongoing",
+        "--alert-once",
+        "--id",
+        `tmx-${name}`,
+        "--group",
+        "tmx-sessions",
+        "--priority",
+        "low",
+        "--title",
+        `${name}`,
+        "--content",
+        `${statusTag}${rss}`,
+        "--icon",
+        "terminal",
+        "--action",
+        tabAction,
+        "--button1",
+        "Tab",
+        "--button1-action",
+        tabAction,
+        "--button2",
+        suspendLabel,
+        "--button2-action",
+        suspendAction,
+        "--button3",
+        "Stop",
+        "--button3-action",
+        stopAction
+      ]);
+    }
+    for (const name of this._prevNotifiedSessions ?? []) {
+      if (!allRunning.includes(name)) {
+        removeNotification(`tmx-${name}`);
+      }
+    }
+    this._prevNotifiedSessions = allRunning;
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
     const title = suspendedCount > 0 ? `tmx \u25B6 ${activeCount}/${totalRunning} (${suspendedCount} paused)` : `tmx \u25B6 ${activeCount}/${totalRunning}`;
@@ -3899,20 +3993,18 @@ var Daemon = class _Daemon {
       parts.push(`paused: ${shown.join(", ")}${extra > 0 ? ` (+${extra})` : ""}`);
     }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
-    const port = this.config.orchestrator.dashboard_port;
-    const apiBase = `http://127.0.0.1:${port}/api`;
     const anySuspended = suspendedCount > 0;
     const toggleLabel = anySuspended ? "Resume All" : "Pause All";
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
-    const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
-    const tabsAction = `curl -sX POST ${apiBase}/tabs >/dev/null 2>&1`;
     const dashboardAction = `${resolveTermuxBin3("termux-open-url")} http://localhost:${port}`;
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
       "--id",
       "tmx-status",
+      "--group",
+      "tmx-sessions",
       "--priority",
       "low",
       "--title",
@@ -3922,7 +4014,7 @@ var Daemon = class _Daemon {
       "--icon",
       "dashboard",
       "--action",
-      tabsAction,
+      dashboardAction,
       "--button1",
       toggleLabel,
       "--button1-action",
@@ -3930,7 +4022,7 @@ var Daemon = class _Daemon {
       "--button2",
       "Stop All",
       "--button2-action",
-      stopAction,
+      `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`,
       "--button3",
       "Dashboard",
       "--button3-action",
@@ -4532,15 +4624,14 @@ var Daemon = class _Daemon {
           if (!name) return { status: 400, data: { error: "Session name required" } };
           const buildCfg = this.config.sessions.find((s) => s.name === name);
           if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
-          const scriptPath = (0, import_node_path7.join)(buildCfg.path, "build-on-termux.sh");
-          if (!(0, import_node_fs13.existsSync)(scriptPath)) {
+          const buildScript = (0, import_node_path7.join)(buildCfg.path, "build-on-termux.sh");
+          if (!(0, import_node_fs13.existsSync)(buildScript)) {
             return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
           }
-          if (sendKeys(name, "./build-on-termux.sh", true)) {
-            this.log.info(`Sent build-on-termux.sh to '${name}'`, { session: name });
+          if (runScriptInTab(buildScript, buildCfg.path, name, this.log)) {
             return { status: 200, data: { ok: true, session: name } };
           }
-          return { status: 500, data: { error: `Failed to send build command to '${name}'` } };
+          return { status: 500, data: { error: `Failed to launch build for '${name}'` } };
         }
         case "processes":
           return { status: 200, data: this.getAndroidApps() };

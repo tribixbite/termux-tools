@@ -631,6 +631,51 @@ export function getSessionPanePids(sessionName: string): number[] {
 }
 
 /**
+ * Create a wrapper script in $PREFIX/tmp and launch it in a new Termux tab
+ * via TermuxService. The script cd's to the given directory and runs the command.
+ * Returns true if the intent was sent successfully.
+ */
+export function runScriptInTab(scriptPath: string, cwd: string, tabName: string, log: Logger): boolean {
+  const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+  const wrapperPath = join(prefix, "tmp", `tmx-run-${tabName}.sh`);
+  const env = amEnv();
+
+  // Create wrapper script that sets title, cd's to project dir, runs the script
+  try {
+    writeFileSync(wrapperPath, [
+      `#!/data/data/com.termux/files/usr/bin/bash`,
+      `printf '\\033]0;build:%s\\007' "${tabName}"`,
+      `cd "${cwd}" || exit 1`,
+      `exec "${scriptPath}"`,
+      "",
+    ].join("\n"), { mode: 0o755 });
+  } catch (err) {
+    log.error(`Failed to create build wrapper: ${err}`);
+    return false;
+  }
+
+  // Launch in new Termux tab via TermuxService
+  const result = spawnSync(resolveTermuxBin("am"), [
+    "startservice",
+    "-n", "com.termux/.app.TermuxService",
+    "-a", "com.termux.service_execute",
+    "-d", `file://${wrapperPath}`,
+    "--ei", "com.termux.execute.session_action", "0",
+    "--es", "com.termux.execute.shell_name", `build:${tabName}`,
+  ], { timeout: 5000, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8", env });
+
+  if (result.status === 0) {
+    log.info(`Launched build-on-termux.sh for '${tabName}' in new Termux tab`, { session: tabName });
+    // Bring Termux to foreground so user can see the build
+    bringTermuxToForeground(log);
+    return true;
+  }
+
+  log.error(`TermuxService failed for build tab: ${result.stderr}`, { session: tabName });
+  return false;
+}
+
+/**
  * Find all descendant PIDs of a root process by walking /proc.
  * Catches detached children (setsid, double-fork) that process group
  * signals would miss. Returns the full tree including the root PID.

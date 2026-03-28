@@ -43,6 +43,7 @@ import {
   bringTermuxToForeground,
   suspendSession,
   resumeSession,
+  runScriptInTab,
 } from "./session.js";
 
 /** Promise-based sleep */
@@ -196,6 +197,8 @@ export class Daemon {
   private autoTabsTimer: ReturnType<typeof setTimeout> | null = null;
   /** PIDs of adopted bare (non-tmux) Claude sessions, keyed by session name */
   private adoptedPids = new Map<string, number>();
+  /** Session names from last notification cycle — used to remove stale per-session notifications */
+  private _prevNotifiedSessions: string[] = [];
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -1357,6 +1360,11 @@ export class Daemon {
    *
    * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
    */
+  /**
+   * Emit per-session notifications: one notification per active session,
+   * each with a "Tab" button that opens that session's Termux tab.
+   * Plus a summary notification with Pause/Resume All, Stop All, Dashboard.
+   */
   private updateStatusNotification(): void {
     const sessions = this.state.getState().sessions;
     const activeNames: string[] = [];
@@ -1377,13 +1385,56 @@ export class Daemon {
       }
     }
 
+    const port = this.config.orchestrator.dashboard_port;
+    const apiBase = `http://127.0.0.1:${port}/api`;
+
+    // -- Per-session notifications (each with Tab button) --
+    const allRunning = [...activeNames, ...idleNames, ...suspendedNames];
+    for (const name of allRunning) {
+      const s = sessions[name];
+      const statusTag = s?.suspended ? "paused" : s?.activity === "active" ? "active" : "idle";
+      const rss = s?.rss_mb != null ? ` ${s.rss_mb}MB` : "";
+      const tabAction = `curl -sX POST ${apiBase}/tab/${name} >/dev/null 2>&1`;
+      const suspendAction = s?.suspended
+        ? `curl -sX POST ${apiBase}/resume/${name} >/dev/null 2>&1`
+        : `curl -sX POST ${apiBase}/suspend/${name} >/dev/null 2>&1`;
+      const suspendLabel = s?.suspended ? "Resume" : "Pause";
+      const stopAction = `curl -sX POST ${apiBase}/stop/${name} >/dev/null 2>&1`;
+
+      notifyWithArgs([
+        "--ongoing",
+        "--alert-once",
+        "--id", `tmx-${name}`,
+        "--group", "tmx-sessions",
+        "--priority", "low",
+        "--title", `${name}`,
+        "--content", `${statusTag}${rss}`,
+        "--icon", "terminal",
+        "--action", tabAction,
+        "--button1", "Tab",
+        "--button1-action", tabAction,
+        "--button2", suspendLabel,
+        "--button2-action", suspendAction,
+        "--button3", "Stop",
+        "--button3-action", stopAction,
+      ]);
+    }
+
+    // Remove notifications for sessions that are no longer running
+    for (const name of this._prevNotifiedSessions ?? []) {
+      if (!allRunning.includes(name)) {
+        removeNotification(`tmx-${name}`);
+      }
+    }
+    this._prevNotifiedSessions = allRunning;
+
+    // -- Summary notification --
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
     const title = suspendedCount > 0
       ? `tmx ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
       : `tmx ▶ ${activeCount}/${totalRunning}`;
 
-    // Build content lines showing session names
     const MAX_NAMES = 8;
     const parts: string[] = [];
     if (activeNames.length > 0) {
@@ -1403,33 +1454,26 @@ export class Daemon {
     }
     const content = parts.length > 0 ? parts.join(" | ") : "no sessions running";
 
-    const port = this.config.orchestrator.dashboard_port;
-    const apiBase = `http://127.0.0.1:${port}/api`;
-
-    // Toggle button: if any sessions are suspended, offer "Resume All", otherwise "Pause All"
     const anySuspended = suspendedCount > 0;
     const toggleLabel = anySuspended ? "Resume All" : "Pause All";
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
-
-    const stopAction = `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`;
-    // Tap opens all session tabs in Termux (no browser needed — saves ~1GB RAM)
-    const tabsAction = `curl -sX POST ${apiBase}/tabs >/dev/null 2>&1`;
     const dashboardAction = `${resolveTermuxBin("termux-open-url")} http://localhost:${port}`;
 
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
       "--id", "tmx-status",
+      "--group", "tmx-sessions",
       "--priority", "low",
       "--title", title,
       "--content", content,
       "--icon", "dashboard",
-      "--action", tabsAction,
+      "--action", dashboardAction,
       "--button1", toggleLabel,
       "--button1-action", toggleAction,
       "--button2", "Stop All",
-      "--button2-action", stopAction,
+      "--button2-action", `curl -sX POST ${apiBase}/stop >/dev/null 2>&1`,
       "--button3", "Dashboard",
       "--button3-action", dashboardAction,
     ]);
@@ -2133,20 +2177,19 @@ export class Daemon {
           return { status: 500, data: { error: `Failed to open tab for '${name}'` } };
         }
         case "run-build": {
-          // Run build-on-termux.sh in a session's tmux pane
+          // Run build-on-termux.sh in a new Termux tab (not inside existing session)
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
           const buildCfg = this.config.sessions.find((s: SessionConfig) => s.name === name);
           if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
-          const scriptPath = join(buildCfg.path, "build-on-termux.sh");
-          if (!existsSync(scriptPath)) {
+          const buildScript = join(buildCfg.path, "build-on-termux.sh");
+          if (!existsSync(buildScript)) {
             return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
           }
-          if (sendKeys(name, "./build-on-termux.sh", true)) {
-            this.log.info(`Sent build-on-termux.sh to '${name}'`, { session: name });
+          if (runScriptInTab(buildScript, buildCfg.path, name, this.log)) {
             return { status: 200, data: { ok: true, session: name } };
           }
-          return { status: 500, data: { error: `Failed to send build command to '${name}'` } };
+          return { status: 500, data: { error: `Failed to launch build for '${name}'` } };
         }
         case "processes":
           // List Android apps sorted by RSS (via ADB)

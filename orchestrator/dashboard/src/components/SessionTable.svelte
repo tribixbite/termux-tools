@@ -140,28 +140,30 @@
             {#if session.status === "running" || session.status === "degraded"}
               <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
               <button class="btn-icon" onclick={(e) => handleAction(e, "restart", session.name)} title="Restart">&#x21BB;</button>
-              {#if !session.suspended}
-                <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
-              {/if}
-              {#if session.has_build_script}
-                <button class="btn-icon build" onclick={(e) => handleBuild(e, session.name)} title="Run build-on-termux.sh">&#x1F528;</button>
-              {/if}
               {#if session.suspended}
                 <button class="btn-icon success" onclick={(e) => handleResume(e, session.name)} title="Resume">&#x25B6;</button>
               {:else}
+                <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
                 <button class="btn-icon muted" onclick={(e) => handleSuspend(e, session.name)} title="Pause">&#x23F8;</button>
               {/if}
             {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
               <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
-              {#if session.has_build_script}
-                <button class="btn-icon build" onclick={(e) => handleBuild(e, session.name)} title="Run build-on-termux.sh">&#x1F528;</button>
-              {/if}
               <button class="btn-icon danger" onclick={(e) => handleClose(e, session.name)} title="Remove">&#x2715;</button>
             {/if}
           </td>
         </tr>
         {#if expandedSession === session.name}
-          <tr><td colspan="3" class="td-expand"><SessionCard {session} /></td></tr>
+          <tr><td colspan="3" class="td-expand">
+            {#if session.has_build_script}
+              <div class="build-row">
+                <button class="btn-build" onclick={(e) => handleBuild(e, session.name)}>
+                  &#x1F528; Run build-on-termux.sh
+                </button>
+                <span class="build-hint">Opens in new Termux tab</span>
+              </div>
+            {/if}
+            <SessionCard {session} />
+          </td></tr>
         {/if}
       {/each}
     </tbody>
@@ -186,7 +188,7 @@
     padding: 0 0.375rem 0.5rem;
   }
   .th-rss { text-align: right; }
-  .th-actions { text-align: right; width: 10rem; }
+  .th-actions { text-align: right; width: 7.5rem; }
   .session-row {
     cursor: pointer;
     transition: background 0.15s;
@@ -236,10 +238,34 @@
   }
   .session-name:hover { text-decoration: underline; }
   .session-name:active { color: var(--accent-purple); }
-  /* Build button — amber tint */
-  .td-actions :global(.btn-icon.build) { color: var(--accent-yellow); }
-  .td-actions :global(.btn-icon.build:hover) { background: rgba(245, 158, 11, 0.15); }
   /* Muted button for pause */
   .td-actions :global(.btn-icon.muted) { color: var(--text-muted); }
   .td-actions :global(.btn-icon.muted:hover) { background: rgba(255, 255, 255, 0.08); }
+  /* Build row in expanded detail */
+  .build-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .btn-build {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--accent-yellow);
+    background: rgba(210, 153, 34, 0.1);
+    color: var(--accent-yellow);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+    font-family: inherit;
+  }
+  .btn-build:hover { background: rgba(210, 153, 34, 0.25); }
+  .build-hint {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+  }
 </style>
