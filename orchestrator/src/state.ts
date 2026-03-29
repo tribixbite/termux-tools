@@ -26,6 +26,8 @@ export function newSessionState(name: string): SessionState {
     activity: null,
     suspended: false,
     auto_suspended: false,
+    last_output: null,
+    claude_status: null,
   };
 }
 
@@ -188,11 +190,19 @@ export class StateManager {
   }
 
   /** Update memory/activity metrics for a session (does not persist — transient data) */
-  updateSessionMetrics(name: string, rss_mb: number | null, activity: SessionState["activity"]): void {
+  updateSessionMetrics(
+    name: string,
+    rss_mb: number | null,
+    activity: SessionState["activity"],
+    lastOutput?: string | null,
+    claudeStatus?: SessionState["claude_status"],
+  ): void {
     const session = this.state.sessions[name];
     if (session) {
       session.rss_mb = rss_mb;
       session.activity = activity;
+      if (lastOutput !== undefined) session.last_output = lastOutput;
+      if (claudeStatus !== undefined) session.claude_status = claudeStatus;
       // Don't persist — these are ephemeral metrics updated every poll cycle
     }
   }

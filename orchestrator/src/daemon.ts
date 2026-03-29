@@ -44,7 +44,12 @@ import {
   suspendSession,
   resumeSession,
   runScriptInTab,
+  capturePane,
 } from "./session.js";
+
+/** Pattern indicating Claude Code is actively processing (not waiting for input).
+ * "esc to interrupt" appears in the status bar only when Claude is mid-task. */
+const CLAUDE_WORKING_PATTERN = /esc to interrupt/;
 
 /** Promise-based sleep */
 function sleep(ms: number): Promise<void> {
@@ -1280,7 +1285,24 @@ export class Daemon {
       // Classify activity based on CPU ticks
       const activityState = this.activity.classifyTree(session.name, pid);
 
-      this.state.updateSessionMetrics(session.name, rss_mb, activityState);
+      // Capture pane output + detect Claude prompt state for non-service sessions
+      let lastOutput: string | null = null;
+      let claudeStatus: "working" | "waiting" | null = null;
+      if (session.type !== "service" && !session.bare) {
+        const pane = capturePane(session.name, 10);
+        if (pane) {
+          // Extract last few non-empty lines for display
+          const lines = pane.split("\n").filter((l) => l.trim().length > 0);
+          lastOutput = lines.slice(-3).join("\n");
+          // Detect if Claude is actively working vs waiting for input.
+          // "esc to interrupt" in the status bar = Claude is processing.
+          if (session.type === "claude") {
+            claudeStatus = CLAUDE_WORKING_PATTERN.test(pane) ? "working" : "waiting";
+          }
+        }
+      }
+
+      this.state.updateSessionMetrics(session.name, rss_mb, activityState, lastOutput, claudeStatus);
     }
 
     // Auto-suspend/resume based on memory pressure

@@ -132,6 +132,11 @@
               onclick={(e) => handleOpenTab(e, session.name)}
               title="Open in Termux tab"
             >{session.name}</button>
+            {#if session.claude_status === "waiting"}
+              <span class="claude-badge waiting" title="Waiting for input">idle</span>
+            {:else if session.claude_status === "working"}
+              <span class="claude-badge working" title="Actively working">busy</span>
+            {/if}
           </td>
           <td class="td-rss">
             {#if session.rss_mb != null}
@@ -158,6 +163,9 @@
         </tr>
         {#if expandedSession === session.name}
           <tr><td colspan="3" class="td-expand">
+            {#if session.last_output}
+              <pre class="pane-output">{session.last_output}</pre>
+            {/if}
             {#if session.has_build_script}
               <div class="build-row">
                 <button class="btn-build" onclick={(e) => handleBuild(e, session.name)}>
@@ -242,6 +250,40 @@
   }
   .session-name:hover { text-decoration: underline; }
   .session-name:active { color: var(--accent-purple); }
+  /* Claude status badge */
+  .claude-badge {
+    font-size: 0.5625rem;
+    font-weight: 600;
+    padding: 0.0625rem 0.3125rem;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+  }
+  .claude-badge.waiting {
+    color: var(--accent-yellow);
+    background: rgba(245, 158, 11, 0.15);
+  }
+  .claude-badge.working {
+    color: var(--accent-green);
+    background: rgba(34, 197, 94, 0.15);
+  }
+  /* Pane output preview */
+  .pane-output {
+    font-family: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+    font-size: 0.625rem;
+    line-height: 1.4;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.375rem 0.5rem;
+    margin: 0 0 0.5rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 4.5rem;
+    overflow: hidden;
+  }
   /* Muted button for pause */
   .td-actions :global(.btn-icon.muted) { color: var(--text-muted); }
   .td-actions :global(.btn-icon.muted:hover) { background: rgba(255, 255, 255, 0.08); }

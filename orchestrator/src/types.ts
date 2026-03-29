@@ -183,6 +183,10 @@ export interface SessionState {
   suspended: boolean;
   /** Whether auto-suspend froze this session (so auto-resume knows to unfreeze it) */
   auto_suspended: boolean;
+  /** Last few non-empty lines from tmux pane (ephemeral, not persisted) */
+  last_output: string | null;
+  /** Claude session status: "working" (mid-task), "waiting" (prompt visible), null (non-claude/unknown) */
+  claude_status: "working" | "waiting" | null;
 }
 
 /** Full persisted state */

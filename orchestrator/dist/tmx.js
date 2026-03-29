@@ -730,7 +730,9 @@ function newSessionState(name) {
     rss_mb: null,
     activity: null,
     suspended: false,
-    auto_suspended: false
+    auto_suspended: false,
+    last_output: null,
+    claude_status: null
   };
 }
 function newDaemonState() {
@@ -863,11 +865,13 @@ var StateManager = class {
     }
   }
   /** Update memory/activity metrics for a session (does not persist — transient data) */
-  updateSessionMetrics(name, rss_mb, activity) {
+  updateSessionMetrics(name, rss_mb, activity, lastOutput, claudeStatus) {
     const session = this.state.sessions[name];
     if (session) {
       session.rss_mb = rss_mb;
       session.activity = activity;
+      if (lastOutput !== void 0) session.last_output = lastOutput;
+      if (claudeStatus !== void 0) session.claude_status = claudeStatus;
     }
   }
   /** Update system memory snapshot (transient, not persisted) */
@@ -2899,6 +2903,7 @@ data: ${JSON.stringify({ id: clientId })}
 };
 
 // src/daemon.ts
+var CLAUDE_WORKING_PATTERN = /esc to interrupt/;
 function sleep2(ms) {
   return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
@@ -3838,7 +3843,19 @@ var Daemon = class _Daemon {
       }
       const { rss_mb } = this.memory.getProcessTreeRss(pid);
       const activityState = this.activity.classifyTree(session.name, pid);
-      this.state.updateSessionMetrics(session.name, rss_mb, activityState);
+      let lastOutput = null;
+      let claudeStatus = null;
+      if (session.type !== "service" && !session.bare) {
+        const pane = capturePane(session.name, 10);
+        if (pane) {
+          const lines = pane.split("\n").filter((l) => l.trim().length > 0);
+          lastOutput = lines.slice(-3).join("\n");
+          if (session.type === "claude") {
+            claudeStatus = CLAUDE_WORKING_PATTERN.test(pane) ? "working" : "waiting";
+          }
+        }
+      }
+      this.state.updateSessionMetrics(session.name, rss_mb, activityState, lastOutput, claudeStatus);
     }
     this.autoSuspendOnPressure(sysMem?.pressure ?? "normal");
     this.pushSseState();

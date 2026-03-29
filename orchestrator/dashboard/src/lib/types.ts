@@ -17,6 +17,10 @@ export interface SessionState {
   activity: "active" | "idle" | "stopped" | "unknown" | null;
   suspended: boolean;
   auto_suspended: boolean;
+  /** Last few lines of tmux pane output */
+  last_output: string | null;
+  /** Claude prompt state: "working" (mid-task) or "waiting" (at prompt) */
+  claude_status: "working" | "waiting" | null;
   path: string | null;
   has_build_script: boolean;
   uptime: string | null;
