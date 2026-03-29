@@ -2042,11 +2042,16 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           resp = await this.cmdRestart(name);
           break;
-        case "go":
+        case "go": {
+          // Dashboard "go" sends keys immediately — no 60s readiness wait.
+          // The readiness check (cmdGo) is for boot automation only.
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
-          resp = await this.cmdGo(name);
-          break;
+          const resolved = this.resolveName(name);
+          if (!resolved) return { status: 400, data: { error: `Unknown session: ${name}` } };
+          const sent = sendKeys(resolved, "go", true);
+          return { status: sent ? 200 : 500, data: sent ? { ok: true } : { error: `Failed to send 'go' to '${resolved}'` } };
+        }
         case "send":
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Session name required" } };
