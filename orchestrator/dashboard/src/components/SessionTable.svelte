@@ -148,6 +148,8 @@
                 <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
                 <button class="btn-icon muted" onclick={(e) => handleSuspend(e, session.name)} title="Pause">&#x23F8;</button>
               {/if}
+            {:else if session.status === "starting" || session.status === "waiting" || session.status === "stopping"}
+              <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
             {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
               <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
               <button class="btn-icon danger" onclick={(e) => handleClose(e, session.name)} title="Remove">&#x2715;</button>
