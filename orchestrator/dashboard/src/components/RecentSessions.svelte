@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { fetchRecent, openSession } from "../lib/api";
+  import { fetchRecent, openSession, registerProjects, cloneRepo, createProject } from "../lib/api";
   import { refreshStatus } from "../lib/store.svelte";
   import type { RecentProject } from "../lib/types";
 
@@ -9,6 +9,11 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let actionMsg = $state<string | null>(null);
+
+  /** Which inline form is active */
+  let activeForm = $state<"clone" | "create" | null>(null);
+  let formValue = $state("");
+  let formBusy = $state(false);
 
   /** Relative time string (e.g. "2h ago", "3d ago") */
   function timeAgo(iso: string): string {
@@ -66,10 +71,55 @@
       await openSession(project.path);
       actionMsg = `Starting ${project.name}...`;
       await refreshStatus();
-      // Reload recent list to reflect new status
       await loadRecent();
     } catch (err) {
       actionMsg = `Failed: ${(err as Error).message}`;
+    }
+  }
+
+  async function handleScan() {
+    actionMsg = null;
+    formBusy = true;
+    try {
+      const result = await registerProjects();
+      actionMsg = `Registered ${result.registered.length} projects (${result.skipped} skipped)`;
+      await loadRecent();
+    } catch (err) {
+      actionMsg = `Scan failed: ${(err as Error).message}`;
+    } finally {
+      formBusy = false;
+    }
+  }
+
+  async function handleFormSubmit() {
+    if (!formValue.trim()) return;
+    formBusy = true;
+    actionMsg = null;
+    try {
+      if (activeForm === "clone") {
+        const result = await cloneRepo(formValue.trim());
+        actionMsg = `Cloned → ${result.name}`;
+      } else if (activeForm === "create") {
+        const result = await createProject(formValue.trim());
+        actionMsg = `Created → ${result.name}`;
+      }
+      formValue = "";
+      activeForm = null;
+      await loadRecent();
+    } catch (err) {
+      actionMsg = `Failed: ${(err as Error).message}`;
+    } finally {
+      formBusy = false;
+    }
+  }
+
+  function toggleForm(type: "clone" | "create") {
+    if (activeForm === type) {
+      activeForm = null;
+      formValue = "";
+    } else {
+      activeForm = type;
+      formValue = "";
     }
   }
 
@@ -91,6 +141,35 @@
 
   {#if expanded}
     <div class="panel-body">
+      <!-- Action bar: Scan / Clone / New -->
+      <div class="action-bar">
+        <button class="btn btn-sm" onclick={handleScan} disabled={formBusy} title="Scan ~/git and register all projects">
+          Scan
+        </button>
+        <button class="btn btn-sm" class:active={activeForm === "clone"} onclick={() => toggleForm("clone")} title="Clone a git repo">
+          Clone
+        </button>
+        <button class="btn btn-sm" class:active={activeForm === "create"} onclick={() => toggleForm("create")} title="Create new project">
+          New
+        </button>
+      </div>
+
+      <!-- Inline form for clone/create -->
+      {#if activeForm}
+        <form class="inline-form" onsubmit={(e) => { e.preventDefault(); handleFormSubmit(); }}>
+          <input
+            type="text"
+            class="search-input"
+            placeholder={activeForm === "clone" ? "https://github.com/user/repo" : "project-name"}
+            bind:value={formValue}
+            disabled={formBusy}
+          />
+          <button class="btn btn-sm btn-primary" type="submit" disabled={formBusy || !formValue.trim()}>
+            {activeForm === "clone" ? "Clone" : "Create"}
+          </button>
+        </form>
+      {/if}
+
       {#if actionMsg}
         <div class="action-msg">{actionMsg}</div>
       {/if}
@@ -158,6 +237,23 @@
   .chevron.open { transform: rotate(90deg); }
   .panel-body { margin-top: 0.75rem; }
 
+  .action-bar {
+    display: flex;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+  }
+  .action-bar :global(.btn.active) {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+  }
+
+  .inline-form {
+    display: flex;
+    gap: 0.375rem;
+    margin-bottom: 0.5rem;
+  }
+  .inline-form .search-input { flex: 1; }
+
   .search-input {
     width: 100%;
     padding: 0.375rem 0.5rem;
@@ -197,19 +293,19 @@
   }
   .recent-name {
     font-weight: 600;
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
     color: var(--text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .recent-time {
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     color: var(--text-muted);
     white-space: nowrap;
   }
   .recent-path {
-    font-size: 0.6875rem;
+    font-size: 0.625rem;
     color: var(--text-muted);
     grid-column: 1;
     grid-row: 2;
@@ -225,8 +321,8 @@
   }
 
   .badge {
-    font-size: 0.5625rem;
-    padding: 0.0625rem 0.3125rem;
+    font-size: 0.5rem;
+    padding: 0.0625rem 0.25rem;
     border-radius: 3px;
     text-transform: uppercase;
     font-weight: 600;
@@ -239,7 +335,7 @@
   .badge-dim { background: rgba(110, 118, 129, 0.15); color: var(--text-muted); }
 
   .action-msg {
-    font-size: 0.75rem;
+    font-size: 0.6875rem;
     color: var(--text-secondary);
     margin-bottom: 0.5rem;
     padding: 0.25rem 0.5rem;

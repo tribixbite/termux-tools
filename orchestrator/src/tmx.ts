@@ -686,6 +686,23 @@ async function runIpcCommand(): Promise<void> {
     case "resume-all":
       cmd = { cmd: "resume-all" };
       break;
+    case "register":
+      cmd = { cmd: "register", path: subArgs[0] || undefined };
+      break;
+    case "clone":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx clone <url> [--name <n>]`);
+        process.exit(1);
+      }
+      cmd = { cmd: "clone", url: subArgs[0], name: getFlag(subArgs, "--name") };
+      break;
+    case "create":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx create <name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "create", name: subArgs[0] };
+      break;
     default:
       // Try as fuzzy session name → status
       cmd = { cmd: "status", name: command };

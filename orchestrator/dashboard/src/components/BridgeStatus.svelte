@@ -138,6 +138,7 @@
     font: inherit;
     cursor: pointer;
     text-align: left;
+    overflow: hidden;
   }
   .card-header:hover { background: var(--bg-tertiary); }
   .header-left {
@@ -196,5 +197,13 @@
     font-size: 0.6875rem;
     color: var(--text-muted);
     margin: 0;
+  }
+
+  @media (max-width: 768px) {
+    .card-header { padding: 0.5rem 0.625rem; gap: 0.375rem; }
+    .label { font-size: 0.5625rem; }
+    .uptime-text { font-size: 0.5625rem; }
+    .last-tool { font-size: 0.5rem; }
+    .detail-grid { font-size: 0.5625rem; }
   }
 </style>

@@ -2544,7 +2544,7 @@ function parseRecentProjects(historyPath, maxLines = 1e3) {
   }
 }
 function deriveName(path) {
-  const base = (0, import_node_path5.basename)(path).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const base = (0, import_node_path5.basename)(path).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   return base || "unnamed";
 }
 function isValidName(name) {
@@ -2904,6 +2904,24 @@ data: ${JSON.stringify({ id: clientId })}
 
 // src/daemon.ts
 var CLAUDE_WORKING_PATTERN = /esc to interrupt/;
+var ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+var BOX_DRAWING_RE = /^[\u2500-\u257f\s]+$/;
+var BARE_PROMPT_RE = /^\s*[❯>$%#]\s*$/;
+var CC_CHROME_RE = /esc to interrupt|bypass permissions|shift\+tab to cycle|press enter to send|\/help for help|to cycle|tab to navigate/i;
+function cleanPaneOutput(raw, maxLines = 3) {
+  const stripped = raw.replace(ANSI_RE, "");
+  const lines = stripped.split("\n");
+  const meaningful = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    if (BOX_DRAWING_RE.test(trimmed)) continue;
+    if (BARE_PROMPT_RE.test(trimmed)) continue;
+    if (CC_CHROME_RE.test(trimmed)) continue;
+    meaningful.push(line);
+  }
+  return meaningful.slice(-maxLines).join("\n");
+}
 function sleep2(ms) {
   return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
@@ -3848,8 +3866,7 @@ var Daemon = class _Daemon {
       if (session.type !== "service" && !session.bare) {
         const pane = capturePane(session.name, 10);
         if (pane) {
-          const lines = pane.split("\n").filter((l) => l.trim().length > 0);
-          lastOutput = lines.slice(-3).join("\n");
+          lastOutput = cleanPaneOutput(pane, 3) || null;
           if (session.type === "claude") {
             claudeStatus = CLAUDE_WORKING_PATTERN.test(pane) ? "working" : "waiting";
           }
@@ -4342,6 +4359,122 @@ var Daemon = class _Daemon {
     });
     return { ok: true, data: results };
   }
+  /** Register projects by scanning a directory (default ~/git) */
+  cmdRegister(scanPath) {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const dirPath = (0, import_node_path7.resolve)(scanPath ?? (0, import_node_path7.join)(home, "git"));
+    if (!(0, import_node_fs13.existsSync)(dirPath)) {
+      return { ok: false, error: `Directory not found: ${dirPath}` };
+    }
+    let entries;
+    try {
+      const names = (0, import_node_fs13.readdirSync)(dirPath);
+      entries = names.filter((n) => !n.startsWith(".")).map((n) => {
+        const full = (0, import_node_path7.join)(dirPath, n);
+        try {
+          const st = (0, import_node_fs13.statSync)(full);
+          if (!st.isDirectory()) return null;
+          return { name: n, path: full, mtime: st.mtimeMs };
+        } catch {
+          return null;
+        }
+      }).filter((e) => e !== null);
+      entries.sort((a, b) => b.mtime - a.mtime);
+    } catch (err) {
+      return { ok: false, error: `Failed to scan ${dirPath}: ${err}` };
+    }
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name)
+    ];
+    const registered = [];
+    let skipped = 0;
+    for (const entry of entries) {
+      if (this.config.sessions.find((s) => s.path === entry.path)) {
+        skipped++;
+        continue;
+      }
+      if (this.registry.findByPath(entry.path)) {
+        skipped++;
+        continue;
+      }
+      let name = deriveName(entry.path);
+      if (existingNames.includes(name)) {
+        name = nextSuffix(name, existingNames);
+      }
+      const added = this.registry.add({ name, path: entry.path, priority: 50, auto_go: false });
+      if (added) {
+        registered.push(name);
+        existingNames.push(name);
+      } else {
+        skipped++;
+      }
+    }
+    this.log.info(`Register: ${registered.length} added, ${skipped} skipped from ${dirPath}`);
+    return { ok: true, data: { registered, skipped, total: entries.length } };
+  }
+  /** Clone a git repo and register it */
+  cmdClone(url, nameOverride) {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const gitDir = (0, import_node_path7.join)(home, "git");
+    const urlBasename = url.replace(/\.git$/, "").split("/").pop() ?? "unnamed";
+    const dirName = nameOverride ?? urlBasename.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    const targetDir = (0, import_node_path7.join)(gitDir, dirName);
+    if ((0, import_node_fs13.existsSync)(targetDir)) {
+      if (this.registry.findByPath(targetDir)) {
+        return { ok: true, data: { name: dirName, path: targetDir, message: "Already registered" } };
+      }
+      const existingNames2 = [
+        ...this.config.sessions.map((s) => s.name),
+        ...this.registry.entries().map((e) => e.name)
+      ];
+      let name2 = deriveName(targetDir);
+      if (existingNames2.includes(name2)) name2 = nextSuffix(name2, existingNames2);
+      this.registry.add({ name: name2, path: targetDir, priority: 50, auto_go: false });
+      return { ok: true, data: { name: name2, path: targetDir, message: "Existing dir registered" } };
+    }
+    if (!(0, import_node_fs13.existsSync)(gitDir)) (0, import_node_fs13.mkdirSync)(gitDir, { recursive: true });
+    const result = (0, import_node_child_process7.spawnSync)("git", ["clone", url, targetDir], {
+      timeout: 12e4,
+      stdio: "pipe",
+      env: process.env
+    });
+    if (result.status !== 0) {
+      const stderr = result.stderr?.toString().trim() ?? "Unknown error";
+      return { ok: false, error: `git clone failed: ${stderr}` };
+    }
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name)
+    ];
+    let name = deriveName(targetDir);
+    if (existingNames.includes(name)) name = nextSuffix(name, existingNames);
+    this.registry.add({ name, path: targetDir, priority: 50, auto_go: false });
+    this.log.info(`Cloned ${url} \u2192 ${targetDir} as '${name}'`);
+    return { ok: true, data: { name, path: targetDir } };
+  }
+  /** Create a new project directory, git init, and register it */
+  cmdCreate(name) {
+    if (!isValidName(name)) {
+      return { ok: false, error: `Invalid name '${name}' \u2014 must match [a-z0-9-]+` };
+    }
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const targetDir = (0, import_node_path7.join)(home, "git", name);
+    if ((0, import_node_fs13.existsSync)(targetDir)) {
+      return { ok: false, error: `Directory already exists: ${targetDir}` };
+    }
+    (0, import_node_fs13.mkdirSync)(targetDir, { recursive: true });
+    (0, import_node_child_process7.spawnSync)("git", ["init"], { cwd: targetDir, timeout: 1e4, stdio: "pipe" });
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name)
+    ];
+    let regName = name;
+    if (existingNames.includes(regName)) regName = nextSuffix(regName, existingNames);
+    this.registry.add({ name: regName, path: targetDir, priority: 50, auto_go: false });
+    this.log.info(`Created project '${regName}' at ${targetDir}`);
+    return { ok: true, data: { name: regName, path: targetDir } };
+  }
   // -- Session suspension (SIGSTOP/SIGCONT) ------------------------------------
   /** Suspend a single session by name — freezes all processes via SIGSTOP */
   cmdSuspend(name) {
@@ -4743,6 +4876,36 @@ var Daemon = class _Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           resp = this.cmdResumeAll();
           break;
+        case "register": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          let scanPath;
+          if (body) {
+            try {
+              scanPath = JSON.parse(body).path;
+            } catch {
+            }
+          }
+          resp = this.cmdRegister(scanPath);
+          break;
+        }
+        case "clone": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!body) return { status: 400, data: { error: "JSON body with url required" } };
+          try {
+            const parsed = JSON.parse(body);
+            if (!parsed.url) return { status: 400, data: { error: "url is required" } };
+            resp = this.cmdClone(parsed.url, parsed.name);
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+          break;
+        }
+        case "create": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Project name required" } };
+          resp = this.cmdCreate(name);
+          break;
+        }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -5076,6 +5239,12 @@ var Daemon = class _Daemon {
         return this.cmdSuspendAll();
       case "resume-all":
         return this.cmdResumeAll();
+      case "register":
+        return this.cmdRegister(cmd.path);
+      case "clone":
+        return this.cmdClone(cmd.url, cmd.name);
+      case "create":
+        return this.cmdCreate(cmd.name);
       default:
         return { ok: false, error: `Unknown command: ${cmd.cmd}` };
     }
@@ -5225,6 +5394,9 @@ var Daemon = class _Daemon {
   /** Fuzzy-match a session name (prefix match) */
   resolveName(input) {
     const names = this.config.sessions.map((s) => s.name);
+    for (const entry of this.registry.entries()) {
+      if (!names.includes(entry.name)) names.push(entry.name);
+    }
     if (names.includes(input)) return input;
     const matches = names.filter((n) => n.startsWith(input));
     if (matches.length === 1) return matches[0];
@@ -5881,6 +6053,23 @@ async function runIpcCommand() {
       break;
     case "resume-all":
       cmd = { cmd: "resume-all" };
+      break;
+    case "register":
+      cmd = { cmd: "register", path: subArgs[0] || void 0 };
+      break;
+    case "clone":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx clone <url> [--name <n>]`);
+        process.exit(1);
+      }
+      cmd = { cmd: "clone", url: subArgs[0], name: getFlag(subArgs, "--name") };
+      break;
+    case "create":
+      if (!subArgs[0]) {
+        console.error(`Usage: tmx create <name>`);
+        process.exit(1);
+      }
+      cmd = { cmd: "create", name: subArgs[0] };
       break;
     default:
       cmd = { cmd: "status", name: command };

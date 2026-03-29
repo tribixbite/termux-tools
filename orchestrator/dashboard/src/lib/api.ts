@@ -223,6 +223,33 @@ export async function closeSession(name: string): Promise<void> {
   await checkedPost(`/api/close/${encodeURIComponent(name)}`);
 }
 
+/** Register projects by scanning a directory (default ~/git) */
+export async function registerProjects(path?: string): Promise<{ registered: string[]; skipped: number; total: number }> {
+  const res = await fetch("/api/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: path ? JSON.stringify({ path }) : "{}",
+  });
+  const data = await checkedJson<{ registered: string[]; skipped: number; total: number }>(res);
+  return data;
+}
+
+/** Clone a git repo and register it */
+export async function cloneRepo(url: string, name?: string): Promise<{ name: string; path: string }> {
+  const res = await fetch("/api/clone", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, name }),
+  });
+  return checkedJson(res);
+}
+
+/** Create a new project directory and register it */
+export async function createProject(name: string): Promise<{ name: string; path: string }> {
+  const res = await fetch(`/api/create/${encodeURIComponent(name)}`, { method: "POST" });
+  return checkedJson(res);
+}
+
 /** Android app info from the daemon */
 export interface AppInfo {
   pkg: string;

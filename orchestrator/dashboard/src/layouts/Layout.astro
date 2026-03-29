@@ -38,7 +38,7 @@ const navItems = [
         </nav>
       </div>
     </header>
-    <main class="max-w-5xl mx-auto px-4 py-4">
+    <main class="max-w-5xl mx-auto main-content">
       <slot />
     </main>
   </body>
@@ -46,4 +46,11 @@ const navItems = [
 
 <style is:global>
   @import "../styles/global.css";
+</style>
+
+<style>
+  .main-content { padding: 1rem; }
+  @media (max-width: 768px) {
+    .main-content { padding: 0.5rem; }
+  }
 </style>

@@ -258,7 +258,7 @@ export function parseRecentProjects(historyPath: string, maxLines = 1000): Array
 
 /** Derive a session name from a path (basename, lowercased, sanitized) */
 export function deriveName(path: string): string {
-  const base = basename(path).toLowerCase().replace(/[^a-z0-9-]/g, "-");
+  const base = basename(path).toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
   return base || "unnamed";
 }
 

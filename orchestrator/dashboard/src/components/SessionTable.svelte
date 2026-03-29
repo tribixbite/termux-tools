@@ -314,4 +314,17 @@
     font-size: 0.6875rem;
     color: var(--text-muted);
   }
+
+  /* Mobile compact */
+  @media (max-width: 768px) {
+    .session-table { font-size: 0.6875rem; }
+    thead th { font-size: 0.5625rem; padding: 0 0.25rem 0.375rem; }
+    .th-actions { width: 6rem; }
+    .session-row td { padding: 0.375rem 0.25rem; }
+    .session-name { font-size: 0.6875rem; }
+    .td-rss { font-size: 0.625rem; }
+    .td-name { gap: 0.375rem; }
+    .claude-badge { font-size: 0.5rem; padding: 0.0625rem 0.25rem; }
+    .pane-output { font-size: 0.5625rem; max-height: 3.5rem; padding: 0.25rem 0.375rem; }
+  }
 </style>

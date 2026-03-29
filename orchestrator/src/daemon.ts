@@ -10,7 +10,7 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, chmodSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
@@ -50,6 +50,35 @@ import {
 /** Pattern indicating Claude Code is actively processing (not waiting for input).
  * "esc to interrupt" appears in the status bar only when Claude is mid-task. */
 const CLAUDE_WORKING_PATTERN = /esc to interrupt/;
+
+/** Strip ANSI escape sequences */
+const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+/** Lines consisting entirely of box-drawing characters (U+2500–U+257F) */
+const BOX_DRAWING_RE = /^[\u2500-\u257f\s]+$/;
+/** Lines that are just a bare prompt character */
+const BARE_PROMPT_RE = /^\s*[❯>$%#]\s*$/;
+/** CC status bar / chrome lines to filter out */
+const CC_CHROME_RE = /esc to interrupt|bypass permissions|shift\+tab to cycle|press enter to send|\/help for help|to cycle|tab to navigate/i;
+
+/**
+ * Clean raw tmux capture-pane output for display.
+ * Strips ANSI escapes, box-drawing separator lines, bare prompts,
+ * and CC status bar chrome. Returns last N meaningful content lines.
+ */
+function cleanPaneOutput(raw: string, maxLines = 3): string {
+  const stripped = raw.replace(ANSI_RE, "");
+  const lines = stripped.split("\n");
+  const meaningful: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    if (BOX_DRAWING_RE.test(trimmed)) continue;
+    if (BARE_PROMPT_RE.test(trimmed)) continue;
+    if (CC_CHROME_RE.test(trimmed)) continue;
+    meaningful.push(line);
+  }
+  return meaningful.slice(-maxLines).join("\n");
+}
 
 /** Promise-based sleep */
 function sleep(ms: number): Promise<void> {
@@ -1291,9 +1320,8 @@ export class Daemon {
       if (session.type !== "service" && !session.bare) {
         const pane = capturePane(session.name, 10);
         if (pane) {
-          // Extract last few non-empty lines for display
-          const lines = pane.split("\n").filter((l) => l.trim().length > 0);
-          lastOutput = lines.slice(-3).join("\n");
+          // Extract meaningful content lines (strips CC chrome, box-drawing, ANSI)
+          lastOutput = cleanPaneOutput(pane, 3) || null;
           // Detect if Claude is actively working vs waiting for input.
           // "esc to interrupt" in the status bar = Claude is processing.
           if (session.type === "claude") {
@@ -1874,6 +1902,146 @@ export class Daemon {
     return { ok: true, data: results };
   }
 
+  /** Register projects by scanning a directory (default ~/git) */
+  private cmdRegister(scanPath?: string): IpcResponse {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const dirPath = resolve(scanPath ?? join(home, "git"));
+
+    if (!existsSync(dirPath)) {
+      return { ok: false, error: `Directory not found: ${dirPath}` };
+    }
+
+    // Read all entries, filter to directories, sort by mtime descending
+    let entries: Array<{ name: string; path: string; mtime: number }>;
+    try {
+      const names = readdirSync(dirPath);
+      entries = names
+        .filter((n) => !n.startsWith(".")) // skip hidden dirs
+        .map((n) => {
+          const full = join(dirPath, n);
+          try {
+            const st = statSync(full);
+            if (!st.isDirectory()) return null;
+            return { name: n, path: full, mtime: st.mtimeMs };
+          } catch { return null; }
+        })
+        .filter((e): e is NonNullable<typeof e> => e !== null);
+      entries.sort((a, b) => b.mtime - a.mtime);
+    } catch (err) {
+      return { ok: false, error: `Failed to scan ${dirPath}: ${err}` };
+    }
+
+    // Collect existing names for suffix dedup
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name),
+    ];
+
+    const registered: string[] = [];
+    let skipped = 0;
+    for (const entry of entries) {
+      // Skip if already in config or registry by path
+      if (this.config.sessions.find((s) => s.path === entry.path)) { skipped++; continue; }
+      if (this.registry.findByPath(entry.path)) { skipped++; continue; }
+
+      let name = deriveName(entry.path);
+      if (existingNames.includes(name)) {
+        name = nextSuffix(name, existingNames);
+      }
+
+      const added = this.registry.add({ name, path: entry.path, priority: 50, auto_go: false });
+      if (added) {
+        registered.push(name);
+        existingNames.push(name);
+      } else {
+        skipped++;
+      }
+    }
+
+    this.log.info(`Register: ${registered.length} added, ${skipped} skipped from ${dirPath}`);
+    return { ok: true, data: { registered, skipped, total: entries.length } };
+  }
+
+  /** Clone a git repo and register it */
+  private cmdClone(url: string, nameOverride?: string): IpcResponse {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const gitDir = join(home, "git");
+
+    // Derive target dir name from URL: strip trailing .git, take basename
+    const urlBasename = url.replace(/\.git$/, "").split("/").pop() ?? "unnamed";
+    const dirName = nameOverride ?? urlBasename.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    const targetDir = join(gitDir, dirName);
+
+    if (existsSync(targetDir)) {
+      // Dir exists — just register it if not already registered
+      if (this.registry.findByPath(targetDir)) {
+        return { ok: true, data: { name: dirName, path: targetDir, message: "Already registered" } };
+      }
+      const existingNames = [
+        ...this.config.sessions.map((s) => s.name),
+        ...this.registry.entries().map((e) => e.name),
+      ];
+      let name = deriveName(targetDir);
+      if (existingNames.includes(name)) name = nextSuffix(name, existingNames);
+      this.registry.add({ name, path: targetDir, priority: 50, auto_go: false });
+      return { ok: true, data: { name, path: targetDir, message: "Existing dir registered" } };
+    }
+
+    // Clone the repo
+    if (!existsSync(gitDir)) mkdirSync(gitDir, { recursive: true });
+    const result = spawnSync("git", ["clone", url, targetDir], {
+      timeout: 120_000,
+      stdio: "pipe",
+      env: process.env,
+    });
+
+    if (result.status !== 0) {
+      const stderr = result.stderr?.toString().trim() ?? "Unknown error";
+      return { ok: false, error: `git clone failed: ${stderr}` };
+    }
+
+    // Register the cloned dir
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name),
+    ];
+    let name = deriveName(targetDir);
+    if (existingNames.includes(name)) name = nextSuffix(name, existingNames);
+    this.registry.add({ name, path: targetDir, priority: 50, auto_go: false });
+
+    this.log.info(`Cloned ${url} → ${targetDir} as '${name}'`);
+    return { ok: true, data: { name, path: targetDir } };
+  }
+
+  /** Create a new project directory, git init, and register it */
+  private cmdCreate(name: string): IpcResponse {
+    if (!isValidName(name)) {
+      return { ok: false, error: `Invalid name '${name}' — must match [a-z0-9-]+` };
+    }
+
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const targetDir = join(home, "git", name);
+
+    if (existsSync(targetDir)) {
+      return { ok: false, error: `Directory already exists: ${targetDir}` };
+    }
+
+    mkdirSync(targetDir, { recursive: true });
+    spawnSync("git", ["init"], { cwd: targetDir, timeout: 10_000, stdio: "pipe" });
+
+    // Register the new dir
+    const existingNames = [
+      ...this.config.sessions.map((s) => s.name),
+      ...this.registry.entries().map((e) => e.name),
+    ];
+    let regName = name;
+    if (existingNames.includes(regName)) regName = nextSuffix(regName, existingNames);
+    this.registry.add({ name: regName, path: targetDir, priority: 50, auto_go: false });
+
+    this.log.info(`Created project '${regName}' at ${targetDir}`);
+    return { ok: true, data: { name: regName, path: targetDir } };
+  }
+
   // -- Session suspension (SIGSTOP/SIGCONT) ------------------------------------
 
   /** Suspend a single session by name — freezes all processes via SIGSTOP */
@@ -2323,6 +2491,33 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           resp = this.cmdResumeAll();
           break;
+        case "register": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          let scanPath: string | undefined;
+          if (body) {
+            try { scanPath = (JSON.parse(body) as { path?: string }).path; } catch { /* use default */ }
+          }
+          resp = this.cmdRegister(scanPath);
+          break;
+        }
+        case "clone": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!body) return { status: 400, data: { error: "JSON body with url required" } };
+          try {
+            const parsed = JSON.parse(body) as { url: string; name?: string };
+            if (!parsed.url) return { status: 400, data: { error: "url is required" } };
+            resp = this.cmdClone(parsed.url, parsed.name);
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+          break;
+        }
+        case "create": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Project name required" } };
+          resp = this.cmdCreate(name);
+          break;
+        }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };
       }
@@ -2709,6 +2904,15 @@ export class Daemon {
       case "resume-all":
         return this.cmdResumeAll();
 
+      case "register":
+        return this.cmdRegister(cmd.path);
+
+      case "clone":
+        return this.cmdClone(cmd.url, cmd.name);
+
+      case "create":
+        return this.cmdCreate(cmd.name);
+
       default:
         return { ok: false, error: `Unknown command: ${(cmd as { cmd: string }).cmd}` };
     }
@@ -2887,6 +3091,10 @@ export class Daemon {
   /** Fuzzy-match a session name (prefix match) */
   private resolveName(input: string): string | null {
     const names = this.config.sessions.map((s) => s.name);
+    // Also check registry entries not yet merged into config
+    for (const entry of this.registry.entries()) {
+      if (!names.includes(entry.name)) names.push(entry.name);
+    }
     // Exact match
     if (names.includes(input)) return input;
     // Prefix match

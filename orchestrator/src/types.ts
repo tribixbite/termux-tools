@@ -247,7 +247,10 @@ export type IpcCommand =
   | { cmd: "resume"; name: string }
   | { cmd: "suspend-others"; name: string }
   | { cmd: "suspend-all" }
-  | { cmd: "resume-all" };
+  | { cmd: "resume-all" }
+  | { cmd: "register"; path?: string }
+  | { cmd: "clone"; url: string; name?: string }
+  | { cmd: "create"; name: string };
 
 /** Response from daemon to CLI */
 export interface IpcResponse {
