@@ -5,7 +5,7 @@
  * fetch wrappers for REST endpoints.
  */
 
-import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject } from "./types";
+import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject, CustomizationResponse } from "./types";
 
 /** Callback type for state updates */
 export type StateCallback = (data: DaemonStatus) => void;
@@ -303,4 +303,41 @@ export async function adbDisconnectDevice(serial: string): Promise<{ ok: boolean
   } catch {
     return { ok: false, message: "Request failed" };
   }
+}
+
+// -- Customization / Settings ------------------------------------------------
+
+/** Fetch full customization data (MCP servers, plugins, skills, etc.) */
+export async function fetchCustomization(project?: string): Promise<CustomizationResponse> {
+  const url = project
+    ? `/api/customization/${encodeURIComponent(project)}`
+    : "/api/customization";
+  const res = await fetch(url);
+  return checkedJson(res);
+}
+
+/** Fetch file content for expand/edit (skills, CLAUDE.md) */
+export async function fetchFileContent(filePath: string): Promise<string> {
+  // Encode each path segment individually to preserve slashes
+  const encoded = filePath.split("/").map(s => encodeURIComponent(s)).join("/");
+  const res = await fetch(`/api/customization-file/${encoded}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+  const data = await res.json() as { content: string };
+  return data.content;
+}
+
+/** Save file content (only .md files allowed) */
+export async function saveFileContent(path: string, content: string): Promise<void> {
+  await checkedPost("/api/customization-file", JSON.stringify({ path, content }));
+}
+
+/** Client-side blob download for a file */
+export function downloadFile(filename: string, content: string): void {
+  const blob = new Blob([content], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }

@@ -4611,6 +4611,344 @@ var Daemon = class _Daemon {
       this.dashboard = null;
     }
   }
+  // -- Customization / Settings API -------------------------------------------
+  /** Sensitive env var key patterns — values are redacted in API responses */
+  static SENSITIVE_ENV_KEYS = /KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL/i;
+  /** Read a JSON file, returning null on any error */
+  readJsonFile(path) {
+    try {
+      if (!(0, import_node_fs13.existsSync)(path)) return null;
+      return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf-8"));
+    } catch {
+      return null;
+    }
+  }
+  /** Validate that a file path is safe to read/write (under ~/.claude/ or a known project) */
+  isAllowedCustomizationPath(filePath) {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const claudeDir = (0, import_node_path7.join)(home, ".claude");
+    const resolved = (0, import_node_path7.resolve)(filePath);
+    if (resolved.startsWith(claudeDir + "/")) return true;
+    const knownPaths = this.config.sessions.map((s) => s.path).filter(Boolean);
+    if (this.registry) {
+      for (const entry of this.registry.list()) {
+        if (entry.path) knownPaths.push(entry.path);
+      }
+    }
+    for (const p of knownPaths) {
+      const projectDir = (0, import_node_path7.resolve)(p);
+      if (resolved === (0, import_node_path7.join)(projectDir, "CLAUDE.md")) return true;
+      if (resolved.startsWith((0, import_node_path7.join)(projectDir, ".claude") + "/")) return true;
+    }
+    return false;
+  }
+  /** Redact sensitive env values */
+  redactEnv(env) {
+    const redacted = {};
+    for (const [k, v] of Object.entries(env)) {
+      redacted[k] = _Daemon.SENSITIVE_ENV_KEYS.test(k) ? "***" : v;
+    }
+    return redacted;
+  }
+  /** Build full customization response */
+  cmdCustomization(projectPath) {
+    try {
+      const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+      const claudeDir = (0, import_node_path7.join)(home, ".claude");
+      const claudeJson = this.readJsonFile((0, import_node_path7.join)(home, ".claude.json"));
+      const settingsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "settings.json"));
+      const installedPluginsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "installed_plugins.json"));
+      const blocklistJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "blocklist.json"));
+      const installCountsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "install-counts-cache.json"));
+      const marketplacesJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "known_marketplaces.json"));
+      const mcpServers = [];
+      const cjMcps = claudeJson?.mcpServers ?? {};
+      for (const [name, cfg] of Object.entries(cjMcps)) {
+        mcpServers.push({
+          name,
+          scope: "user",
+          source: "claude-json",
+          command: cfg.command ?? "",
+          args: cfg.args ?? [],
+          env: cfg.env ? this.redactEnv(cfg.env) : void 0,
+          disabled: false
+        });
+      }
+      const sjMcps = settingsJson?.mcpServers ?? {};
+      for (const [name, cfg] of Object.entries(sjMcps)) {
+        const existing = mcpServers.find((m) => m.name === name);
+        if (existing) {
+          existing.source = "settings-json";
+          existing.command = cfg.command ?? existing.command;
+          existing.args = cfg.args ?? existing.args;
+          if (cfg.env) existing.env = this.redactEnv(cfg.env);
+        } else {
+          mcpServers.push({
+            name,
+            scope: "user",
+            source: "settings-json",
+            command: cfg.command ?? "",
+            args: cfg.args ?? [],
+            env: cfg.env ? this.redactEnv(cfg.env) : void 0,
+            disabled: false
+          });
+        }
+      }
+      if (projectPath && claudeJson?.projects) {
+        const projects = claudeJson.projects;
+        const projCfg = projects[projectPath];
+        if (projCfg?.disabledMcpServers) {
+          for (const disabledName of projCfg.disabledMcpServers) {
+            const srv = mcpServers.find((m) => m.name === disabledName);
+            if (srv) srv.disabled = true;
+          }
+        }
+        if (projCfg?.mcpServers) {
+          for (const [name, cfg] of Object.entries(projCfg.mcpServers)) {
+            mcpServers.push({
+              name,
+              scope: "project",
+              source: "claude-json",
+              command: cfg.command ?? "",
+              args: cfg.args ?? [],
+              env: cfg.env ? this.redactEnv(cfg.env) : void 0,
+              disabled: false
+            });
+          }
+        }
+      }
+      const enabledPlugins = settingsJson?.enabledPlugins ?? {};
+      const blocklist = blocklistJson?.plugins ?? [];
+      const blockMap = new Map(blocklist.map((b) => [b.plugin, b.reason ?? "blocked"]));
+      const installCounts = installCountsJson?.counts ?? [];
+      const countMap = new Map(installCounts.map((c) => [c.plugin, c.unique_installs]));
+      const plugins = [];
+      const installedMap = installedPluginsJson?.plugins ?? {};
+      for (const [pluginId, entries] of Object.entries(installedMap)) {
+        const entry = entries[0];
+        if (!entry) continue;
+        let pluginName = pluginId.split("@")[0];
+        let pluginDesc = "";
+        let pluginAuthor = "";
+        let pluginType = "native";
+        if (entry.installPath) {
+          const pjPath = (0, import_node_path7.join)(entry.installPath, ".claude-plugin", "plugin.json");
+          const pj = this.readJsonFile(pjPath);
+          if (pj) {
+            pluginName = pj.name ?? pluginName;
+            pluginDesc = pj.description ?? "";
+            pluginAuthor = pj.author?.name ?? "";
+          }
+          if ((0, import_node_fs13.existsSync)((0, import_node_path7.join)(entry.installPath, ".mcp.json"))) {
+            pluginType = "external";
+          }
+        }
+        plugins.push({
+          id: pluginId,
+          name: pluginName,
+          description: pluginDesc,
+          author: pluginAuthor,
+          scope: entry.scope ?? "user",
+          enabled: enabledPlugins[pluginId] ?? false,
+          blocked: blockMap.has(pluginId),
+          blockReason: blockMap.get(pluginId),
+          version: entry.version ?? "",
+          installedAt: entry.installedAt ?? "",
+          installPath: entry.installPath ?? "",
+          type: pluginType,
+          installs: countMap.get(pluginId)
+        });
+      }
+      const skills = [];
+      const userSkillsDir = (0, import_node_path7.join)(claudeDir, "skills");
+      if ((0, import_node_fs13.existsSync)(userSkillsDir)) {
+        try {
+          for (const f of (0, import_node_fs13.readdirSync)(userSkillsDir)) {
+            if (!f.endsWith(".md")) continue;
+            skills.push({
+              name: f.replace(/\.md$/, ""),
+              path: (0, import_node_path7.join)(userSkillsDir, f),
+              scope: "user"
+            });
+          }
+        } catch {
+        }
+      }
+      if (projectPath) {
+        const projSkillsDir = (0, import_node_path7.join)(projectPath, ".claude", "skills");
+        if ((0, import_node_fs13.existsSync)(projSkillsDir)) {
+          try {
+            for (const f of (0, import_node_fs13.readdirSync)(projSkillsDir)) {
+              if (!f.endsWith(".md")) continue;
+              skills.push({
+                name: f.replace(/\.md$/, ""),
+                path: (0, import_node_path7.join)(projSkillsDir, f),
+                scope: "project"
+              });
+            }
+          } catch {
+          }
+        }
+      }
+      const claudeMds = [];
+      const globalMd = (0, import_node_path7.join)(claudeDir, "CLAUDE.md");
+      if ((0, import_node_fs13.existsSync)(globalMd)) {
+        claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
+      }
+      const memoryDir = (0, import_node_path7.join)(claudeDir, "projects");
+      if ((0, import_node_fs13.existsSync)(memoryDir)) {
+        try {
+          for (const d of (0, import_node_fs13.readdirSync)(memoryDir)) {
+            const memDir = (0, import_node_path7.join)(memoryDir, d, "memory");
+            if ((0, import_node_fs13.existsSync)(memDir)) {
+              try {
+                for (const f of (0, import_node_fs13.readdirSync)(memDir)) {
+                  if (f.endsWith(".md")) {
+                    claudeMds.push({
+                      label: `Memory: ${f.replace(/\.md$/, "")} (${d.slice(0, 30)})`,
+                      path: (0, import_node_path7.join)(memDir, f),
+                      scope: "memory"
+                    });
+                  }
+                }
+              } catch {
+              }
+            }
+          }
+        } catch {
+        }
+      }
+      if (projectPath) {
+        const projMd = (0, import_node_path7.join)(projectPath, "CLAUDE.md");
+        if ((0, import_node_fs13.existsSync)(projMd)) {
+          const projName = projectPath.split("/").pop() ?? projectPath;
+          claudeMds.push({ label: `Project: ${projName}`, path: projMd, scope: "project" });
+        }
+      }
+      const hooks = [];
+      const hooksConfig = settingsJson?.hooks ?? {};
+      for (const [event, matchers] of Object.entries(hooksConfig)) {
+        if (!Array.isArray(matchers)) continue;
+        for (const m of matchers) {
+          if (!m.hooks || !Array.isArray(m.hooks)) continue;
+          for (const h of m.hooks) {
+            hooks.push({
+              event,
+              matcher: m.matcher ?? "*",
+              type: h.type ?? "command",
+              command: h.command ?? "",
+              timeout: h.timeout
+            });
+          }
+        }
+      }
+      const marketplaceSources = [];
+      const marketplacePlugins = [];
+      const installedIds = new Set(Object.keys(installedMap));
+      if (marketplacesJson) {
+        for (const [mktName, mktCfg] of Object.entries(marketplacesJson)) {
+          marketplaceSources.push({
+            name: mktName,
+            repo: mktCfg.source?.repo ?? "",
+            lastUpdated: mktCfg.lastUpdated ?? ""
+          });
+          const mktDir = mktCfg.installLocation;
+          if (!mktDir || !(0, import_node_fs13.existsSync)(mktDir)) continue;
+          const nativeDir = (0, import_node_path7.join)(mktDir, "plugins");
+          if ((0, import_node_fs13.existsSync)(nativeDir)) {
+            try {
+              for (const name of (0, import_node_fs13.readdirSync)(nativeDir)) {
+                const pluginJsonPath = (0, import_node_path7.join)(nativeDir, name, ".claude-plugin", "plugin.json");
+                const pj = this.readJsonFile(pluginJsonPath);
+                if (!pj) continue;
+                const pluginId = `${name}@${mktName}`;
+                marketplacePlugins.push({
+                  id: pluginId,
+                  name: pj.name ?? name,
+                  description: pj.description ?? "",
+                  author: pj.author?.name ?? "",
+                  marketplace: mktName,
+                  type: "native",
+                  installed: installedIds.has(pluginId),
+                  enabled: enabledPlugins[pluginId] ?? false,
+                  installs: countMap.get(pluginId) ?? 0
+                });
+              }
+            } catch {
+            }
+          }
+          const extDir = (0, import_node_path7.join)(mktDir, "external_plugins");
+          if ((0, import_node_fs13.existsSync)(extDir)) {
+            try {
+              for (const name of (0, import_node_fs13.readdirSync)(extDir)) {
+                const pluginJsonPath = (0, import_node_path7.join)(extDir, name, ".claude-plugin", "plugin.json");
+                const pj = this.readJsonFile(pluginJsonPath);
+                if (!pj) continue;
+                const pluginId = `${name}@${mktName}`;
+                marketplacePlugins.push({
+                  id: pluginId,
+                  name: pj.name ?? name,
+                  description: pj.description ?? "",
+                  author: pj.author?.name ?? "",
+                  marketplace: mktName,
+                  type: "external",
+                  installed: installedIds.has(pluginId),
+                  enabled: enabledPlugins[pluginId] ?? false,
+                  installs: countMap.get(pluginId) ?? 0
+                });
+              }
+            } catch {
+            }
+          }
+        }
+      }
+      marketplacePlugins.sort((a, b) => b.installs - a.installs);
+      return {
+        ok: true,
+        data: {
+          mcpServers,
+          plugins,
+          skills,
+          claudeMds,
+          hooks,
+          marketplace: {
+            sources: marketplaceSources,
+            available: marketplacePlugins
+          },
+          projectPath: projectPath ?? void 0
+        }
+      };
+    } catch (err) {
+      return { ok: false, error: `Failed to read customization data: ${err}` };
+    }
+  }
+  /** Read a customization file's content (skills, CLAUDE.md) */
+  cmdReadCustomizationFile(filePath) {
+    if (!filePath || !this.isAllowedCustomizationPath(filePath)) {
+      return { ok: false, error: "Path not allowed" };
+    }
+    try {
+      const content = (0, import_node_fs13.readFileSync)(filePath, "utf-8");
+      return { ok: true, data: { content } };
+    } catch (err) {
+      return { ok: false, error: `Failed to read file: ${err}` };
+    }
+  }
+  /** Write a customization file's content (only .md files) */
+  cmdWriteCustomizationFile(filePath, content) {
+    if (!filePath || !this.isAllowedCustomizationPath(filePath)) {
+      return { ok: false, error: "Path not allowed" };
+    }
+    if (!filePath.endsWith(".md")) {
+      return { ok: false, error: "Only .md files can be edited" };
+    }
+    try {
+      (0, import_node_fs13.writeFileSync)(filePath, content, "utf-8");
+      return { ok: true, data: { written: filePath } };
+    } catch (err) {
+      return { ok: false, error: `Failed to write file: ${err}` };
+    }
+  }
   /** Map REST API paths to IPC command handlers */
   async handleDashboardApi(method, path, body) {
     const segments = path.replace(/^\/api\//, "").split("/");
@@ -4907,6 +5245,29 @@ var Daemon = class _Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Project name required" } };
           resp = this.cmdCreate(name);
+          break;
+        }
+        case "customization":
+          resp = this.cmdCustomization(name);
+          break;
+        case "customization-file": {
+          if (method === "GET") {
+            const filePath = segments.slice(1).map((s) => decodeURIComponent(s)).join("/");
+            if (!filePath) return { status: 400, data: { error: "File path required" } };
+            resp = this.cmdReadCustomizationFile(filePath);
+          } else if (method === "POST") {
+            try {
+              const parsed = JSON.parse(body);
+              if (!parsed.path || typeof parsed.content !== "string") {
+                return { status: 400, data: { error: "path and content required" } };
+              }
+              resp = this.cmdWriteCustomizationFile(parsed.path, parsed.content);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          } else {
+            return { status: 405, data: { error: "Method not allowed" } };
+          }
           break;
         }
         default:

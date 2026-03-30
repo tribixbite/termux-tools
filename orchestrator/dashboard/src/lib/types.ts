@@ -108,3 +108,87 @@ export interface RecentProject {
   session_id: string;
   status: "running" | "registered" | "config" | "untracked";
 }
+
+// -- Customization / Settings types ------------------------------------------
+
+/** MCP server entry from ~/.claude.json or settings.json */
+export interface McpServerInfo {
+  name: string;
+  scope: "user" | "project";
+  source: "claude-json" | "settings-json" | "mcp-json";
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  disabled: boolean;
+}
+
+/** Installed plugin from installed_plugins.json + enabledPlugins + blocklist */
+export interface PluginInfo {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  scope: "user" | "project";
+  enabled: boolean;
+  blocked: boolean;
+  blockReason?: string;
+  version: string;
+  installedAt: string;
+  installPath: string;
+  type: "native" | "external";
+  installs?: number;
+}
+
+/** Skill file (.md) from ~/.claude/skills/ or project .claude/skills/ */
+export interface SkillInfo {
+  name: string;
+  path: string;
+  scope: "user" | "project";
+  source?: string;
+}
+
+/** CLAUDE.md / MEMORY.md file reference */
+export interface ClaudeMdInfo {
+  label: string;
+  path: string;
+  scope: "user" | "project" | "memory";
+}
+
+/** Hook definition from settings.json */
+export interface HookInfo {
+  event: string;
+  matcher: string;
+  type: string;
+  command: string;
+  timeout?: number;
+}
+
+/** Plugin available in a marketplace */
+export interface MarketplacePlugin {
+  id: string;
+  name: string;
+  description: string;
+  author: string;
+  marketplace: string;
+  type: "native" | "external";
+  installed: boolean;
+  enabled: boolean;
+  installs: number;
+}
+
+/** Marketplace sources and available plugins */
+export interface MarketplaceInfo {
+  sources: Array<{ name: string; repo: string; lastUpdated: string }>;
+  available: MarketplacePlugin[];
+}
+
+/** Full customization response from /api/customization */
+export interface CustomizationResponse {
+  mcpServers: McpServerInfo[];
+  plugins: PluginInfo[];
+  skills: SkillInfo[];
+  claudeMds: ClaudeMdInfo[];
+  hooks: HookInfo[];
+  marketplace: MarketplaceInfo;
+  projectPath?: string;
+}

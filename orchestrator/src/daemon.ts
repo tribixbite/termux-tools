@@ -10,7 +10,7 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, readFileSync, chmodSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
@@ -2197,6 +2197,420 @@ export class Daemon {
     }
   }
 
+  // -- Customization / Settings API -------------------------------------------
+
+  /** Sensitive env var key patterns — values are redacted in API responses */
+  private static readonly SENSITIVE_ENV_KEYS = /KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL/i;
+
+  /** Read a JSON file, returning null on any error */
+  private readJsonFile(path: string): unknown {
+    try {
+      if (!existsSync(path)) return null;
+      return JSON.parse(readFileSync(path, "utf-8"));
+    } catch {
+      return null;
+    }
+  }
+
+  /** Validate that a file path is safe to read/write (under ~/.claude/ or a known project) */
+  private isAllowedCustomizationPath(filePath: string): boolean {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    const claudeDir = join(home, ".claude");
+    const resolved = resolve(filePath);
+
+    // Allow files under ~/.claude/
+    if (resolved.startsWith(claudeDir + "/")) return true;
+
+    // Allow CLAUDE.md and .claude/ in known project paths (from running sessions)
+    const knownPaths = this.config.sessions
+      .map((s: SessionConfig) => s.path)
+      .filter(Boolean) as string[];
+    // Also include registry paths
+    if (this.registry) {
+      for (const entry of this.registry.list()) {
+        if (entry.path) knownPaths.push(entry.path);
+      }
+    }
+    for (const p of knownPaths) {
+      const projectDir = resolve(p);
+      // Allow <project>/CLAUDE.md or <project>/.claude/skills/*.md
+      if (resolved === join(projectDir, "CLAUDE.md")) return true;
+      if (resolved.startsWith(join(projectDir, ".claude") + "/")) return true;
+    }
+
+    return false;
+  }
+
+  /** Redact sensitive env values */
+  private redactEnv(env: Record<string, string>): Record<string, string> {
+    const redacted: Record<string, string> = {};
+    for (const [k, v] of Object.entries(env)) {
+      redacted[k] = Daemon.SENSITIVE_ENV_KEYS.test(k) ? "***" : v;
+    }
+    return redacted;
+  }
+
+  /** Build full customization response */
+  private cmdCustomization(projectPath?: string): { ok: boolean; data?: unknown; error?: string } {
+    try {
+      const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+      const claudeDir = join(home, ".claude");
+
+      // 1. Read config files
+      const claudeJson = this.readJsonFile(join(home, ".claude.json")) as Record<string, unknown> | null;
+      const settingsJson = this.readJsonFile(join(claudeDir, "settings.json")) as Record<string, unknown> | null;
+      const installedPluginsJson = this.readJsonFile(join(claudeDir, "plugins", "installed_plugins.json")) as Record<string, unknown> | null;
+      const blocklistJson = this.readJsonFile(join(claudeDir, "plugins", "blocklist.json")) as Record<string, unknown> | null;
+      const installCountsJson = this.readJsonFile(join(claudeDir, "plugins", "install-counts-cache.json")) as Record<string, unknown> | null;
+      const marketplacesJson = this.readJsonFile(join(claudeDir, "plugins", "known_marketplaces.json")) as Record<string, unknown> | null;
+
+      // 2. MCP Servers — merge from ~/.claude.json and settings.json
+      const mcpServers: Array<{
+        name: string; scope: string; source: string; command: string;
+        args: string[]; env?: Record<string, string>; disabled: boolean;
+      }> = [];
+
+      // From ~/.claude.json mcpServers
+      const cjMcps = (claudeJson?.mcpServers ?? {}) as Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>;
+      for (const [name, cfg] of Object.entries(cjMcps)) {
+        mcpServers.push({
+          name,
+          scope: "user",
+          source: "claude-json",
+          command: cfg.command ?? "",
+          args: cfg.args ?? [],
+          env: cfg.env ? this.redactEnv(cfg.env) : undefined,
+          disabled: false,
+        });
+      }
+
+      // From settings.json mcpServers
+      const sjMcps = ((settingsJson?.mcpServers ?? {}) as Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>);
+      for (const [name, cfg] of Object.entries(sjMcps)) {
+        // Skip if already listed from ~/.claude.json (settings.json takes precedence for the duplicate name)
+        const existing = mcpServers.find(m => m.name === name);
+        if (existing) {
+          existing.source = "settings-json";
+          existing.command = cfg.command ?? existing.command;
+          existing.args = cfg.args ?? existing.args;
+          if (cfg.env) existing.env = this.redactEnv(cfg.env);
+        } else {
+          mcpServers.push({
+            name,
+            scope: "user",
+            source: "settings-json",
+            command: cfg.command ?? "",
+            args: cfg.args ?? [],
+            env: cfg.env ? this.redactEnv(cfg.env) : undefined,
+            disabled: false,
+          });
+        }
+      }
+
+      // Check project-level disabled MCPs
+      if (projectPath && claudeJson?.projects) {
+        const projects = claudeJson.projects as Record<string, { disabledMcpServers?: string[]; mcpServers?: Record<string, unknown> }>;
+        const projCfg = projects[projectPath];
+        if (projCfg?.disabledMcpServers) {
+          for (const disabledName of projCfg.disabledMcpServers) {
+            const srv = mcpServers.find(m => m.name === disabledName);
+            if (srv) srv.disabled = true;
+          }
+        }
+        // Project-scoped MCPs from ~/.claude.json projects[path].mcpServers
+        if (projCfg?.mcpServers) {
+          for (const [name, cfg] of Object.entries(projCfg.mcpServers as Record<string, { command?: string; args?: string[]; env?: Record<string, string> }>)) {
+            mcpServers.push({
+              name,
+              scope: "project",
+              source: "claude-json",
+              command: cfg.command ?? "",
+              args: cfg.args ?? [],
+              env: cfg.env ? this.redactEnv(cfg.env) : undefined,
+              disabled: false,
+            });
+          }
+        }
+      }
+
+      // 3. Plugins — from installed_plugins.json + enabledPlugins + blocklist
+      const enabledPlugins = (settingsJson?.enabledPlugins ?? {}) as Record<string, boolean>;
+      const blocklist = ((blocklistJson?.plugins ?? []) as Array<{ plugin: string; reason?: string }>);
+      const blockMap = new Map(blocklist.map(b => [b.plugin, b.reason ?? "blocked"]));
+      const installCounts = ((installCountsJson?.counts ?? []) as Array<{ plugin: string; unique_installs: number }>);
+      const countMap = new Map(installCounts.map(c => [c.plugin, c.unique_installs]));
+
+      const plugins: Array<{
+        id: string; name: string; description: string; author: string; scope: string;
+        enabled: boolean; blocked: boolean; blockReason?: string; version: string;
+        installedAt: string; installPath: string; type: string; installs?: number;
+      }> = [];
+
+      const installedMap = ((installedPluginsJson?.plugins ?? {}) as Record<string, Array<{
+        scope?: string; installPath?: string; version?: string; installedAt?: string;
+      }>>);
+
+      for (const [pluginId, entries] of Object.entries(installedMap)) {
+        const entry = entries[0];
+        if (!entry) continue;
+
+        // Try to read plugin.json from install path for name/description
+        let pluginName = pluginId.split("@")[0];
+        let pluginDesc = "";
+        let pluginAuthor = "";
+        let pluginType: "native" | "external" = "native";
+
+        if (entry.installPath) {
+          const pjPath = join(entry.installPath, ".claude-plugin", "plugin.json");
+          const pj = this.readJsonFile(pjPath) as { name?: string; description?: string; author?: { name?: string } } | null;
+          if (pj) {
+            pluginName = pj.name ?? pluginName;
+            pluginDesc = pj.description ?? "";
+            pluginAuthor = pj.author?.name ?? "";
+          }
+          // External plugins have .mcp.json
+          if (existsSync(join(entry.installPath, ".mcp.json"))) {
+            pluginType = "external";
+          }
+        }
+
+        plugins.push({
+          id: pluginId,
+          name: pluginName,
+          description: pluginDesc,
+          author: pluginAuthor,
+          scope: entry.scope ?? "user",
+          enabled: enabledPlugins[pluginId] ?? false,
+          blocked: blockMap.has(pluginId),
+          blockReason: blockMap.get(pluginId),
+          version: entry.version ?? "",
+          installedAt: entry.installedAt ?? "",
+          installPath: entry.installPath ?? "",
+          type: pluginType,
+          installs: countMap.get(pluginId),
+        });
+      }
+
+      // 4. Skills — from ~/.claude/skills/ + project .claude/skills/
+      const skills: Array<{ name: string; path: string; scope: string; source?: string }> = [];
+
+      const userSkillsDir = join(claudeDir, "skills");
+      if (existsSync(userSkillsDir)) {
+        try {
+          for (const f of readdirSync(userSkillsDir)) {
+            if (!f.endsWith(".md")) continue;
+            skills.push({
+              name: f.replace(/\.md$/, ""),
+              path: join(userSkillsDir, f),
+              scope: "user",
+            });
+          }
+        } catch { /* skip */ }
+      }
+
+      if (projectPath) {
+        const projSkillsDir = join(projectPath, ".claude", "skills");
+        if (existsSync(projSkillsDir)) {
+          try {
+            for (const f of readdirSync(projSkillsDir)) {
+              if (!f.endsWith(".md")) continue;
+              skills.push({
+                name: f.replace(/\.md$/, ""),
+                path: join(projSkillsDir, f),
+                scope: "project",
+              });
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      // 5. CLAUDE.md files
+      const claudeMds: Array<{ label: string; path: string; scope: string }> = [];
+
+      const globalMd = join(claudeDir, "CLAUDE.md");
+      if (existsSync(globalMd)) {
+        claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
+      }
+
+      // Memory file
+      const memoryDir = join(claudeDir, "projects");
+      if (existsSync(memoryDir)) {
+        try {
+          // Scan for MEMORY.md in project memory dirs
+          for (const d of readdirSync(memoryDir)) {
+            const memDir = join(memoryDir, d, "memory");
+            if (existsSync(memDir)) {
+              try {
+                for (const f of readdirSync(memDir)) {
+                  if (f.endsWith(".md")) {
+                    claudeMds.push({
+                      label: `Memory: ${f.replace(/\.md$/, "")} (${d.slice(0, 30)})`,
+                      path: join(memDir, f),
+                      scope: "memory",
+                    });
+                  }
+                }
+              } catch { /* skip */ }
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      if (projectPath) {
+        const projMd = join(projectPath, "CLAUDE.md");
+        if (existsSync(projMd)) {
+          const projName = projectPath.split("/").pop() ?? projectPath;
+          claudeMds.push({ label: `Project: ${projName}`, path: projMd, scope: "project" });
+        }
+      }
+
+      // 6. Hooks — from settings.json
+      const hooks: Array<{ event: string; matcher: string; type: string; command: string; timeout?: number }> = [];
+      const hooksConfig = (settingsJson?.hooks ?? {}) as Record<string, Array<{
+        matcher?: string;
+        hooks?: Array<{ type?: string; command?: string; timeout?: number }>;
+      }>>;
+      for (const [event, matchers] of Object.entries(hooksConfig)) {
+        if (!Array.isArray(matchers)) continue;
+        for (const m of matchers) {
+          if (!m.hooks || !Array.isArray(m.hooks)) continue;
+          for (const h of m.hooks) {
+            hooks.push({
+              event,
+              matcher: m.matcher ?? "*",
+              type: h.type ?? "command",
+              command: h.command ?? "",
+              timeout: h.timeout,
+            });
+          }
+        }
+      }
+
+      // 7. Marketplace — scan marketplace dirs for available plugins
+      const marketplaceSources: Array<{ name: string; repo: string; lastUpdated: string }> = [];
+      const marketplacePlugins: Array<{
+        id: string; name: string; description: string; author: string;
+        marketplace: string; type: string; installed: boolean; enabled: boolean;
+        installs: number;
+      }> = [];
+
+      const installedIds = new Set(Object.keys(installedMap));
+
+      if (marketplacesJson) {
+        for (const [mktName, mktCfg] of Object.entries(marketplacesJson as Record<string, {
+          source?: { repo?: string }; installLocation?: string; lastUpdated?: string;
+        }>)) {
+          marketplaceSources.push({
+            name: mktName,
+            repo: mktCfg.source?.repo ?? "",
+            lastUpdated: mktCfg.lastUpdated ?? "",
+          });
+
+          const mktDir = mktCfg.installLocation;
+          if (!mktDir || !existsSync(mktDir)) continue;
+
+          // Scan native plugins (plugins/ dir)
+          const nativeDir = join(mktDir, "plugins");
+          if (existsSync(nativeDir)) {
+            try {
+              for (const name of readdirSync(nativeDir)) {
+                const pluginJsonPath = join(nativeDir, name, ".claude-plugin", "plugin.json");
+                const pj = this.readJsonFile(pluginJsonPath) as { name?: string; description?: string; author?: { name?: string } } | null;
+                if (!pj) continue;
+                const pluginId = `${name}@${mktName}`;
+                marketplacePlugins.push({
+                  id: pluginId,
+                  name: pj.name ?? name,
+                  description: pj.description ?? "",
+                  author: pj.author?.name ?? "",
+                  marketplace: mktName,
+                  type: "native",
+                  installed: installedIds.has(pluginId),
+                  enabled: enabledPlugins[pluginId] ?? false,
+                  installs: countMap.get(pluginId) ?? 0,
+                });
+              }
+            } catch { /* skip */ }
+          }
+
+          // Scan external plugins (external_plugins/ dir)
+          const extDir = join(mktDir, "external_plugins");
+          if (existsSync(extDir)) {
+            try {
+              for (const name of readdirSync(extDir)) {
+                const pluginJsonPath = join(extDir, name, ".claude-plugin", "plugin.json");
+                const pj = this.readJsonFile(pluginJsonPath) as { name?: string; description?: string; author?: { name?: string } } | null;
+                if (!pj) continue;
+                const pluginId = `${name}@${mktName}`;
+                marketplacePlugins.push({
+                  id: pluginId,
+                  name: pj.name ?? name,
+                  description: pj.description ?? "",
+                  author: pj.author?.name ?? "",
+                  marketplace: mktName,
+                  type: "external",
+                  installed: installedIds.has(pluginId),
+                  enabled: enabledPlugins[pluginId] ?? false,
+                  installs: countMap.get(pluginId) ?? 0,
+                });
+              }
+            } catch { /* skip */ }
+          }
+        }
+      }
+
+      // Sort marketplace by install count descending
+      marketplacePlugins.sort((a, b) => b.installs - a.installs);
+
+      return {
+        ok: true,
+        data: {
+          mcpServers,
+          plugins,
+          skills,
+          claudeMds: claudeMds,
+          hooks,
+          marketplace: {
+            sources: marketplaceSources,
+            available: marketplacePlugins,
+          },
+          projectPath: projectPath ?? undefined,
+        },
+      };
+    } catch (err) {
+      return { ok: false, error: `Failed to read customization data: ${err}` };
+    }
+  }
+
+  /** Read a customization file's content (skills, CLAUDE.md) */
+  private cmdReadCustomizationFile(filePath: string): { ok: boolean; data?: unknown; error?: string } {
+    if (!filePath || !this.isAllowedCustomizationPath(filePath)) {
+      return { ok: false, error: "Path not allowed" };
+    }
+    try {
+      const content = readFileSync(filePath, "utf-8");
+      return { ok: true, data: { content } };
+    } catch (err) {
+      return { ok: false, error: `Failed to read file: ${err}` };
+    }
+  }
+
+  /** Write a customization file's content (only .md files) */
+  private cmdWriteCustomizationFile(filePath: string, content: string): { ok: boolean; data?: unknown; error?: string } {
+    if (!filePath || !this.isAllowedCustomizationPath(filePath)) {
+      return { ok: false, error: "Path not allowed" };
+    }
+    if (!filePath.endsWith(".md")) {
+      return { ok: false, error: "Only .md files can be edited" };
+    }
+    try {
+      writeFileSync(filePath, content, "utf-8");
+      return { ok: true, data: { written: filePath } };
+    } catch (err) {
+      return { ok: false, error: `Failed to write file: ${err}` };
+    }
+  }
+
   /** Map REST API paths to IPC command handlers */
   private async handleDashboardApi(
     method: string,
@@ -2516,6 +2930,33 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Project name required" } };
           resp = this.cmdCreate(name);
+          break;
+        }
+        case "customization":
+          // GET /api/customization or GET /api/customization/<projectPath>
+          resp = this.cmdCustomization(name);
+          break;
+        case "customization-file": {
+          // GET /api/customization-file/<encoded-path> — read file content
+          // POST /api/customization-file { path, content } — write file
+          if (method === "GET") {
+            // Reconstruct full path from remaining segments (path may contain slashes)
+            const filePath = segments.slice(1).map(s => decodeURIComponent(s)).join("/");
+            if (!filePath) return { status: 400, data: { error: "File path required" } };
+            resp = this.cmdReadCustomizationFile(filePath);
+          } else if (method === "POST") {
+            try {
+              const parsed = JSON.parse(body) as { path: string; content: string };
+              if (!parsed.path || typeof parsed.content !== "string") {
+                return { status: 400, data: { error: "path and content required" } };
+              }
+              resp = this.cmdWriteCustomizationFile(parsed.path, parsed.content);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          } else {
+            return { status: 405, data: { error: "Method not allowed" } };
+          }
           break;
         }
         default:
