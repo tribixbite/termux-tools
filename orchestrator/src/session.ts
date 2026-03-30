@@ -280,9 +280,14 @@ export function capturePane(sessionName: string, _lines = 5): string {
 
 /** Send text to a tmux session */
 export function sendKeys(sessionName: string, text: string, pressEnter = true): boolean {
-  const args = ["send-keys", "-t", sessionName, text];
-  if (pressEnter) args.push("Enter");
-  return tmux(...args) !== null;
+  // Send text and Enter as separate calls — Claude Code's TUI can miss
+  // Enter when combined in a single send-keys invocation with text.
+  const textOk = tmux("send-keys", "-t", sessionName, text) !== null;
+  if (!textOk) return false;
+  if (pressEnter) {
+    return tmux("send-keys", "-t", sessionName, "Enter") !== null;
+  }
+  return true;
 }
 
 /**

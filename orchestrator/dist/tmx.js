@@ -1336,9 +1336,12 @@ function capturePane(sessionName, _lines = 5) {
   return output ?? "";
 }
 function sendKeys(sessionName, text, pressEnter = true) {
-  const args2 = ["send-keys", "-t", sessionName, text];
-  if (pressEnter) args2.push("Enter");
-  return tmux(...args2) !== null;
+  const textOk = tmux("send-keys", "-t", sessionName, text) !== null;
+  if (!textOk) return false;
+  if (pressEnter) {
+    return tmux("send-keys", "-t", sessionName, "Enter") !== null;
+  }
+  return true;
 }
 function spawnBareProcess(config, log) {
   const { name, command: command2, env: sessionEnv } = config;
