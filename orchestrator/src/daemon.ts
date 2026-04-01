@@ -2227,7 +2227,7 @@ export class Daemon {
       .filter(Boolean) as string[];
     // Also include registry paths
     if (this.registry) {
-      for (const entry of this.registry.list()) {
+      for (const entry of this.registry.entries()) {
         if (entry.path) knownPaths.push(entry.path);
       }
     }
@@ -2432,26 +2432,44 @@ export class Daemon {
         claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
       }
 
-      // Memory file
-      const memoryDir = join(claudeDir, "projects");
-      if (existsSync(memoryDir)) {
+      // Memory files — scan ~/.claude/projects/*/memory/*.md
+      // Dir names are mangled paths like "-data-data-com-termux-files-home-git-termux-tools"
+      // Decode to the real project name (last segment after final dash-separated known prefix)
+      const projectsDir = join(claudeDir, "projects");
+      if (existsSync(projectsDir)) {
         try {
-          // Scan for MEMORY.md in project memory dirs
-          for (const d of readdirSync(memoryDir)) {
-            const memDir = join(memoryDir, d, "memory");
-            if (existsSync(memDir)) {
-              try {
-                for (const f of readdirSync(memDir)) {
-                  if (f.endsWith(".md")) {
-                    claudeMds.push({
-                      label: `Memory: ${f.replace(/\.md$/, "")} (${d.slice(0, 30)})`,
-                      path: join(memDir, f),
-                      scope: "memory",
-                    });
-                  }
-                }
-              } catch { /* skip */ }
-            }
+          // If a project is selected, find its matching memory dir
+          // Claude Code mangles paths: replace / and . with -, prefix with -
+          const mangledProject = projectPath
+            ? "-" + projectPath.replace(/[/.]/g, "-").replace(/^-+/, "")
+            : null;
+
+          for (const d of readdirSync(projectsDir)) {
+            // When project selected, only show matching memory dir
+            if (mangledProject && d !== mangledProject) continue;
+
+            const memDir = join(projectsDir, d, "memory");
+            if (!existsSync(memDir)) continue;
+
+            // Decode project name: extract last meaningful segment from mangled dir
+            // e.g. "-data-data-com-termux-files-home-git-termux-tools" → "termux-tools"
+            // Strategy: split on "-git-" and take the last part, or fall back to last segment
+            const gitIdx = d.lastIndexOf("-git-");
+            const projName = gitIdx >= 0
+              ? d.slice(gitIdx + 5) // after "-git-"
+              : d.split("-").filter(Boolean).pop() ?? d;
+
+            try {
+              for (const f of readdirSync(memDir)) {
+                if (!f.endsWith(".md")) continue;
+                const fileName = f.replace(/\.md$/, "");
+                claudeMds.push({
+                  label: `${projName}: ${fileName}`,
+                  path: join(memDir, f),
+                  scope: "memory",
+                });
+              }
+            } catch { /* skip */ }
           }
         } catch { /* skip */ }
       }
