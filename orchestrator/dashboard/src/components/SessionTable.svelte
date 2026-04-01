@@ -1,11 +1,12 @@
 <script lang="ts">
   import {
     startSession, stopSession, restartSession, goSession,
-    openTab, closeSession, runBuild, suspendSession, resumeSession,
+    openTab, closeSession, suspendSession, resumeSession,
   } from "../lib/api";
   import { store, refreshStatus } from "../lib/store.svelte";
   import type { DaemonStatus, SessionState } from "../lib/types";
   import SessionCard from "./SessionCard.svelte";
+  import ScriptRunner from "./ScriptRunner.svelte";
 
   let expandedSession: string | null = $state(null);
   let actionError: string | null = $state(null);
@@ -54,16 +55,6 @@
       await openTab(name);
     } catch (err) {
       actionError = `Open tab failed for ${name}: ${(err as Error).message}`;
-    }
-  }
-
-  async function handleBuild(e: Event, name: string) {
-    e.stopPropagation();
-    actionError = null;
-    try {
-      await runBuild(name);
-    } catch (err) {
-      actionError = `Build failed for ${name}: ${(err as Error).message}`;
     }
   }
 
@@ -166,13 +157,8 @@
             {#if session.last_output}
               <pre class="pane-output">{session.last_output}</pre>
             {/if}
-            {#if session.has_build_script}
-              <div class="build-row">
-                <button class="btn-build" onclick={(e) => handleBuild(e, session.name)}>
-                  &#x1F528; Run build-on-termux.sh
-                </button>
-                <span class="build-hint">Opens in new Termux tab</span>
-              </div>
+            {#if session.path}
+              <ScriptRunner sessionName={session.name} sessionPath={session.path} />
             {/if}
             <SessionCard {session} />
           </td></tr>
@@ -287,33 +273,6 @@
   /* Muted button for pause */
   .td-actions :global(.btn-icon.muted) { color: var(--text-muted); }
   .td-actions :global(.btn-icon.muted:hover) { background: rgba(255, 255, 255, 0.08); }
-  /* Build row in expanded detail */
-  .build-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
-  }
-  .btn-build {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.75rem;
-    border-radius: 6px;
-    border: 1px solid var(--accent-yellow);
-    background: rgba(210, 153, 34, 0.1);
-    color: var(--accent-yellow);
-    font-size: 0.75rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s;
-    font-family: inherit;
-  }
-  .btn-build:hover { background: rgba(210, 153, 34, 0.25); }
-  .build-hint {
-    font-size: 0.6875rem;
-    color: var(--text-muted);
-  }
 
   /* Mobile compact */
   @media (max-width: 768px) {

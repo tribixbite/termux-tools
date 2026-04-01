@@ -2837,6 +2837,33 @@ export class Daemon {
           }
           return { status: 500, data: { error: `Failed to launch build for '${name}'` } };
         }
+        case "scripts": {
+          // GET /api/scripts/:name — list available scripts for a session
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          return this.cmdListScripts(name);
+        }
+        case "run-script": {
+          // POST /api/run-script/:name — run a script or ad-hoc command
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body) as { command?: string; script?: string; source?: string };
+            return this.cmdRunScript(name, parsed);
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+        }
+        case "save-script": {
+          // POST /api/save-script/:name — save an ad-hoc command as a reusable script
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body) as { name: string; command: string };
+            return this.cmdSaveScript(name, parsed);
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+        }
         case "processes":
           // List Android apps sorted by RSS (via ADB)
           return { status: 200, data: this.getAndroidApps() };
@@ -2967,6 +2994,182 @@ export class Daemon {
     } catch (err) {
       return { status: 500, data: { error: String(err) } };
     }
+  }
+
+  // -- Script runner ----------------------------------------------------------
+
+  /** Resolve session path from config or registry */
+  private resolveSessionPath(sessionName: string): string | null {
+    const resolved = this.resolveName(sessionName);
+    if (!resolved) return null;
+    const cfg = this.config.sessions.find((s: SessionConfig) => s.name === resolved);
+    if (cfg?.path) return cfg.path;
+    // Check registry for dynamically opened sessions
+    for (const entry of this.registry.entries()) {
+      if (entry.name === resolved && entry.path) return entry.path;
+    }
+    return null;
+  }
+
+  /** List available scripts for a session project */
+  private cmdListScripts(sessionName: string): { status: number; data: unknown } {
+    const sessionPath = this.resolveSessionPath(sessionName);
+    if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
+
+    interface ScriptEntryOut {
+      name: string;
+      path: string;
+      source: "root" | "scripts" | "package.json" | "saved";
+      command?: string;
+    }
+    const scripts: ScriptEntryOut[] = [];
+
+    // 1. Root .sh files
+    try {
+      const entries = readdirSync(sessionPath);
+      for (const f of entries) {
+        if (f.endsWith(".sh")) {
+          const full = join(sessionPath, f);
+          try {
+            if (statSync(full).isFile()) {
+              scripts.push({ name: f, path: full, source: "root" });
+            }
+          } catch { /* stat failed — skip */ }
+        }
+      }
+    } catch { /* dir unreadable — skip */ }
+
+    // 2. scripts/ directory
+    try {
+      const scriptsDir = join(sessionPath, "scripts");
+      const entries = readdirSync(scriptsDir);
+      for (const f of entries) {
+        if (f.endsWith(".sh")) {
+          scripts.push({ name: f, path: join(scriptsDir, f), source: "scripts" });
+        }
+      }
+    } catch { /* no scripts/ dir — skip */ }
+
+    // 3. package.json scripts
+    try {
+      const pkgPath = join(sessionPath, "package.json");
+      const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { scripts?: Record<string, string> };
+      if (pkg.scripts) {
+        for (const [scriptName, cmd] of Object.entries(pkg.scripts)) {
+          scripts.push({ name: scriptName, path: "", source: "package.json", command: cmd });
+        }
+      }
+    } catch { /* no package.json or parse error — skip */ }
+
+    // 4. Saved scripts (.tmx-scripts/)
+    try {
+      const savedDir = join(sessionPath, ".tmx-scripts");
+      const entries = readdirSync(savedDir);
+      for (const f of entries) {
+        if (f.endsWith(".sh")) {
+          scripts.push({ name: f, path: join(savedDir, f), source: "saved" });
+        }
+      }
+    } catch { /* no saved scripts — skip */ }
+
+    return { status: 200, data: { scripts } };
+  }
+
+  /** Run a script or ad-hoc command in a session's Termux tab */
+  private cmdRunScript(
+    sessionName: string,
+    opts: { command?: string; script?: string; source?: string },
+  ): { status: number; data: unknown } {
+    const resolved = this.resolveName(sessionName);
+    if (!resolved) return { status: 400, data: { error: `Unknown session: ${sessionName}` } };
+    const sessionPath = this.resolveSessionPath(sessionName);
+    if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
+
+    const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
+
+    if (opts.command) {
+      // Ad-hoc command — write to temp script and run
+      const tempScript = join(prefix, "tmp", `tmx-cmd-${resolved}.sh`);
+      writeFileSync(tempScript, `#!/data/data/com.termux/files/usr/bin/bash\n${opts.command}\n`, { mode: 0o755 });
+      if (runScriptInTab(tempScript, sessionPath, resolved, this.log)) {
+        return { status: 200, data: { ok: true } };
+      }
+      return { status: 500, data: { error: "Failed to launch command" } };
+    }
+
+    if (opts.script && opts.source) {
+      let scriptPath: string;
+      switch (opts.source) {
+        case "root":
+          scriptPath = join(sessionPath, opts.script);
+          break;
+        case "scripts":
+          scriptPath = join(sessionPath, "scripts", opts.script);
+          break;
+        case "package.json": {
+          // Write a temp script that runs `bun run <script>` in the project dir
+          const tempScript = join(prefix, "tmp", `tmx-npm-${resolved}.sh`);
+          writeFileSync(
+            tempScript,
+            `#!/data/data/com.termux/files/usr/bin/bash\ncd "${sessionPath}" || exit 1\nbun run ${opts.script}\n`,
+            { mode: 0o755 },
+          );
+          if (runScriptInTab(tempScript, sessionPath, resolved, this.log)) {
+            return { status: 200, data: { ok: true } };
+          }
+          return { status: 500, data: { error: "Failed to launch npm script" } };
+        }
+        case "saved":
+          scriptPath = join(sessionPath, ".tmx-scripts", opts.script);
+          break;
+        default:
+          return { status: 400, data: { error: `Unknown script source: ${opts.source}` } };
+      }
+
+      if (!existsSync(scriptPath)) {
+        return { status: 404, data: { error: `Script not found: ${scriptPath}` } };
+      }
+      if (runScriptInTab(scriptPath, sessionPath, resolved, this.log)) {
+        return { status: 200, data: { ok: true } };
+      }
+      return { status: 500, data: { error: `Failed to launch script: ${opts.script}` } };
+    }
+
+    return { status: 400, data: { error: "Provide either 'command' or 'script' + 'source'" } };
+  }
+
+  /** Save an ad-hoc command as a reusable .sh script in .tmx-scripts/ */
+  private cmdSaveScript(
+    sessionName: string,
+    opts: { name: string; command: string },
+  ): { status: number; data: unknown } {
+    const sessionPath = this.resolveSessionPath(sessionName);
+    if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
+
+    // Validate name — alphanumeric, hyphens, underscores only (no path traversal)
+    if (!/^[a-zA-Z0-9_-]+$/.test(opts.name)) {
+      return { status: 400, data: { error: "Script name must be alphanumeric (a-z, 0-9, -, _)" } };
+    }
+    if (!opts.command?.trim()) {
+      return { status: 400, data: { error: "Command cannot be empty" } };
+    }
+
+    const savedDir = join(sessionPath, ".tmx-scripts");
+    mkdirSync(savedDir, { recursive: true });
+    const fileName = opts.name.endsWith(".sh") ? opts.name : `${opts.name}.sh`;
+    const filePath = join(savedDir, fileName);
+
+    writeFileSync(
+      filePath,
+      `#!/data/data/com.termux/files/usr/bin/bash\n${opts.command}\n`,
+      { mode: 0o755 },
+    );
+
+    this.log.info(`Saved script '${fileName}' for session '${sessionName}'`);
+    return {
+      status: 200,
+      data: { name: fileName, path: filePath, source: "saved" as const },
+    };
   }
 
   // -- Android app management -------------------------------------------------

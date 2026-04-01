@@ -5,7 +5,7 @@
  * fetch wrappers for REST endpoints.
  */
 
-import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject, CustomizationResponse } from "./types";
+import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject, CustomizationResponse, ScriptEntry } from "./types";
 
 /** Callback type for state updates */
 export type StateCallback = (data: DaemonStatus) => void;
@@ -195,6 +195,38 @@ export async function openTab(name: string): Promise<void> {
 /** Run build-on-termux.sh in a session's tmux pane */
 export async function runBuild(name: string): Promise<void> {
   await checkedPost(`/api/run-build/${encodeURIComponent(name)}`);
+}
+
+/** Fetch available scripts for a session */
+export async function fetchScripts(name: string): Promise<ScriptEntry[]> {
+  const res = await fetch(`/api/scripts/${encodeURIComponent(name)}`);
+  const data = await checkedJson<{ scripts: ScriptEntry[] }>(res);
+  return data.scripts;
+}
+
+/** Run a script or ad-hoc command in a session's Termux tab */
+export async function runScript(
+  name: string,
+  opts: { command?: string; script?: string; source?: string },
+): Promise<void> {
+  await checkedPost(
+    `/api/run-script/${encodeURIComponent(name)}`,
+    JSON.stringify(opts),
+  );
+}
+
+/** Save an ad-hoc command as a reusable script */
+export async function saveScript(
+  name: string,
+  scriptName: string,
+  command: string,
+): Promise<ScriptEntry> {
+  const res = await fetch(`/api/save-script/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: scriptName, command }),
+  });
+  return checkedJson<ScriptEntry>(res);
 }
 
 /** Suspend (SIGSTOP) a session */

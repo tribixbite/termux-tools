@@ -109,6 +109,14 @@ export interface RecentProject {
   status: "running" | "registered" | "config" | "untracked";
 }
 
+/** Script entry from daemon's script discovery */
+export interface ScriptEntry {
+  name: string;        // "build-on-termux.sh", "dev", "test"
+  path: string;        // absolute path (empty for package.json)
+  source: "root" | "scripts" | "package.json" | "saved";
+  command?: string;    // for package.json: the command value
+}
+
 // -- Customization / Settings types ------------------------------------------
 
 /** MCP server entry from ~/.claude.json or settings.json */
