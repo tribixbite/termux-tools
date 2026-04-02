@@ -38,9 +38,37 @@
   /** Saving/loading indicators */
   let savingFile = $state(false);
   let loadingFile: string | null = $state(null);
+  let downloadingAll: string | null = $state(null);
 
   /** Marketplace search filter */
   let marketplaceSearch = $state("");
+
+  /** New skill creation state */
+  let newSkillOpen = $state(false);
+  let newSkillScope: "user" | "project" | null = $state(null);
+  let newSkillName = $state("");
+  let newSkillContent = $state("");
+  let savingNewSkill = $state(false);
+
+  // -- Constants --------------------------------------------------------------
+
+  const SKILL_TEMPLATE = `# Skill Name
+
+## Description
+Brief description of what this skill does.
+
+## When to use
+- Trigger condition 1
+- Trigger condition 2
+
+## Instructions
+Detailed instructions for the agent when this skill is invoked.
+
+## Examples
+\`\`\`
+Example usage or output
+\`\`\`
+`;
 
   // -- Derived ----------------------------------------------------------------
 
@@ -86,10 +114,10 @@
 
   function handleProjectChange(e: Event) {
     selectedProject = (e.target as HTMLSelectElement).value;
-    // Reset expanded state
     expandedItem = null;
     editingItem = null;
     fileContents = {};
+    newSkillOpen = false;
     loadData();
   }
 
@@ -106,7 +134,6 @@
     expandedItem = path;
     editingItem = null;
 
-    // Load content if not cached
     if (!fileContents[path]) {
       loadingFile = path;
       try {
@@ -149,12 +176,214 @@
     downloadFile(filename, content);
   }
 
+  /** Share file content via Web Share API */
+  async function handleShare(path: string) {
+    const content = fileContents[path];
+    if (!content) return;
+    const filename = path.split("/").pop() ?? "file.md";
+
+    if (navigator.share) {
+      try {
+        const file = new File([content], filename, { type: "text/markdown" });
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], title: filename });
+        } else {
+          // Fallback: share as text
+          await navigator.share({ title: filename, text: content });
+        }
+      } catch (e: any) {
+        if (e.name !== "AbortError") error = `Share failed: ${e.message}`;
+      }
+    } else {
+      // Fallback: copy to clipboard
+      try {
+        await navigator.clipboard.writeText(content);
+        error = null;
+        // Brief visual feedback — reuse error slot
+        const prev = error;
+        error = "Copied to clipboard";
+        setTimeout(() => { if (error === "Copied to clipboard") error = prev; }, 2000);
+      } catch {
+        error = "Share not supported on this browser";
+      }
+    }
+  }
+
+  /** Download all .md files from a section as a zip */
+  async function handleDownloadAll(
+    items: Array<{ path: string; name?: string; label?: string }>,
+    sectionName: string,
+  ) {
+    downloadingAll = sectionName;
+    try {
+      // Fetch all file contents in parallel
+      const results = await Promise.allSettled(
+        items.map(async (item) => {
+          const content = fileContents[item.path] ?? await fetchFileContent(item.path);
+          // Cache for future use
+          fileContents[item.path] = content;
+          return { item, content };
+        }),
+      );
+
+      const files: Array<{ name: string; data: Uint8Array }> = [];
+      const projLabel = selectedProject ? selectedProject.split("/").pop() ?? "project" : "user";
+
+      for (const r of results) {
+        if (r.status !== "fulfilled") continue;
+        const { item, content } = r.value;
+        const filename = item.path.split("/").pop() ?? "file.md";
+        files.push({ name: filename, data: new TextEncoder().encode(content) });
+      }
+
+      if (files.length === 0) {
+        error = "No files to download";
+        return;
+      }
+
+      // Build zip using minimal zip format (no compression — md files are small)
+      const zipBlob = buildZip(files);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${sectionName}-${projLabel}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      error = `Download failed: ${e.message}`;
+    } finally {
+      downloadingAll = null;
+    }
+  }
+
+  /** Minimal zip file builder (store-only, no compression) */
+  function buildZip(files: Array<{ name: string; data: Uint8Array }>): Blob {
+    const parts: Uint8Array[] = [];
+    const centralDir: Uint8Array[] = [];
+    let offset = 0;
+
+    for (const { name, data } of files) {
+      const nameBytes = new TextEncoder().encode(name);
+      // Local file header (30 + nameLen + dataLen)
+      const localHeader = new ArrayBuffer(30);
+      const lv = new DataView(localHeader);
+      lv.setUint32(0, 0x04034b50, true);  // local file header signature
+      lv.setUint16(4, 20, true);            // version needed (2.0)
+      lv.setUint16(6, 0, true);             // general purpose flag
+      lv.setUint16(8, 0, true);             // compression: store
+      lv.setUint16(10, 0, true);            // mod time
+      lv.setUint16(12, 0, true);            // mod date
+      lv.setUint32(14, crc32(data), true);  // CRC-32
+      lv.setUint32(18, data.length, true);  // compressed size
+      lv.setUint32(22, data.length, true);  // uncompressed size
+      lv.setUint16(26, nameBytes.length, true); // name length
+      lv.setUint16(28, 0, true);            // extra field length
+
+      const localHeaderBytes = new Uint8Array(localHeader);
+      parts.push(localHeaderBytes, nameBytes, data);
+
+      // Central directory entry (46 + nameLen)
+      const cdHeader = new ArrayBuffer(46);
+      const cv = new DataView(cdHeader);
+      cv.setUint32(0, 0x02014b50, true);  // central dir signature
+      cv.setUint16(4, 20, true);            // version made by
+      cv.setUint16(6, 20, true);            // version needed
+      cv.setUint16(8, 0, true);             // flags
+      cv.setUint16(10, 0, true);            // compression: store
+      cv.setUint16(12, 0, true);            // mod time
+      cv.setUint16(14, 0, true);            // mod date
+      cv.setUint32(16, crc32(data), true);  // CRC-32
+      cv.setUint32(20, data.length, true);  // compressed size
+      cv.setUint32(24, data.length, true);  // uncompressed size
+      cv.setUint16(28, nameBytes.length, true); // name length
+      cv.setUint16(30, 0, true);            // extra field length
+      cv.setUint16(32, 0, true);            // comment length
+      cv.setUint16(34, 0, true);            // disk number
+      cv.setUint16(36, 0, true);            // internal attrs
+      cv.setUint32(38, 0, true);            // external attrs
+      cv.setUint32(42, offset, true);       // local header offset
+
+      centralDir.push(new Uint8Array(cdHeader), nameBytes);
+      offset += 30 + nameBytes.length + data.length;
+    }
+
+    // Central directory size
+    let cdSize = 0;
+    for (const part of centralDir) cdSize += part.length;
+
+    // End of central directory (22 bytes)
+    const eocd = new ArrayBuffer(22);
+    const ev = new DataView(eocd);
+    ev.setUint32(0, 0x06054b50, true);  // EOCD signature
+    ev.setUint16(4, 0, true);            // disk number
+    ev.setUint16(6, 0, true);            // disk with CD
+    ev.setUint16(8, files.length, true); // entries on this disk
+    ev.setUint16(10, files.length, true);// total entries
+    ev.setUint32(12, cdSize, true);      // CD size
+    ev.setUint32(16, offset, true);      // CD offset
+    ev.setUint16(20, 0, true);           // comment length
+
+    return new Blob([...parts, ...centralDir, new Uint8Array(eocd)], { type: "application/zip" });
+  }
+
+  /** CRC-32 for zip (IEEE polynomial) */
+  function crc32(data: Uint8Array): number {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) {
+      crc ^= data[i];
+      for (let j = 0; j < 8; j++) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+      }
+    }
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  /** Open new skill creation form */
+  function openNewSkill(scope: "user" | "project") {
+    newSkillScope = scope;
+    newSkillName = "";
+    newSkillContent = SKILL_TEMPLATE;
+    newSkillOpen = true;
+  }
+
+  /** Save new skill file */
+  async function saveNewSkill() {
+    if (!newSkillName.trim() || !newSkillScope) return;
+    const safeName = newSkillName.trim().replace(/[^a-zA-Z0-9_-]/g, "-").replace(/\.md$/, "");
+    const filename = `${safeName}.md`;
+
+    // Determine target directory
+    let targetPath: string;
+    if (newSkillScope === "project" && selectedProject) {
+      targetPath = `${selectedProject}/.claude/skills/${filename}`;
+    } else {
+      const home = "/data/data/com.termux/files/home";
+      targetPath = `${home}/.claude/skills/${filename}`;
+    }
+
+    savingNewSkill = true;
+    try {
+      await saveFileContent(targetPath, newSkillContent);
+      newSkillOpen = false;
+      newSkillScope = null;
+      // Refresh to show new skill
+      await loadData();
+    } catch (e: any) {
+      error = `Failed to create skill: ${e.message}`;
+    } finally {
+      savingNewSkill = false;
+    }
+  }
+
   /** Format install count with K/M suffix */
   function formatCount(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return String(n);
   }
+
+  /** Stop event propagation (for buttons inside section headers) */
+  function stopProp(e: Event) { e.stopPropagation(); }
 </script>
 
 <div class="settings-root">
@@ -315,14 +544,70 @@
 
     <!-- Section 3: Skills -->
     <div class="card section-card">
-      <button class="section-header" onclick={() => toggleSection("skills")}>
+      <div class="section-header" role="button" tabindex="0" onclick={() => toggleSection("skills")}>
         <span class="chevron">{sections.skills ? "▾" : "▸"}</span>
         <span class="section-title">Skills</span>
         <span class="badge badge-blue">{data.skills.length}</span>
-      </button>
+        <!-- Header action buttons (stop propagation so they don't toggle the section) -->
+        <span class="header-actions" onclick={stopProp}>
+          <button
+            class="btn-icon btn-sm-icon"
+            title="Download all as zip"
+            disabled={downloadingAll === "skills"}
+            onclick={() => handleDownloadAll(data!.skills, "skills")}
+          >{downloadingAll === "skills" ? "..." : "\u2913"}</button>
+          <span class="new-skill-dropdown">
+            <button class="btn-icon btn-sm-icon primary" title="New skill" onclick={() => {
+              if (selectedProject) openNewSkill("project");
+              else openNewSkill("user");
+            }}>+</button>
+            {#if selectedProject}
+              <!-- If project selected, show scope choice on click -->
+            {/if}
+          </span>
+        </span>
+      </div>
       {#if sections.skills}
         <div class="section-body">
-          {#if data.skills.length === 0}
+          <!-- New skill form -->
+          {#if newSkillOpen}
+            <div class="new-skill-form">
+              <div class="new-skill-header">
+                <span class="new-skill-title">New Skill</span>
+                <span class="badge" class:badge-blue={newSkillScope === "user"} class:badge-dim={newSkillScope === "project"}>
+                  {newSkillScope}
+                </span>
+                {#if selectedProject}
+                  <button class="btn btn-sm" onclick={() => newSkillScope = newSkillScope === "user" ? "project" : "user"}>
+                    Switch to {newSkillScope === "user" ? "project" : "user"}
+                  </button>
+                {/if}
+              </div>
+              <input
+                class="new-skill-name"
+                type="text"
+                placeholder="skill-name (without .md)"
+                bind:value={newSkillName}
+              />
+              <textarea
+                class="edit-area"
+                bind:value={newSkillContent}
+                rows="16"
+              ></textarea>
+              <div class="edit-actions">
+                <button
+                  class="btn btn-primary btn-sm"
+                  onclick={saveNewSkill}
+                  disabled={savingNewSkill || !newSkillName.trim()}
+                >
+                  {savingNewSkill ? "Creating..." : "Create"}
+                </button>
+                <button class="btn btn-sm" onclick={() => { newSkillOpen = false; newSkillScope = null; }}>Cancel</button>
+              </div>
+            </div>
+          {/if}
+
+          {#if data.skills.length === 0 && !newSkillOpen}
             <p class="muted">No skills found</p>
           {:else}
             <div class="item-list">
@@ -358,6 +643,7 @@
                         <div class="file-actions">
                           <button class="btn btn-sm" onclick={() => startEdit(skill.path)}>Edit</button>
                           <button class="btn btn-sm" onclick={() => handleDownload(skill.path)}>Download</button>
+                          <button class="btn btn-sm" onclick={() => handleShare(skill.path)}>Share</button>
                         </div>
                         <pre class="file-preview">{fileContents[skill.path] ?? ""}</pre>
                       {/if}
@@ -373,11 +659,19 @@
 
     <!-- Section 4: CLAUDE.md -->
     <div class="card section-card">
-      <button class="section-header" onclick={() => toggleSection("claudeMd")}>
+      <div class="section-header" role="button" tabindex="0" onclick={() => toggleSection("claudeMd")}>
         <span class="chevron">{sections.claudeMd ? "▾" : "▸"}</span>
         <span class="section-title">CLAUDE.md</span>
         <span class="badge badge-blue">{data.claudeMds.length}</span>
-      </button>
+        <span class="header-actions" onclick={stopProp}>
+          <button
+            class="btn-icon btn-sm-icon"
+            title="Download all as zip"
+            disabled={downloadingAll === "claude-md"}
+            onclick={() => handleDownloadAll(data!.claudeMds, "claude-md")}
+          >{downloadingAll === "claude-md" ? "..." : "\u2913"}</button>
+        </span>
+      </div>
       {#if sections.claudeMd}
         <div class="section-body">
           {#if data.claudeMds.length === 0}
@@ -413,6 +707,7 @@
                         <div class="file-actions">
                           <button class="btn btn-sm" onclick={() => startEdit(md.path)}>Edit</button>
                           <button class="btn btn-sm" onclick={() => handleDownload(md.path)}>Download</button>
+                          <button class="btn btn-sm" onclick={() => handleShare(md.path)}>Share</button>
                         </div>
                         <pre class="file-preview">{fileContents[md.path] ?? ""}</pre>
                       {/if}
@@ -435,14 +730,12 @@
       </button>
       {#if sections.marketplace}
         <div class="section-body">
-          <!-- Sources -->
           <div class="marketplace-sources">
             {#each data.marketplace.sources as src}
               <span class="badge badge-dim" title="Updated: {src.lastUpdated}">{src.name}</span>
             {/each}
           </div>
 
-          <!-- Search -->
           <input
             class="search-input"
             type="text"
@@ -450,7 +743,6 @@
             bind:value={marketplaceSearch}
           />
 
-          <!-- Plugin list -->
           {#if filteredMarketplace.length === 0}
             <p class="muted">No plugins match filter</p>
           {:else}
@@ -592,6 +884,20 @@
   }
   .section-body { padding: 0 0.75rem 0.75rem; }
 
+  /* Header action buttons (download all, new skill) */
+  .header-actions {
+    display: flex;
+    gap: 0.25rem;
+    flex-shrink: 0;
+  }
+  .btn-sm-icon {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.8rem;
+    padding: 0;
+    line-height: 1;
+  }
+
   /* Tables */
   .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
@@ -710,6 +1016,39 @@
     margin-top: 0.375rem;
   }
 
+  /* New skill form */
+  .new-skill-form {
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-blue);
+    border-radius: 6px;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+  .new-skill-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .new-skill-title {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--accent-blue);
+  }
+  .new-skill-name {
+    width: 100%;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem;
+    font-family: inherit;
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+  }
+  .new-skill-name::placeholder { color: var(--text-muted); }
+  .new-skill-name:focus { outline: none; border-color: var(--accent-blue); }
+
   /* Marketplace */
   .marketplace-sources {
     display: flex;
@@ -793,5 +1132,6 @@
     .item-header { font-size: 0.6875rem; }
     .mp-name { font-size: 0.6875rem; }
     .mp-desc { font-size: 0.5625rem; }
+    .btn-sm-icon { width: 1.25rem; height: 1.25rem; font-size: 0.7rem; }
   }
 </style>
