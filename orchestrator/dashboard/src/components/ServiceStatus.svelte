@@ -1,8 +1,10 @@
 <script lang="ts">
-  import { store } from "../lib/store.svelte";
+  import { store, refreshStatus } from "../lib/store.svelte";
+  import { startSession, stopSession, restartSession } from "../lib/api";
   import type { SessionState } from "../lib/types";
 
   let expanded = $state(false);
+  let actionError: string | null = $state(null);
 
   /** Filter service-type sessions from shared store */
   const services = $derived<SessionState[]>(
@@ -24,6 +26,22 @@
   function shortName(name: string): string {
     return name.replace(/^termux-/, "");
   }
+
+  /** Handle service action (start/stop/restart) */
+  async function handleAction(e: Event, action: string, name: string) {
+    e.stopPropagation();
+    actionError = null;
+    try {
+      switch (action) {
+        case "start": await startSession(name); break;
+        case "stop": await stopSession(name); break;
+        case "restart": await restartSession(name); break;
+      }
+      await refreshStatus();
+    } catch (err) {
+      actionError = `${action} failed for ${name}: ${(err as Error).message}`;
+    }
+  }
 </script>
 
 {#if services.length > 0}
@@ -36,10 +54,14 @@
       {#if !expanded}
         <span class="badge-row">
           {#each services as svc}
-            <span class="svc-badge">
+            <span class="svc-badge" class:svc-degraded={svc.status === "degraded"} class:svc-failed={svc.status === "failed"}>
               <span class="dot {dotCls(svc.status)}"></span>
               <span class="svc-name">{shortName(svc.name)}</span>
-              {#if svc.rss_mb != null}
+              {#if svc.status === "degraded"}
+                <span class="svc-status-tag">degraded</span>
+              {:else if svc.status === "failed"}
+                <span class="svc-status-tag failed">failed</span>
+              {:else if svc.rss_mb != null}
                 <span class="svc-rss">{svc.rss_mb}MB</span>
               {/if}
             </span>
@@ -50,6 +72,9 @@
 
     {#if expanded}
       <div class="card-body">
+        {#if actionError}
+          <div class="svc-error">{actionError}</div>
+        {/if}
         {#each services as svc}
           <div class="svc-detail">
             <span class="dot {dotCls(svc.status)}"></span>
@@ -64,7 +89,20 @@
             {#if svc.restart_count > 0}
               <span class="detail-restarts">{svc.restart_count}x</span>
             {/if}
+            <span class="detail-actions">
+              {#if svc.status === "running" || svc.status === "degraded"}
+                <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", svc.name)} title="Stop">&#x25A0;</button>
+                <button class="btn-icon" onclick={(e) => handleAction(e, "restart", svc.name)} title="Restart">&#x21BB;</button>
+              {:else if svc.status === "starting" || svc.status === "waiting" || svc.status === "stopping"}
+                <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", svc.name)} title="Stop">&#x25A0;</button>
+              {:else if svc.status === "stopped" || svc.status === "failed" || svc.status === "pending"}
+                <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", svc.name)} title="Start">&#x25B6;</button>
+              {/if}
+            </span>
           </div>
+          {#if svc.status === "degraded" && svc.last_error}
+            <div class="svc-last-error">{svc.last_error}</div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -138,4 +176,33 @@
   .unit { color: var(--text-muted); margin-left: 1px; }
   .detail-uptime { color: var(--text-muted); }
   .detail-restarts { color: var(--accent-yellow); font-size: 0.625rem; }
+  .detail-actions {
+    display: flex;
+    gap: 0.125rem;
+    flex-shrink: 0;
+    margin-left: auto;
+  }
+  .svc-error {
+    font-size: 0.625rem;
+    color: var(--accent-red);
+    padding: 0.25rem 0;
+    margin-bottom: 0.25rem;
+  }
+  .svc-last-error {
+    font-size: 0.5625rem;
+    color: var(--accent-yellow);
+    padding: 0 0 0.25rem 1.25rem;
+    opacity: 0.8;
+  }
+  /* Degraded/failed highlight in collapsed view */
+  .svc-degraded { opacity: 1; }
+  .svc-failed { opacity: 0.6; }
+  .svc-status-tag {
+    font-size: 0.5rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--accent-yellow);
+    letter-spacing: 0.03em;
+  }
+  .svc-status-tag.failed { color: var(--accent-red); }
 </style>
