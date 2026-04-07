@@ -1,10 +1,20 @@
 <script lang="ts">
   import { store } from "../lib/store.svelte";
-  import { fetchCustomization, fetchFileContent, saveFileContent, downloadFile } from "../lib/api";
+  import { fetchCustomization, fetchFileContent, saveFileContent, downloadFile, fetchRecent } from "../lib/api";
   import type {
     CustomizationResponse, McpServerInfo, PluginInfo, SkillInfo,
-    ClaudeMdInfo, HookInfo, MarketplacePlugin,
+    ClaudeMdInfo, HookInfo, MarketplacePlugin, RecentProject,
   } from "../lib/types";
+
+  // -- Constants --------------------------------------------------------------
+
+  const HOME_PREFIX = "/data/data/com.termux/files/home/";
+
+  /** Shorten absolute paths: /data/data/com.termux/files/home/... → ~/... */
+  function shortenPath(p: string): string {
+    if (p.startsWith(HOME_PREFIX)) return "~/" + p.slice(HOME_PREFIX.length);
+    return p;
+  }
 
   // -- State ------------------------------------------------------------------
 
@@ -14,6 +24,15 @@
 
   /** Which project path is selected (empty = no project filter) */
   let selectedProject = $state("");
+
+  /** All recent projects from /api/recent */
+  let recentProjects: RecentProject[] = $state([]);
+
+  /** Project search/filter text */
+  let projectSearch = $state("");
+
+  /** Whether inactive projects section is expanded */
+  let showInactive = $state(false);
 
   /** Track which sections are expanded */
   let sections = $state({
@@ -50,8 +69,6 @@
   let newSkillContent = $state("");
   let savingNewSkill = $state(false);
 
-  // -- Constants --------------------------------------------------------------
-
   const SKILL_TEMPLATE = `# Skill Name
 
 ## Description
@@ -72,12 +89,43 @@ Example usage or output
 
   // -- Derived ----------------------------------------------------------------
 
-  /** Available project paths from running sessions */
+  /** Running session paths (from SSE state) */
+  const runningSessions = $derived(
+    new Set(
+      (store.daemon?.sessions ?? [])
+        .filter(s => s.status === "running" || s.status === "degraded" || s.status === "starting")
+        .map(s => s.path)
+        .filter((p): p is string => !!p)
+    )
+  );
+
+  /** Active projects: running sessions + recent with "running"/"registered" status */
+  const activeProjects = $derived(
+    recentProjects
+      .filter(p => p.status === "running" || p.status === "registered" || runningSessions.has(p.path))
+      .filter((v, i, a) => a.findIndex(x => x.path === v.path) === i) // unique by path
+  );
+
+  /** Inactive projects: config/untracked and not running */
+  const inactiveProjects = $derived(
+    recentProjects
+      .filter(p => p.status !== "running" && p.status !== "registered" && !runningSessions.has(p.path))
+      .filter((v, i, a) => a.findIndex(x => x.path === v.path) === i)
+  );
+
+  /** Filter projects by search term */
+  function matchesSearch(p: RecentProject): boolean {
+    if (!projectSearch) return true;
+    const q = projectSearch.toLowerCase();
+    return p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q);
+  }
+
+  const filteredActive = $derived(activeProjects.filter(matchesSearch));
+  const filteredInactive = $derived(inactiveProjects.filter(matchesSearch));
+
+  /** Legacy compat — all project paths (active + inactive) */
   const projectPaths = $derived(
-    (store.daemon?.sessions ?? [])
-      .map(s => s.path)
-      .filter((p): p is string => !!p)
-      .filter((v, i, a) => a.indexOf(v) === i) // unique
+    [...activeProjects, ...inactiveProjects].map(p => p.path)
   );
 
   /** Filtered marketplace plugins */
@@ -96,6 +144,7 @@ Example usage or output
   $effect(() => {
     if (typeof window === "undefined") return;
     loadData();
+    loadRecentProjects();
   });
 
   // -- Functions --------------------------------------------------------------
@@ -112,13 +161,26 @@ Example usage or output
     }
   }
 
-  function handleProjectChange(e: Event) {
-    selectedProject = (e.target as HTMLSelectElement).value;
+  async function loadRecentProjects() {
+    try {
+      recentProjects = await fetchRecent();
+    } catch {
+      // Non-critical — dropdown will fall back to running sessions
+    }
+  }
+
+  function selectProject(path: string) {
+    selectedProject = path;
     expandedItem = null;
     editingItem = null;
     fileContents = {};
     newSkillOpen = false;
+    projectSearch = "";
     loadData();
+  }
+
+  function handleProjectChange(e: Event) {
+    selectProject((e.target as HTMLSelectElement).value);
   }
 
   function toggleSection(key: keyof typeof sections) {
@@ -393,11 +455,33 @@ Example usage or output
       <label class="selector-label" for="project-select">Project scope</label>
       <select id="project-select" class="selector" onchange={handleProjectChange} value={selectedProject}>
         <option value="">All (user-scoped)</option>
-        {#each projectPaths as p}
-          <option value={p}>{p.split("/").pop()}</option>
-        {/each}
+        {#if filteredActive.length > 0}
+          <optgroup label="Active">
+            {#each filteredActive as p (p.path)}
+              <option value={p.path}>{p.name}</option>
+            {/each}
+          </optgroup>
+        {/if}
+        {#if filteredInactive.length > 0}
+          <optgroup label="Inactive">
+            {#each filteredInactive as p (p.path)}
+              <option value={p.path}>{p.name}</option>
+            {/each}
+          </optgroup>
+        {/if}
       </select>
+      {#if recentProjects.length > 8}
+        <input
+          class="project-filter"
+          type="text"
+          placeholder="Filter..."
+          bind:value={projectSearch}
+        />
+      {/if}
     </div>
+    {#if selectedProject}
+      <div class="project-path-hint">{shortenPath(selectedProject)}</div>
+    {/if}
   {/if}
 
   {#if loading && !data}
@@ -437,8 +521,8 @@ Example usage or output
                           {srv.scope}
                         </span>
                       </td>
-                      <td class="cmd-cell" title="{srv.command} {srv.args.join(' ')}">
-                        {srv.command}
+                      <td class="cmd-cell" title="{shortenPath(srv.command)} {srv.args.map(a => shortenPath(a)).join(' ')}">
+                        {shortenPath(srv.command)}
                       </td>
                       <td>
                         {#if srv.disabled}
@@ -456,10 +540,10 @@ Example usage or output
                               <span class="detail-label">Source</span>
                               <span>{srv.source}</span>
                               <span class="detail-label">Command</span>
-                              <span class="mono">{srv.command}</span>
+                              <span class="mono">{shortenPath(srv.command)}</span>
                               {#if srv.args.length > 0}
                                 <span class="detail-label">Args</span>
-                                <span class="mono">{srv.args.join(" ")}</span>
+                                <span class="mono">{srv.args.map(a => shortenPath(a)).join(" ")}</span>
                               {/if}
                               {#if srv.env}
                                 <span class="detail-label">Env</span>
@@ -619,9 +703,7 @@ Example usage or output
                     <span class="badge" class:badge-blue={skill.scope === "user"} class:badge-dim={skill.scope === "project"}>
                       {skill.scope}
                     </span>
-                    {#if skill.source}
-                      <span class="muted plugin-source">({skill.source})</span>
-                    {/if}
+                    <span class="item-path" title={skill.path}>{shortenPath(skill.path)}</span>
                   </button>
                   {#if expandedItem === skill.path}
                     <div class="item-content">
@@ -686,6 +768,7 @@ Example usage or output
                     <span class="badge" class:badge-blue={md.scope === "user"} class:badge-dim={md.scope === "project"} class:badge-yellow={md.scope === "memory"}>
                       {md.scope}
                     </span>
+                    <span class="item-path" title={md.path}>{shortenPath(md.path)}</span>
                   </button>
                   {#if expandedItem === md.path}
                     <div class="item-content">
@@ -804,7 +887,7 @@ Example usage or output
                     <tr>
                       <td>{hook.event}</td>
                       <td class="mono">{hook.matcher}</td>
-                      <td class="cmd-cell mono" title={hook.command}>{hook.command.split("/").pop()}</td>
+                      <td class="cmd-cell mono" title={shortenPath(hook.command)}>{shortenPath(hook.command)}</td>
                       <td class="muted">{hook.timeout ? `${hook.timeout}s` : "-"}</td>
                     </tr>
                   {/each}
@@ -855,6 +938,28 @@ Example usage or output
     font-size: 0.75rem;
     padding: 0.375rem 0.5rem;
     max-width: 300px;
+  }
+  .project-filter {
+    width: 80px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 0.6875rem;
+    padding: 0.375rem 0.5rem;
+    flex-shrink: 0;
+  }
+  .project-filter::placeholder { color: var(--text-muted); }
+  .project-filter:focus { outline: none; border-color: var(--accent-blue); }
+  .project-path-hint {
+    font-size: 0.625rem;
+    color: var(--text-muted);
+    margin-top: -0.25rem;
+    padding-left: 0.25rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Sections */
@@ -970,7 +1075,17 @@ Example usage or output
     text-align: left;
   }
   .item-header:hover { background: rgba(88, 166, 255, 0.04); }
-  .item-name { flex: 1; font-weight: 500; }
+  .item-name { font-weight: 500; white-space: nowrap; }
+  .item-path {
+    flex: 1;
+    font-size: 0.5625rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
+    min-width: 0;
+  }
   .plugin-source { font-size: 0.625rem; }
 
   /* File content viewer */
@@ -1133,5 +1248,7 @@ Example usage or output
     .mp-name { font-size: 0.6875rem; }
     .mp-desc { font-size: 0.5625rem; }
     .btn-sm-icon { width: 1.25rem; height: 1.25rem; font-size: 0.7rem; }
+    .item-path { font-size: 0.5rem; }
+    .project-path-hint { font-size: 0.5625rem; }
   }
 </style>

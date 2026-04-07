@@ -4631,7 +4631,7 @@ var Daemon = class _Daemon {
     if (resolved.startsWith(claudeDir + "/")) return true;
     const knownPaths = this.config.sessions.map((s) => s.path).filter(Boolean);
     if (this.registry) {
-      for (const entry of this.registry.list()) {
+      for (const entry of this.registry.entries()) {
         if (entry.path) knownPaths.push(entry.path);
       }
     }
@@ -4795,24 +4795,27 @@ var Daemon = class _Daemon {
       if ((0, import_node_fs13.existsSync)(globalMd)) {
         claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
       }
-      const memoryDir = (0, import_node_path7.join)(claudeDir, "projects");
-      if ((0, import_node_fs13.existsSync)(memoryDir)) {
+      const projectsDir = (0, import_node_path7.join)(claudeDir, "projects");
+      if ((0, import_node_fs13.existsSync)(projectsDir)) {
         try {
-          for (const d of (0, import_node_fs13.readdirSync)(memoryDir)) {
-            const memDir = (0, import_node_path7.join)(memoryDir, d, "memory");
-            if ((0, import_node_fs13.existsSync)(memDir)) {
-              try {
-                for (const f of (0, import_node_fs13.readdirSync)(memDir)) {
-                  if (f.endsWith(".md")) {
-                    claudeMds.push({
-                      label: `Memory: ${f.replace(/\.md$/, "")} (${d.slice(0, 30)})`,
-                      path: (0, import_node_path7.join)(memDir, f),
-                      scope: "memory"
-                    });
-                  }
-                }
-              } catch {
+          const mangledProject = projectPath ? "-" + projectPath.replace(/[/.]/g, "-").replace(/^-+/, "") : null;
+          for (const d of (0, import_node_fs13.readdirSync)(projectsDir)) {
+            if (mangledProject && d !== mangledProject) continue;
+            const memDir = (0, import_node_path7.join)(projectsDir, d, "memory");
+            if (!(0, import_node_fs13.existsSync)(memDir)) continue;
+            const gitIdx = d.lastIndexOf("-git-");
+            const projName = gitIdx >= 0 ? d.slice(gitIdx + 5) : d.split("-").filter(Boolean).pop() ?? d;
+            try {
+              for (const f of (0, import_node_fs13.readdirSync)(memDir)) {
+                if (!f.endsWith(".md")) continue;
+                const fileName = f.replace(/\.md$/, "");
+                claudeMds.push({
+                  label: `${projName}: ${fileName}`,
+                  path: (0, import_node_path7.join)(memDir, f),
+                  scope: "memory"
+                });
               }
+            } catch {
             }
           }
         } catch {
