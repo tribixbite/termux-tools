@@ -1604,9 +1604,11 @@ export class Daemon {
     const toggleLabel = anySuspended ? "Resume All" : "Pause All";
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
-    // Use am start for dashboard — termux-open-url can silently fail on Android
+    // Use am start for dashboard — termux-open-url can silently fail on Android.
+    // FLAG_ACTIVITY_CLEAR_TOP (0x04000000) reuses existing tab instead of opening
+    // duplicates. Use 127.0.0.1 consistently (localhost is a different origin).
     const amBin = resolveTermuxBin("am");
-    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -d http://localhost:${port}`;
+    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -f 0x04000000 -d http://127.0.0.1:${port}`;
 
     notifyWithArgs([
       "--ongoing",

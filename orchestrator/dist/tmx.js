@@ -4888,7 +4888,7 @@ var Daemon = class _Daemon {
     const toggleEndpoint = anySuspended ? "resume-all" : "suspend-all";
     const toggleAction = `curl -sX POST ${apiBase}/${toggleEndpoint} >/dev/null 2>&1`;
     const amBin = resolveTermuxBin3("am");
-    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -d http://localhost:${port}`;
+    const dashboardAction = `${amBin} start -a android.intent.action.VIEW -f 0x04000000 -d http://127.0.0.1:${port}`;
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
