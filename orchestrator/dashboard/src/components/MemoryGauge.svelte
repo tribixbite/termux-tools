@@ -102,6 +102,10 @@
     color: var(--text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
+    /* Prevent width jitter when available MB changes every SSE tick */
+    font-variant-numeric: tabular-nums;
+    min-width: 3.5rem;
+    text-align: right;
   }
   .unit { color: var(--text-muted); margin-left: 1px; font-size: 0.625rem; }
   .card-body { padding: 0 0.75rem 0.75rem; }

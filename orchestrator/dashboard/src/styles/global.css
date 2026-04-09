@@ -22,6 +22,11 @@
 html {
   -webkit-text-size-adjust: 100%;
   font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, Monaco, monospace;
+  /* Force permanent scrollbar gutter so vertical scrollbar toggle
+     (classic browsers / Android Edge) never changes clientWidth,
+     which was causing periodic horizontal layout shifts. */
+  overflow-y: scroll;
+  overflow-x: hidden;
 }
 
 body {

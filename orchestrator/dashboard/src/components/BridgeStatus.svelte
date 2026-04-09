@@ -167,6 +167,10 @@
     font-size: 0.6875rem;
     color: var(--text-secondary);
     white-space: nowrap;
+    /* Fixed width prevents layout shift when uptime format changes
+       (e.g. "59m" → "1h 0m" → "1d 2h") every second tick */
+    font-variant-numeric: tabular-nums;
+    min-width: 3rem;
   }
   .last-tool {
     font-size: 0.625rem;

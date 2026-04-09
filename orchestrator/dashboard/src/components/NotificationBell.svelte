@@ -173,6 +173,12 @@
     position: relative;
     display: inline-flex;
     align-items: center;
+    /* Contain the absolutely-positioned .unread-badge which extends
+       beyond the button box via transform — prevents 6px horizontal
+       overflow on the header's flex container. */
+    overflow: visible;
+    /* Reserve space so the badge doesn't push parent's scrollWidth */
+    margin-right: 6px;
   }
 
   .bell-btn {

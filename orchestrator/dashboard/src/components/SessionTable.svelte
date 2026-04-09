@@ -235,6 +235,9 @@
     color: var(--text-secondary);
     font-size: 0.75rem;
     white-space: nowrap;
+    /* Prevent width jitter when RSS numbers change (e.g. 96 -> 267 -> 1249) */
+    font-variant-numeric: tabular-nums;
+    min-width: 4.5rem;
   }
   .unit { color: var(--text-muted); margin-left: 1px; }
   .td-actions {
