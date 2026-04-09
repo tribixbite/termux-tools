@@ -32,7 +32,7 @@ let mcpTabGroup = new Map(); // tabId -> tab info
 
 // Message log ring buffer for popup diagnostics
 const messageLog = [];
-const MAX_LOG_ENTRIES = 200;
+const MAX_LOG_ENTRIES = 50;
 
 // Stats
 const stats = {
@@ -599,7 +599,7 @@ function handleUpdatePlan(params) {
 
 /** Per-tab network request ring buffer. @type {Map<number, Array>} */
 const networkRequests = new Map();
-const MAX_NETWORK_ENTRIES = 500;
+const MAX_NETWORK_ENTRIES = 100;
 
 // Register webRequest listener if the API is available (requires webRequest permission)
 try {
@@ -830,7 +830,70 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
-function executeViaContentScript(tabId, action, params) {
+// --- On-demand content script injection --------------------------------------
+// Default mode: only inject content.js when a tool targets the tab (saves 30-80MB).
+// "all-pages" mode: inject into every tab on startup (original behavior).
+let cfcInjectionMode = "on-demand"; // "on-demand" | "all-pages"
+
+// Load injection mode from storage on startup
+chrome.storage.local.get("cfcInjectionMode", (data) => {
+  cfcInjectionMode = data.cfcInjectionMode || "on-demand";
+  if (cfcInjectionMode === "all-pages") {
+    injectContentScriptIntoAllTabs();
+  }
+});
+
+// React to setting changes from popup
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.cfcInjectionMode) {
+    cfcInjectionMode = changes.cfcInjectionMode.newValue || "on-demand";
+    addLog("info", `Injection mode changed to: ${cfcInjectionMode}`);
+    if (cfcInjectionMode === "all-pages") {
+      injectContentScriptIntoAllTabs();
+    }
+  }
+});
+
+/** Inject content.js into all existing tabs (for "all-pages" mode) */
+async function injectContentScriptIntoAllTabs() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("edge://")) continue;
+      if (contentPorts.has(tab.id)) continue; // already connected
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["content.js"],
+        });
+      } catch {
+        // Permission denied or tab not scriptable — skip
+      }
+    }
+    addLog("info", `Injected content.js into existing tabs (all-pages mode)`);
+  } catch (err) {
+    addLog("warn", `Failed to inject into all tabs: ${err.message}`);
+  }
+}
+
+/** Ensure content script is loaded in a tab before dispatching tool requests */
+async function ensureContentScript(tabId) {
+  if (contentPorts.has(tabId)) return; // already connected
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"],
+    });
+    // Wait briefly for content script to connect its port
+    await new Promise((r) => setTimeout(r, 300));
+  } catch (err) {
+    addLog("warn", `Content script injection failed for tab ${tabId}: ${err.message}`);
+  }
+}
+
+async function executeViaContentScript(tabId, action, params) {
+  // Ensure content script is loaded before dispatching (on-demand injection)
+  await ensureContentScript(tabId);
   const port = contentPorts.get(tabId);
   if (port) {
     return executeViaPort(port, tabId, action, params);
@@ -999,6 +1062,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       tabs: Array.from(mcpTabGroup.values()),
       reconnectAttempts,
       logCount: messageLog.length,
+      cfcInjectionMode,
     });
     return true;
   }

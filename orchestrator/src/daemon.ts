@@ -273,6 +273,9 @@ export class Daemon {
   private running = false;
   /** Resolved when shutdown() completes — replaces 1s polling interval */
   private shutdownResolve: (() => void) | null = null;
+  /** Packages flagged for auto-stop on memory pressure */
+  private autoStopPkgs = new Set<string>();
+  private static readonly AUTOSTOP_PATH = `${process.env.HOME}/.local/share/tmx/autostop.json`;
 
   constructor(configPath?: string) {
     this.config = loadConfig(configPath);
@@ -295,6 +298,9 @@ export class Daemon {
     // Load dynamic session registry
     const registryPath = join(dirname(this.config.orchestrator.state_file), "registry.json");
     this.registry = new Registry(registryPath);
+
+    // Load auto-stop package list
+    this.loadAutoStopList();
 
     // Wire up IPC handler
     this.ipc = new IpcServer(
@@ -1381,6 +1387,9 @@ export class Daemon {
    */
   private autoSuspendOnPressure(pressure: string): void {
     if (pressure === "critical" || pressure === "emergency") {
+      // Force-stop flagged Android apps on memory pressure
+      this.autoStopFlaggedApps();
+
       // Sort running, non-suspended sessions by RSS descending (biggest first)
       const candidates: Array<{ name: string; rss: number }> = [];
       const sessions = this.state.getState().sessions;
@@ -3111,6 +3120,12 @@ export class Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Package name required" } };
           return this.forceStopApp(name);
+        case "autostop":
+          // GET /api/autostop — list auto-stop packages
+          // POST /api/autostop/:pkg — toggle auto-stop for package
+          if (!name) return { status: 200, data: this.getAutoStopList() };
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          return this.toggleAutoStop(name);
         case "adb":
           // ADB device management
           if (!name) {
@@ -3648,6 +3663,78 @@ export class Daemon {
     };
   }
 
+  // -- Auto-stop management ----------------------------------------------------
+
+  /** Load auto-stop package list from disk */
+  private loadAutoStopList(): void {
+    try {
+      const raw = readFileSync(Daemon.AUTOSTOP_PATH, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        this.autoStopPkgs = new Set(list.filter((s: unknown) => typeof s === "string"));
+      }
+    } catch {
+      // File doesn't exist or is invalid — start empty
+      this.autoStopPkgs = new Set();
+    }
+  }
+
+  /** Persist auto-stop package list to disk */
+  private saveAutoStopList(): void {
+    try {
+      writeFileSync(Daemon.AUTOSTOP_PATH, JSON.stringify([...this.autoStopPkgs], null, 2) + "\n");
+    } catch (err) {
+      this.log.warn("Failed to save autostop list", { error: String(err) });
+    }
+  }
+
+  /** Get auto-stop list for API */
+  private getAutoStopList(): { packages: string[] } {
+    return { packages: [...this.autoStopPkgs] };
+  }
+
+  /** Toggle a package in the auto-stop list */
+  private toggleAutoStop(pkg: string): { status: number; data: unknown } {
+    if (!pkg || !pkg.includes(".")) {
+      return { status: 400, data: { error: "Invalid package name" } };
+    }
+    if (Daemon.SYSTEM_PACKAGES.has(pkg)) {
+      return { status: 403, data: { error: `Cannot auto-stop system package: ${pkg}` } };
+    }
+    const enabled = !this.autoStopPkgs.has(pkg);
+    if (enabled) {
+      this.autoStopPkgs.add(pkg);
+    } else {
+      this.autoStopPkgs.delete(pkg);
+    }
+    this.saveAutoStopList();
+    this.log.info(`Auto-stop ${enabled ? "enabled" : "disabled"} for ${pkg}`);
+    return { status: 200, data: { pkg, autostop: enabled } };
+  }
+
+  /** Force-stop all auto-stop flagged apps (called during memory pressure) */
+  private autoStopFlaggedApps(): void {
+    if (this.autoStopPkgs.size === 0) return;
+    const stopped: string[] = [];
+    for (const pkg of this.autoStopPkgs) {
+      if (Daemon.SYSTEM_PACKAGES.has(pkg)) continue;
+      try {
+        const result = spawnSync(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
+          encoding: "utf-8",
+          timeout: 5000,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        if (result.status === 0) stopped.push(pkg);
+      } catch {
+        // Best-effort — skip failures
+      }
+    }
+    if (stopped.length > 0) {
+      const labels = stopped.map((p) => Daemon.APP_LABELS[p] || p);
+      this.log.info(`Auto-stopped ${labels.join(", ")} on memory pressure`);
+    }
+  }
+
   // -- Android app management -------------------------------------------------
 
   /** Well-known system packages that should not be force-stopped */
@@ -3729,7 +3816,7 @@ export class Daemon {
    * List Android apps via `adb shell ps`, grouped by base package.
    * Merges sandboxed/privileged child processes into the parent total.
    */
-  private getAndroidApps(): { pkg: string; label: string; rss_mb: number; system: boolean }[] {
+  private getAndroidApps(): { pkg: string; label: string; rss_mb: number; system: boolean; autostop: boolean }[] {
     try {
       const result = spawnSync(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
         encoding: "utf-8",
@@ -3766,14 +3853,14 @@ export class Daemon {
         pkgMap.set(basePkg, (pkgMap.get(basePkg) ?? 0) + rssKb);
       }
 
-      const apps: { pkg: string; label: string; rss_mb: number; system: boolean }[] = [];
+      const apps: { pkg: string; label: string; rss_mb: number; system: boolean; autostop: boolean }[] = [];
       for (const [pkg, rssKb] of pkgMap) {
         const rssMb = Math.round(rssKb / 1024);
         if (rssMb < 50) continue; // Skip apps using < 50MB after aggregation
         const system = Daemon.SYSTEM_PACKAGES.has(pkg);
         // Derive a readable label: known name > last meaningful segment > raw package
         const label = Daemon.APP_LABELS[pkg] ?? Daemon.deriveLabel(pkg);
-        apps.push({ pkg, label, rss_mb: rssMb, system });
+        apps.push({ pkg, label, rss_mb: rssMb, system, autostop: this.autoStopPkgs.has(pkg) });
       }
 
       apps.sort((a, b) => b.rss_mb - a.rss_mb);

@@ -21,5 +21,12 @@
 --process-per-site
 --renderer-process-limit=4
 --disable-site-isolation-trials
---disable-features=IsolateOrigins,SitePerProcess
+--disable-features=IsolateOrigins,SitePerProcess,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
 --js-flags=--max-old-space-size=256
+#
+# AI/Copilot removal:
+#   MobileCopilot/Button/Chat: toolbar Copilot button + chat sidebar
+#   OmniboxPedalSuggestionsUi: AI suggestions in address bar
+#   EdgeCopilot/Chat/NewTabPageCard: desktop-origin Copilot features
+#   EdgeDiscoverFeed: news/AI feed on new tab page
+#   msEdgeCopilotEntryPointsOverall/Systemtray: additional Copilot UI entry points

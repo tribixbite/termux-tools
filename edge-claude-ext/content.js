@@ -42,7 +42,7 @@ function pruneDeadRefs() {
 // --- Console capture ---------------------------------------------------------
 
 const capturedConsole = [];
-const MAX_CONSOLE_MESSAGES = 100;
+const MAX_CONSOLE_MESSAGES = 50;
 
 // Intercept console methods
 ["log", "warn", "error", "info", "debug"].forEach((method) => {

@@ -78,6 +78,9 @@ function updateUI(state) {
     document.getElementById("stat-lasttool").textContent =
       `${s.lastToolName} (${ago}s ago)`;
   }
+
+  // Sync injection mode toggle from background state
+  if (typeof updateInjectionMode === "function") updateInjectionMode(state);
 }
 
 function formatDuration(totalSecs) {
@@ -253,6 +256,32 @@ updateBtn.addEventListener("click", async () => {
     // Silently ignore — bridge may not be running
   }
 })();
+
+// --- Injection mode toggle ---------------------------------------------------
+
+const chkInjectAll = document.getElementById("chk-inject-all");
+const injectModeLabel = document.getElementById("inject-mode-label");
+
+// Initialize from storage
+chrome.storage.local.get("cfcInjectionMode", (data) => {
+  const mode = data.cfcInjectionMode || "on-demand";
+  chkInjectAll.checked = mode === "all-pages";
+  injectModeLabel.textContent = mode;
+});
+
+chkInjectAll.addEventListener("change", () => {
+  const mode = chkInjectAll.checked ? "all-pages" : "on-demand";
+  chrome.storage.local.set({ cfcInjectionMode: mode });
+  injectModeLabel.textContent = mode;
+});
+
+// Also update from state pushes
+function updateInjectionMode(state) {
+  if (state.cfcInjectionMode) {
+    chkInjectAll.checked = state.cfcInjectionMode === "all-pages";
+    injectModeLabel.textContent = state.cfcInjectionMode;
+  }
+}
 
 // --- Test suite --------------------------------------------------------------
 

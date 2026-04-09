@@ -390,6 +390,31 @@ cp "$BASE_APK" "$OUTPUT_APK"
 # Strip old signatures
 zip -d "$OUTPUT_APK" "META-INF/*" > /dev/null 2>&1 || true
 
+# Strip unused native libraries (saves ~36MB)
+if [ -f "$CONFIG_DIR/strip-libs.list" ]; then
+    echo "  Stripping unused native libraries..."
+    STRIP_COUNT=0
+    STRIP_BYTES=0
+    while IFS= read -r lib_path; do
+        lib_path="${lib_path%%#*}"      # strip inline comments
+        lib_path="${lib_path// /}"      # trim whitespace
+        [ -z "$lib_path" ] && continue
+        # Get size before removing (for stats)
+        lib_size=$(unzip -l "$OUTPUT_APK" "$lib_path" 2>/dev/null | tail -1 | awk '{print $1}' || echo 0)
+        if zip -d "$OUTPUT_APK" "$lib_path" > /dev/null 2>&1; then
+            echo "    [-] $lib_path"
+            STRIP_COUNT=$((STRIP_COUNT + 1))
+            STRIP_BYTES=$((STRIP_BYTES + lib_size))
+        fi
+    done < "$CONFIG_DIR/strip-libs.list"
+    echo "  Stripped $STRIP_COUNT libraries (~$((STRIP_BYTES / 1048576))MB)"
+fi
+
+# Strip unused assets (HMS certs, LaTeX math — PDF viewer kept)
+echo "  Stripping unused assets..."
+zip -d "$OUTPUT_APK" "assets/hmsrootcas.bks" "assets/hmsincas.bks" > /dev/null 2>&1 || true
+zip -d "$OUTPUT_APK" "assets/org/scilab/forge/jlatexmath/*" > /dev/null 2>&1 || true
+
 # Replace patched manifest
 zip -j "$OUTPUT_APK" "$PATCHED_MANIFEST" > /dev/null
 

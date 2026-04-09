@@ -293,6 +293,7 @@ export interface AppInfo {
   label: string;
   rss_mb: number;
   system: boolean;
+  autostop: boolean;
 }
 
 /** Fetch list of running Android apps sorted by RSS */
@@ -304,6 +305,12 @@ export async function fetchApps(): Promise<AppInfo[]> {
 /** Force-stop an Android app by package name */
 export async function forceStopApp(pkg: string): Promise<void> {
   await fetch(`/api/kill/${encodeURIComponent(pkg)}`, { method: "POST" });
+}
+
+/** Toggle auto-stop flag for an app (force-stops on memory pressure) */
+export async function toggleAutoStop(pkg: string): Promise<{ pkg: string; autostop: boolean }> {
+  const res = await fetch(`/api/autostop/${encodeURIComponent(pkg)}`, { method: "POST" });
+  return checkedJson(res);
 }
 
 /** Fetch ADB device list */

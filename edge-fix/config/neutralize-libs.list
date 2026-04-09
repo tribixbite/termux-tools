@@ -12,3 +12,26 @@ smali_classes2/com/kwai/koom/base/CommonConfig$Builder$build$6.smali
 smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali
 smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali
 smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali
+
+# -- OneAuth (cross-app token sharing, enterprise SSO) --
+# TODO: locate exact smali path during next build — grep for loadLibrary("OneAuth")
+# Typically in smali_classes2/com/microsoft/aad/adal/ or com/microsoft/identity/
+# These are enterprise-only code paths — strip risk is minimal
+#smali_classes2/com/microsoft/identity/common/internal/nativeauth/NativeAuthBridge.smali
+
+# -- Microsoft Information Protection (MIP) SDK --
+# TODO: locate exact smali paths — grep for loadLibrary("mip_core")
+# Enterprise DLP/classification — consumer Edge doesn't trigger these
+#smali_classes3/com/microsoft/informationprotection/internal/NativeLibraryLoader.smali
+
+# -- Bing Opus (voice/AI search) --
+# TODO: locate exact smali path — grep for loadLibrary("bingopus")
+#smali_classes2/com/microsoft/bing/opus/NativeOpusCodec.smali
+
+# -- MSAOAID (advertising ID, device fingerprinting) --
+# TODO: locate exact smali path — grep for loadLibrary("msaoaidsec")
+#smali_classes2/com/huawei/hms/ads/identifier/NativeOaid.smali
+
+# -- ARCore (augmented reality, WebXR) --
+# TODO: locate exact smali path — grep for loadLibrary("arcore_sdk_c")
+#smali_classes3/com/google/ar/core/NativeApi.smali

@@ -3873,6 +3873,9 @@ var Daemon = class _Daemon {
   running = false;
   /** Resolved when shutdown() completes — replaces 1s polling interval */
   shutdownResolve = null;
+  /** Packages flagged for auto-stop on memory pressure */
+  autoStopPkgs = /* @__PURE__ */ new Set();
+  static AUTOSTOP_PATH = `${process.env.HOME}/.local/share/tmx/autostop.json`;
   constructor(configPath) {
     this.config = loadConfig(configPath);
     this.log = new Logger(this.config.orchestrator.log_dir);
@@ -3890,6 +3893,7 @@ var Daemon = class _Daemon {
     this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
     const registryPath = (0, import_node_path11.join)((0, import_node_path11.dirname)(this.config.orchestrator.state_file), "registry.json");
     this.registry = new Registry(registryPath);
+    this.loadAutoStopList();
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
       (cmd) => this.handleIpcCommand(cmd),
@@ -4695,6 +4699,7 @@ var Daemon = class _Daemon {
    */
   autoSuspendOnPressure(pressure) {
     if (pressure === "critical" || pressure === "emergency") {
+      this.autoStopFlaggedApps();
       const candidates = [];
       const sessions = this.state.getState().sessions;
       for (const [name, s] of Object.entries(sessions)) {
@@ -6156,6 +6161,10 @@ var Daemon = class _Daemon {
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           if (!name) return { status: 400, data: { error: "Package name required" } };
           return this.forceStopApp(name);
+        case "autostop":
+          if (!name) return { status: 200, data: this.getAutoStopList() };
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          return this.toggleAutoStop(name);
         case "adb":
           if (!name) {
             return { status: 200, data: this.getAdbDevices() };
@@ -6633,6 +6642,70 @@ ${opts.command}
       data: { name: fileName, path: filePath, source: "saved" }
     };
   }
+  // -- Auto-stop management ----------------------------------------------------
+  /** Load auto-stop package list from disk */
+  loadAutoStopList() {
+    try {
+      const raw = (0, import_node_fs18.readFileSync)(_Daemon.AUTOSTOP_PATH, "utf-8");
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        this.autoStopPkgs = new Set(list.filter((s) => typeof s === "string"));
+      }
+    } catch {
+      this.autoStopPkgs = /* @__PURE__ */ new Set();
+    }
+  }
+  /** Persist auto-stop package list to disk */
+  saveAutoStopList() {
+    try {
+      (0, import_node_fs18.writeFileSync)(_Daemon.AUTOSTOP_PATH, JSON.stringify([...this.autoStopPkgs], null, 2) + "\n");
+    } catch (err) {
+      this.log.warn("Failed to save autostop list", { error: String(err) });
+    }
+  }
+  /** Get auto-stop list for API */
+  getAutoStopList() {
+    return { packages: [...this.autoStopPkgs] };
+  }
+  /** Toggle a package in the auto-stop list */
+  toggleAutoStop(pkg) {
+    if (!pkg || !pkg.includes(".")) {
+      return { status: 400, data: { error: "Invalid package name" } };
+    }
+    if (_Daemon.SYSTEM_PACKAGES.has(pkg)) {
+      return { status: 403, data: { error: `Cannot auto-stop system package: ${pkg}` } };
+    }
+    const enabled = !this.autoStopPkgs.has(pkg);
+    if (enabled) {
+      this.autoStopPkgs.add(pkg);
+    } else {
+      this.autoStopPkgs.delete(pkg);
+    }
+    this.saveAutoStopList();
+    this.log.info(`Auto-stop ${enabled ? "enabled" : "disabled"} for ${pkg}`);
+    return { status: 200, data: { pkg, autostop: enabled } };
+  }
+  /** Force-stop all auto-stop flagged apps (called during memory pressure) */
+  autoStopFlaggedApps() {
+    if (this.autoStopPkgs.size === 0) return;
+    const stopped = [];
+    for (const pkg of this.autoStopPkgs) {
+      if (_Daemon.SYSTEM_PACKAGES.has(pkg)) continue;
+      try {
+        const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
+          encoding: "utf-8",
+          timeout: 5e3,
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+        if (result.status === 0) stopped.push(pkg);
+      } catch {
+      }
+    }
+    if (stopped.length > 0) {
+      const labels = stopped.map((p) => _Daemon.APP_LABELS[p] || p);
+      this.log.info(`Auto-stopped ${labels.join(", ")} on memory pressure`);
+    }
+  }
   // -- Android app management -------------------------------------------------
   /** Well-known system packages that should not be force-stopped */
   static SYSTEM_PACKAGES = /* @__PURE__ */ new Set([
@@ -6756,7 +6829,7 @@ ${opts.command}
         if (rssMb < 50) continue;
         const system = _Daemon.SYSTEM_PACKAGES.has(pkg);
         const label = _Daemon.APP_LABELS[pkg] ?? _Daemon.deriveLabel(pkg);
-        apps.push({ pkg, label, rss_mb: rssMb, system });
+        apps.push({ pkg, label, rss_mb: rssMb, system, autostop: this.autoStopPkgs.has(pkg) });
       }
       apps.sort((a, b) => b.rss_mb - a.rss_mb);
       return apps;

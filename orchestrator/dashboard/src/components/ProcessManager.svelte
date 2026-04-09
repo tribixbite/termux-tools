@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { fetchApps, forceStopApp, type AppInfo } from "../lib/api";
+  import { fetchApps, forceStopApp, toggleAutoStop, type AppInfo } from "../lib/api";
 
   let apps: AppInfo[] = $state([]);
   let loading = $state(true);
   let error: string | null = $state(null);
   let stopping = $state(new Set<string>());
+  let toggling = $state(new Set<string>());
 
   async function refresh() {
     try {
@@ -26,6 +27,19 @@
       error = `Failed to stop ${pkg}: ${(e as Error).message}`;
     } finally {
       stopping = new Set([...stopping].filter((p) => p !== pkg));
+    }
+  }
+
+  async function handleToggleAutoStop(pkg: string) {
+    toggling = new Set([...toggling, pkg]);
+    try {
+      const result = await toggleAutoStop(pkg);
+      // Update local state without full refresh
+      apps = apps.map((a) => a.pkg === pkg ? { ...a, autostop: result.autostop } : a);
+    } catch (e) {
+      error = `Failed to toggle auto-stop: ${(e as Error).message}`;
+    } finally {
+      toggling = new Set([...toggling].filter((p) => p !== pkg));
     }
   }
 
@@ -60,17 +74,31 @@
       <tbody>
         {#each apps as app (app.pkg)}
           <tr class="app-row" class:system={app.system}>
-            <td class="td-label">{app.label}</td>
+            <td class="td-label">
+              <div class="app-name">{app.label}</div>
+              <div class="app-pkg">{app.pkg}</div>
+            </td>
             <td class="td-rss">{app.rss_mb}<span class="unit">MB</span></td>
             <td class="td-action">
               {#if !app.system}
-                <button
-                  class="btn btn-sm btn-danger"
-                  onclick={() => handleStop(app.pkg)}
-                  disabled={stopping.has(app.pkg)}
-                >
-                  {stopping.has(app.pkg) ? "..." : "Stop"}
-                </button>
+                <div class="action-group">
+                  <button
+                    class="btn-autostop"
+                    class:active={app.autostop}
+                    onclick={() => handleToggleAutoStop(app.pkg)}
+                    disabled={toggling.has(app.pkg)}
+                    title={app.autostop ? "Auto-stop enabled (stops on memory pressure)" : "Enable auto-stop on memory pressure"}
+                  >
+                    {app.autostop ? "AS" : "as"}
+                  </button>
+                  <button
+                    class="btn btn-sm btn-danger"
+                    onclick={() => handleStop(app.pkg)}
+                    disabled={stopping.has(app.pkg)}
+                  >
+                    {stopping.has(app.pkg) ? "..." : "Stop"}
+                  </button>
+                </div>
               {:else}
                 <span class="sys-label">system</span>
               {/if}
@@ -97,11 +125,22 @@
   .app-row.system { opacity: 0.5; }
   .td-label {
     color: var(--text-primary);
+    max-width: 0;
+    width: 100%;
+  }
+  .app-name {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 0;
-    width: 100%;
+    font-weight: 500;
+  }
+  .app-pkg {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+    font-family: monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .td-rss {
     text-align: right;
@@ -114,7 +153,40 @@
   .td-action {
     text-align: right;
     white-space: nowrap;
-    width: 4rem;
+    width: 6.5rem;
+  }
+  .action-group {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+  }
+  .btn-autostop {
+    font-size: 0.625rem;
+    font-weight: 700;
+    font-family: monospace;
+    padding: 0.125rem 0.375rem;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.15s;
+  }
+  .btn-autostop:hover {
+    border-color: var(--accent-yellow);
+    color: var(--accent-yellow);
+  }
+  .btn-autostop.active {
+    background: color-mix(in srgb, var(--accent-yellow) 15%, transparent);
+    border-color: var(--accent-yellow);
+    color: var(--accent-yellow);
+  }
+  .btn-autostop:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   .sys-label {
     font-size: 0.6875rem;
