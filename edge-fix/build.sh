@@ -288,6 +288,21 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
         done < <(read_config "$REPLACE_URLS")
     fi
 
+    # (d) Strip tracker class packages (entire directory trees)
+    STRIP_CLASSES="$CONFIG_DIR/strip-classes.list"
+    if [ -f "$STRIP_CLASSES" ]; then
+        while IFS= read -r pkg_prefix; do
+            pkg_prefix="${pkg_prefix%%#*}"
+            pkg_prefix="${pkg_prefix// /}"
+            [ -z "$pkg_prefix" ] && continue
+            if [ -d "$SMALI_OUT/$pkg_prefix" ]; then
+                class_count=$(find "$SMALI_OUT/$pkg_prefix" -name '*.smali' | wc -l)
+                rm -rf "$SMALI_OUT/$pkg_prefix"
+                echo "    [x] Stripped $pkg_prefix/ ($class_count classes)"
+            fi
+        done < <(read_config "$STRIP_CLASSES")
+    fi
+
     # Recompile with smali v3.0.9
     echo "    smali: recompiling..."
     java -jar "$SMALI_JAR" a "$SMALI_OUT" -o "$DEX_WORK/${dex_name%.dex}-patched.dex" 2>&1

@@ -24,10 +24,10 @@ smali/com/citrix/mvpn/MAM/Android/AuthSSO/proxy/Helper.smali
 smali/mj60.smali
 
 # -- Microsoft Information Protection (MIP) SDK --
-# Enterprise DLP/classification — loads mip_core, mip_protection_sdk, mip_upe_sdk
-smali_classes3/com/microsoft/informationprotection/MipLibrary.smali
-# MIP v2 — loads mip_core_gn
-smali_classes3/com/microsoft/informationprotection/v2/MipLibrary.smali
+# KEPT: .so files retained (JNI Init() called from SyncServiceImpl via classes4)
+# Neutralizing loadLibrary here would prevent Init() from finding the native lib.
+# smali_classes3/com/microsoft/informationprotection/MipLibrary.smali
+# smali_classes3/com/microsoft/informationprotection/v2/MipLibrary.smali
 
 # -- Bing Opus (voice/AI audio codec) --
 smali_classes2/com/microsoft/bing/speechlib/OpusEncoder.smali

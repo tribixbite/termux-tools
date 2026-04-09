@@ -1,32 +1,48 @@
 # Native libraries to remove from base.apk
-# Saves ~36MB APK size, reduces mmap PSS at runtime
+# Only libs whose ALL callers are fully stubbed and no JNI methods are called elsewhere
 #
 # Format: one zip entry path per line (lib/arm64-v8a/libXXX.so)
 # Comments (#) and blank lines are ignored
-#
-# SAFE — caller already stubbed or dlopen has graceful failure path
+
+# Citrix enterprise VPN/logging — callers stubbed, enterprise-only code paths
 lib/arm64-v8a/libctxlog.so
 lib/arm64-v8a/liblog4cpp.so
+lib/arm64-v8a/libCoreSdkCrypto.so
+lib/arm64-v8a/libfullsslsdk.so
+
+# KOOM heap analysis — callers stubbed, performance monitoring only
 lib/arm64-v8a/libkoom-fast-dump.so
 lib/arm64-v8a/libkoom-strip-dump.so
 lib/arm64-v8a/libkwai-android-base.so
+
+# Tencent Matrix trace — callers stubbed (onAlive + loadLibrary nop'd)
 lib/arm64-v8a/libtrace-canary.so
-lib/arm64-v8a/liboneds.so
-lib/arm64-v8a/libtelclient.so
+
+# Crashpad — crash reporter, non-essential
 lib/arm64-v8a/libchrome_crashpad_handler.so
 lib/arm64-v8a/libcrashpad_handler_trampoline.so
-lib/arm64-v8a/liblearning_tools.so
-lib/arm64-v8a/libwns_push_client.so
 
-# NEEDS_STUB — loadLibrary callers added to neutralize-libs.list
-lib/arm64-v8a/libOneAuth.so
-lib/arm64-v8a/libmip_core_gn.so
-lib/arm64-v8a/libmip_core.so
-lib/arm64-v8a/libmip_protection_sdk.so
-lib/arm64-v8a/libmip_upe_sdk.so
-lib/arm64-v8a/libCoreSdkCrypto.so
-lib/arm64-v8a/libfullsslsdk.so
+# Learning tools — optional feature
+lib/arm64-v8a/liblearning_tools.so
+
+# Bing Opus — voice codec, loadLibrary stubbed
 lib/arm64-v8a/libbingopus.so
+
+# MSAOAID — Adjust advertising ID, loadLibrary stubbed
 lib/arm64-v8a/libmsaoaidsec.so
 lib/arm64-v8a/libmsaoaidauth.so
+
+# ARCore — AR/WebXR, loaded from native side only (no DEX loadLibrary)
 lib/arm64-v8a/libarcore_sdk_c.so
+
+# --- KEPT — loaded from classes4.dex (can't round-trip to patch) ---
+# lib/arm64-v8a/liboneds.so        — b1o + iok (telemetry native)
+# lib/arm64-v8a/libtelclient.so    — b1o (telemetry client)
+# lib/arm64-v8a/libmip_core_gn.so  — b1o (MIP v2)
+# lib/arm64-v8a/libwns_push_client.so — b1o (WNS push)
+# lib/arm64-v8a/libOneAuth.so      — OneAuthAPI (enterprise SSO)
+
+# --- KEPT — native JNI methods called beyond loadLibrary ---
+# lib/arm64-v8a/libmip_core.so         — MipLibrary.Init() called from SyncServiceImpl
+# lib/arm64-v8a/libmip_protection_sdk.so — MIP JNI methods
+# lib/arm64-v8a/libmip_upe_sdk.so      — MIP JNI methods

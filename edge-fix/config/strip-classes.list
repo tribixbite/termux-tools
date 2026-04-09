@@ -1,0 +1,22 @@
+# Tracker class package prefixes to delete from decompiled smali before recompiling.
+# Removes entire package trees — callers will get ClassNotFoundException.
+# ONLY list packages whose callers are wrapped in try/catch or loaded dynamically.
+# Packages with hard static references from Edge's own <clinit> WILL crash the app.
+#
+# Format: smali directory prefix relative to DEX smali root (e.g. com/adjust/sdk)
+# Applied to ALL decompiled DEX files during build.
+
+# Huawei HMS — push, analytics, device ID, ads, AGConnect (China market only)
+com/huawei/hms
+com/huawei/agconnect
+
+# Xiaomi Push (China market only)
+com/xiaomi/push
+com/xiaomi/mipush
+
+# --- UNSAFE — do NOT strip (hard references from Edge core code) ---
+# com/tencent/matrix — CRASH: UmaUtils.<clinit> → AppMethodBeat (no try/catch)
+# com/kwai/koom — CRASH: koom.base.b referenced from Application.onCreate (no try/catch)
+# com/adjust/sdk — risky: init called early, may have hard refs
+# com/microsoft/appcenter — risky: Microsoft's own SDK, likely hard-referenced
+# com/google/firebase — risky: FCM integration likely hard-wired
