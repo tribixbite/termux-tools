@@ -19,6 +19,19 @@
 
 * { box-sizing: border-box; }
 
+/* Tailwind v4 preflight applies transition to every element via @layer base,
+   which causes Edge Android to animate layout recalcs when SSE updates change
+   numeric text. Rules outside @layer beat @layer rules at equal specificity,
+   so this overrides Tailwind's wildcard transition without !important. */
+*, ::before, ::after {
+  transition: none;
+}
+/* Re-enable on interactive elements — buttons, links, nav */
+.btn, .btn-icon, .btn-sm, nav a,
+a, button, [role="button"], select, input, textarea {
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   font-family: ui-monospace, 'Cascadia Code', 'Fira Code', Menlo, Monaco, monospace;
@@ -27,6 +40,8 @@ html {
      which was causing periodic horizontal layout shifts. */
   overflow-y: scroll;
   overflow-x: hidden;
+  /* Reserve scrollbar gutter on platforms with overlay scrollbars (mobile) */
+  scrollbar-gutter: stable;
 }
 
 body {

@@ -4,7 +4,8 @@
    * Loads initial data via REST, subscribes to SSE "notification" events
    * through the shared SseClient for real-time updates.
    */
-  import { SseClient, fetchNotifications } from "../lib/api";
+  import { fetchNotifications } from "../lib/api";
+  import { store } from "../lib/store.svelte";
   import type { NotificationRecord, NotificationType } from "../lib/types";
 
   const STORAGE_KEY = "lastSeenNotification";
@@ -86,7 +87,17 @@
     }
   }
 
-  // -- Lifecycle: initial fetch + SSE subscription ----------------------------
+  // -- Watch shared store for new notifications pushed via SSE ----------------
+
+  $effect(() => {
+    const latest = store.lastNotification;
+    if (!latest) return;
+    // Avoid duplicates — check if we already have this notification
+    if (notifications.some((n) => n.id === latest.id)) return;
+    notifications = [latest, ...notifications].slice(0, MAX_SHOWN);
+  });
+
+  // -- Lifecycle: initial fetch + outside-click handler ----------------------
 
   $effect(() => {
     if (typeof window === "undefined") return;
@@ -103,17 +114,8 @@
         // Silently ignore — component will show empty state
       });
 
-    // Subscribe to real-time notification events via shared SSE pattern
-    const sse = new SseClient();
-    const unsub = sse.on<NotificationRecord>("notification", (record) => {
-      // Prepend new notification and cap the list
-      notifications = [record, ...notifications].slice(0, MAX_SHOWN);
-    });
-
     return () => {
       document.removeEventListener("click", handleClickOutside);
-      unsub();
-      sse.close();
     };
   });
 </script>
