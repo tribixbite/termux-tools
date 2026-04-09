@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fetchTokens } from "../lib/api";
   import type { ProjectTokenUsage } from "../lib/types";
+  import CostChart from "./CostChart.svelte";
 
   let expanded = $state(false);
   let projects: ProjectTokenUsage[] = $state([]);
@@ -78,6 +79,8 @@
       {:else if projects.length === 0}
         <p class="empty">No active sessions with token data</p>
       {:else}
+        <!-- Cost chart -->
+        <CostChart />
         <table class="token-table">
           <thead>
             <tr>

@@ -13,7 +13,7 @@ import { createInterface } from "node:readline";
 import type {
   SessionTokenUsage, ProjectTokenUsage,
   ConversationEntry, ConversationBlock, ConversationPage,
-  TimelineEvent,
+  TimelineEvent, DailyCost,
 } from "./types.js";
 
 const HOME = process.env.HOME ?? "/data/data/com.termux/files/home";
@@ -671,4 +671,149 @@ export function readTimeline(
   // Sort by timestamp descending and limit
   events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   return events.slice(0, limit);
+}
+
+// -- Conversation delta (live streaming) --------------------------------------
+
+/**
+ * Get new conversation entries after a given UUID.
+ * Reads the tail of the active JSONL file and returns entries newer than afterUuid.
+ * Returns null if no active JSONL file or no new entries.
+ */
+export function getConversationDelta(
+  projectPath: string,
+  afterUuid: string | null,
+  limit = 10,
+): { entries: ConversationEntry[]; session_id: string } | null {
+  const active = resolveActiveJsonl(projectPath);
+  if (!active) return null;
+
+  // Read last 50 entries (enough to catch new ones since last check)
+  const { entries } = readConversationTail(active.path, 50);
+  if (entries.length === 0) return null;
+
+  if (!afterUuid) {
+    // First call — return the last `limit` entries
+    return {
+      entries: entries.slice(-limit),
+      session_id: active.id,
+    };
+  }
+
+  // Find afterUuid and return everything after it
+  const idx = entries.findIndex(e => e.uuid === afterUuid);
+  if (idx < 0) {
+    // UUID not found in recent entries — return last few as catchup
+    return {
+      entries: entries.slice(-limit),
+      session_id: active.id,
+    };
+  }
+
+  const newEntries = entries.slice(idx + 1);
+  if (newEntries.length === 0) return null;
+
+  return {
+    entries: newEntries.slice(-limit),
+    session_id: active.id,
+  };
+}
+
+// -- Daily cost timeline ------------------------------------------------------
+
+/**
+ * Compute daily cost aggregation across all Claude sessions for the last N days.
+ * Stream-parses JSONL files, bucketing assistant entries by UTC date.
+ */
+export async function getDailyCostTimeline(
+  projects: Array<{ name: string; path: string }>,
+  days = 14,
+): Promise<DailyCost[]> {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const dailyMap = new Map<string, DailyCost>();
+
+  for (const project of projects) {
+    const files = resolveJsonlFiles(project.path);
+
+    for (const file of files) {
+      // Skip files not modified within the window
+      if (file.mtime < cutoff) continue;
+
+      // Stream-parse the JSONL file
+      const content = readFileSync(file.path, "utf-8");
+      const lines = content.split("\n");
+
+      for (const line of lines) {
+        if (!line.includes('"type":"assistant"') && !line.includes('"type": "assistant"')) continue;
+
+        try {
+          const raw = JSON.parse(line) as {
+            type?: string;
+            timestamp?: string;
+            message?: {
+              usage?: {
+                input_tokens?: number;
+                output_tokens?: number;
+                cache_read_input_tokens?: number;
+                cache_creation_input_tokens?: number;
+              };
+              stop_reason?: string | null;
+            };
+          };
+
+          if (raw.type !== "assistant" || !raw.timestamp) continue;
+
+          const ts = new Date(raw.timestamp);
+          if (ts.getTime() < cutoff) continue;
+
+          const dateKey = ts.toISOString().slice(0, 10); // YYYY-MM-DD
+          const usage = raw.message?.usage;
+          if (!usage) continue;
+
+          const inputCost = (usage.input_tokens ?? 0) * PRICING.input / 1_000_000;
+          const outputCost = (usage.output_tokens ?? 0) * PRICING.output / 1_000_000;
+          const cacheCost = (
+            (usage.cache_read_input_tokens ?? 0) * PRICING.cache_read +
+            (usage.cache_creation_input_tokens ?? 0) * PRICING.cache_creation
+          ) / 1_000_000;
+
+          let day = dailyMap.get(dateKey);
+          if (!day) {
+            day = {
+              date: dateKey,
+              input_cost: 0,
+              output_cost: 0,
+              cache_cost: 0,
+              total_cost: 0,
+              turns: 0,
+              sessions: [],
+            };
+            dailyMap.set(dateKey, day);
+          }
+
+          day.input_cost += inputCost;
+          day.output_cost += outputCost;
+          day.cache_cost += cacheCost;
+          day.total_cost += inputCost + outputCost + cacheCost;
+
+          if (raw.message?.stop_reason) {
+            day.turns++;
+          }
+
+          // Track per-session costs within the day
+          let sessionEntry = day.sessions.find(s => s.session_id === file.id);
+          if (!sessionEntry) {
+            sessionEntry = { session_id: file.id, name: project.name, cost: 0 };
+            day.sessions.push(sessionEntry);
+          }
+          sessionEntry.cost += inputCost + outputCost + cacheCost;
+        } catch {
+          // Skip malformed lines
+        }
+      }
+    }
+  }
+
+  // Sort by date ascending
+  return [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
 }

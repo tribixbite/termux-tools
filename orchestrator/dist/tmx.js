@@ -27,9 +27,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs17 = require("node:fs");
-var import_node_child_process8 = require("node:child_process");
-var import_node_path9 = require("node:path");
+var import_node_fs20 = require("node:fs");
+var import_node_child_process9 = require("node:child_process");
+var import_node_path12 = require("node:path");
 
 // src/ipc.ts
 var net = __toESM(require("node:net"));
@@ -46,7 +46,7 @@ var IpcServer = class _IpcServer {
   }
   /** Start listening. Cleans up stale socket first. */
   start() {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       if ((0, import_node_fs.existsSync)(this.socketPath)) {
         this.log.debug("Removing stale socket file");
         try {
@@ -62,7 +62,7 @@ var IpcServer = class _IpcServer {
       });
       this.server.listen(this.socketPath, () => {
         this.log.info(`IPC server listening on ${this.socketPath}`);
-        resolve5();
+        resolve6();
       });
     });
   }
@@ -178,7 +178,7 @@ var IpcClient = class {
   }
   /** Send a command to the daemon and return the response */
   send(cmd, timeoutMs = 3e4) {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       const conn = net.createConnection(this.socketPath);
       let buffer = "";
       let resolved = false;
@@ -201,7 +201,7 @@ var IpcClient = class {
           resolved = true;
           conn.end();
           try {
-            resolve5(JSON.parse(line));
+            resolve6(JSON.parse(line));
           } catch {
             reject(new Error(`Invalid response: ${line}`));
           }
@@ -227,9 +227,9 @@ var IpcClient = class {
 };
 
 // src/daemon.ts
-var import_node_child_process7 = require("node:child_process");
-var import_node_fs15 = require("node:fs");
-var import_node_path8 = require("node:path");
+var import_node_child_process8 = require("node:child_process");
+var import_node_fs18 = require("node:fs");
+var import_node_path11 = require("node:path");
 
 // src/config.ts
 var import_node_fs2 = require("node:fs");
@@ -1675,7 +1675,7 @@ function resumeSession(sessionName, log) {
   return signalSessionTree(sessionName, "SIGCONT", log);
 }
 function sleep(ms) {
-  return new Promise((resolve5) => setTimeout(resolve5, ms));
+  return new Promise((resolve6) => setTimeout(resolve6, ms));
 }
 
 // src/health.ts
@@ -2671,7 +2671,7 @@ var DashboardServer = class {
   }
   /** Attempt to bind the HTTP server once */
   tryListen() {
-    return new Promise((resolve5, reject) => {
+    return new Promise((resolve6, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.on("error", (err) => {
         try {
@@ -2683,7 +2683,7 @@ var DashboardServer = class {
       });
       this.server.listen(this.port, "0.0.0.0", () => {
         this.log.info(`Dashboard server listening on http://0.0.0.0:${this.port}`);
-        resolve5();
+        resolve6();
       });
     });
   }
@@ -2772,7 +2772,7 @@ data: ${JSON.stringify({ id: clientId })}
     let body = "";
     if (req.method === "POST" || req.method === "PUT" || req.method === "DELETE") {
       try {
-        body = await new Promise((resolve5, reject) => {
+        body = await new Promise((resolve6, reject) => {
           const chunks = [];
           let totalLength = 0;
           const MAX_BODY_SIZE = 1024 * 1024;
@@ -2792,7 +2792,7 @@ data: ${JSON.stringify({ id: clientId })}
           });
           req.on("end", () => {
             clearTimeout(timer);
-            resolve5(Buffer.concat(chunks).toString());
+            resolve6(Buffer.concat(chunks).toString());
           });
           req.on("error", (err) => {
             clearTimeout(timer);
@@ -3011,7 +3011,7 @@ async function streamTokenUsage(jsonlPath) {
   let cacheCreationTokens = 0;
   let turns = 0;
   let lineCount = 0;
-  return new Promise((resolve5, reject) => {
+  return new Promise((resolve6, reject) => {
     const rl = (0, import_node_readline.createInterface)({
       input: (0, import_node_fs14.createReadStream)(jsonlPath, { encoding: "utf-8" }),
       crlfDelay: Infinity
@@ -3059,7 +3059,7 @@ async function streamTokenUsage(jsonlPath) {
       };
       tokenCache.set(cacheKey, { result, accessTime: Date.now() });
       evictTokenCache();
-      resolve5(result);
+      resolve6(result);
     });
     rl.on("error", reject);
   });
@@ -3344,6 +3344,367 @@ function readTimeline(sessionName, tracePath, jsonlPath, since, limit = 100) {
   events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   return events.slice(0, limit);
 }
+function getConversationDelta(projectPath, afterUuid, limit = 10) {
+  const active = resolveActiveJsonl(projectPath);
+  if (!active) return null;
+  const { entries } = readConversationTail(active.path, 50);
+  if (entries.length === 0) return null;
+  if (!afterUuid) {
+    return {
+      entries: entries.slice(-limit),
+      session_id: active.id
+    };
+  }
+  const idx = entries.findIndex((e) => e.uuid === afterUuid);
+  if (idx < 0) {
+    return {
+      entries: entries.slice(-limit),
+      session_id: active.id
+    };
+  }
+  const newEntries = entries.slice(idx + 1);
+  if (newEntries.length === 0) return null;
+  return {
+    entries: newEntries.slice(-limit),
+    session_id: active.id
+  };
+}
+async function getDailyCostTimeline(projects, days = 14) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1e3;
+  const dailyMap = /* @__PURE__ */ new Map();
+  for (const project of projects) {
+    const files = resolveJsonlFiles(project.path);
+    for (const file of files) {
+      if (file.mtime < cutoff) continue;
+      const content = (0, import_node_fs13.readFileSync)(file.path, "utf-8");
+      const lines = content.split("\n");
+      for (const line of lines) {
+        if (!line.includes('"type":"assistant"') && !line.includes('"type": "assistant"')) continue;
+        try {
+          const raw = JSON.parse(line);
+          if (raw.type !== "assistant" || !raw.timestamp) continue;
+          const ts = new Date(raw.timestamp);
+          if (ts.getTime() < cutoff) continue;
+          const dateKey = ts.toISOString().slice(0, 10);
+          const usage = raw.message?.usage;
+          if (!usage) continue;
+          const inputCost = (usage.input_tokens ?? 0) * PRICING.input / 1e6;
+          const outputCost = (usage.output_tokens ?? 0) * PRICING.output / 1e6;
+          const cacheCost = ((usage.cache_read_input_tokens ?? 0) * PRICING.cache_read + (usage.cache_creation_input_tokens ?? 0) * PRICING.cache_creation) / 1e6;
+          let day = dailyMap.get(dateKey);
+          if (!day) {
+            day = {
+              date: dateKey,
+              input_cost: 0,
+              output_cost: 0,
+              cache_cost: 0,
+              total_cost: 0,
+              turns: 0,
+              sessions: []
+            };
+            dailyMap.set(dateKey, day);
+          }
+          day.input_cost += inputCost;
+          day.output_cost += outputCost;
+          day.cache_cost += cacheCost;
+          day.total_cost += inputCost + outputCost + cacheCost;
+          if (raw.message?.stop_reason) {
+            day.turns++;
+          }
+          let sessionEntry = day.sessions.find((s) => s.session_id === file.id);
+          if (!sessionEntry) {
+            sessionEntry = { session_id: file.id, name: project.name, cost: 0 };
+            day.sessions.push(sessionEntry);
+          }
+          sessionEntry.cost += inputCost + outputCost + cacheCost;
+        } catch {
+        }
+      }
+    }
+  }
+  return [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// src/prompts.ts
+var import_node_fs15 = require("node:fs");
+var import_node_path8 = require("node:path");
+var import_node_crypto = require("node:crypto");
+var HOME2 = process.env.HOME ?? "/data/data/com.termux/files/home";
+var HISTORY_PATH2 = (0, import_node_path8.join)(HOME2, ".claude", "history.jsonl");
+var PROMPTS_JSON = (0, import_node_path8.join)(HOME2, ".local", "share", "tmx", "prompts.json");
+var parsedCache = null;
+function getStarredIds() {
+  try {
+    if (!(0, import_node_fs15.existsSync)(PROMPTS_JSON)) return /* @__PURE__ */ new Set();
+    const data = JSON.parse((0, import_node_fs15.readFileSync)(PROMPTS_JSON, "utf-8"));
+    return new Set(data.starred ?? []);
+  } catch {
+    return /* @__PURE__ */ new Set();
+  }
+}
+function writeStarredIds(ids) {
+  const dir = (0, import_node_path8.dirname)(PROMPTS_JSON);
+  if (!(0, import_node_fs15.existsSync)(dir)) (0, import_node_fs15.mkdirSync)(dir, { recursive: true });
+  const data = { version: 1, starred: [...ids] };
+  (0, import_node_fs15.writeFileSync)(PROMPTS_JSON, JSON.stringify(data, null, 2));
+}
+function promptId(display, timestamp) {
+  return (0, import_node_crypto.createHash)("sha256").update(`${display}${timestamp}`).digest("hex").slice(0, 16);
+}
+function parseAllPrompts() {
+  if (!(0, import_node_fs15.existsSync)(HISTORY_PATH2)) return [];
+  const st = (0, import_node_fs15.statSync)(HISTORY_PATH2);
+  if (parsedCache && parsedCache.mtime === st.mtimeMs && parsedCache.size === st.size) {
+    return parsedCache.entries;
+  }
+  const entries = [];
+  const content = (0, import_node_fs15.readFileSync)(HISTORY_PATH2, "utf-8");
+  const lines = content.split("\n");
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const raw = JSON.parse(line);
+      if (!raw.display) continue;
+      const display = raw.display.trim();
+      if (!display) continue;
+      const ts = raw.timestamp ? new Date(raw.timestamp).getTime() : 0;
+      entries.push({
+        id: promptId(display, ts),
+        display,
+        timestamp: ts,
+        project: raw.project ?? "",
+        sessionId: raw.sessionId
+      });
+    } catch {
+    }
+  }
+  entries.sort((a, b) => b.timestamp - a.timestamp);
+  parsedCache = { mtime: st.mtimeMs, size: st.size, entries };
+  return entries;
+}
+function searchPrompts(opts) {
+  const { q, starred, project, limit = 50, offset = 0 } = opts;
+  const allEntries = parseAllPrompts();
+  const starredIds = getStarredIds();
+  const lowerQ = q?.toLowerCase();
+  let filtered = allEntries;
+  if (lowerQ) {
+    filtered = filtered.filter((e) => e.display.toLowerCase().includes(lowerQ));
+  }
+  if (starred) {
+    filtered = filtered.filter((e) => starredIds.has(e.id));
+  }
+  if (project) {
+    filtered = filtered.filter((e) => e.project === project);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const deduped = [];
+  for (const entry of filtered) {
+    const key = entry.display.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(entry);
+  }
+  const total = deduped.length;
+  const page = deduped.slice(offset, offset + limit);
+  return {
+    prompts: page.map((e) => ({
+      ...e,
+      starred: starredIds.has(e.id)
+    })),
+    total,
+    offset,
+    limit
+  };
+}
+function starPrompt(id) {
+  const ids = getStarredIds();
+  ids.add(id);
+  writeStarredIds(ids);
+  return true;
+}
+function unstarPrompt(id) {
+  const ids = getStarredIds();
+  const deleted = ids.delete(id);
+  if (deleted) writeStarredIds(ids);
+  return deleted;
+}
+
+// src/notifications.ts
+var import_node_fs16 = require("node:fs");
+var import_node_path9 = require("node:path");
+var import_node_crypto2 = require("node:crypto");
+var HOME3 = process.env.HOME ?? "/data/data/com.termux/files/home";
+var NOTIFICATIONS_PATH = (0, import_node_path9.join)(HOME3, ".local", "share", "tmx", "logs", "notifications.jsonl");
+function ensureDir() {
+  const dir = (0, import_node_path9.dirname)(NOTIFICATIONS_PATH);
+  if (!(0, import_node_fs16.existsSync)(dir)) (0, import_node_fs16.mkdirSync)(dir, { recursive: true });
+}
+function appendNotification(opts) {
+  ensureDir();
+  const record = {
+    id: (0, import_node_crypto2.randomUUID)().slice(0, 12),
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    type: opts.type,
+    title: opts.title,
+    content: opts.content,
+    session: opts.session
+  };
+  (0, import_node_fs16.appendFileSync)(NOTIFICATIONS_PATH, JSON.stringify(record) + "\n");
+  return record;
+}
+function readNotifications(opts) {
+  const limit = opts?.limit ?? 50;
+  const sinceDate = opts?.since ? new Date(opts.since) : null;
+  if (!(0, import_node_fs16.existsSync)(NOTIFICATIONS_PATH)) return [];
+  const content = (0, import_node_fs16.readFileSync)(NOTIFICATIONS_PATH, "utf-8");
+  const lines = content.trim().split("\n");
+  const results = [];
+  for (let i = lines.length - 1; i >= 0 && results.length < limit; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line);
+      if (sinceDate && new Date(record.timestamp) < sinceDate) break;
+      results.push(record);
+    } catch {
+    }
+  }
+  return results;
+}
+
+// src/git-info.ts
+var import_node_child_process7 = require("node:child_process");
+var import_node_fs17 = require("node:fs");
+var import_node_path10 = require("node:path");
+var MAX_FILE_SIZE = 100 * 1024;
+var MAX_ENTRIES = 200;
+var LANG_MAP = {
+  ".ts": "typescript",
+  ".tsx": "typescript",
+  ".js": "javascript",
+  ".jsx": "javascript",
+  ".py": "python",
+  ".rs": "rust",
+  ".go": "go",
+  ".java": "java",
+  ".kt": "kotlin",
+  ".c": "c",
+  ".cpp": "cpp",
+  ".h": "c",
+  ".hpp": "cpp",
+  ".json": "json",
+  ".yaml": "yaml",
+  ".yml": "yaml",
+  ".toml": "toml",
+  ".md": "markdown",
+  ".html": "html",
+  ".css": "css",
+  ".scss": "scss",
+  ".svelte": "svelte",
+  ".astro": "astro",
+  ".vue": "vue",
+  ".sh": "bash",
+  ".bash": "bash",
+  ".zsh": "zsh",
+  ".sql": "sql",
+  ".graphql": "graphql",
+  ".xml": "xml",
+  ".svg": "svg",
+  ".env": "dotenv",
+  ".gitignore": "gitignore",
+  ".dockerfile": "dockerfile"
+};
+function detectLanguage(filePath) {
+  const ext = (0, import_node_path10.extname)(filePath).toLowerCase();
+  if (LANG_MAP[ext]) return LANG_MAP[ext];
+  const base = (0, import_node_path10.basename)(filePath).toLowerCase();
+  if (base === "dockerfile") return "dockerfile";
+  if (base === "makefile") return "makefile";
+  return "text";
+}
+function gitCmd(projectPath, args2) {
+  const result = (0, import_node_child_process7.spawnSync)("git", args2, {
+    cwd: projectPath,
+    encoding: "utf-8",
+    timeout: 5e3,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  return result.stdout?.trim() ?? "";
+}
+function getGitInfo(projectPath) {
+  const branch = gitCmd(projectPath, ["rev-parse", "--abbrev-ref", "HEAD"]) || "unknown";
+  const statusOut = gitCmd(projectPath, ["status", "--porcelain"]);
+  const dirty_files = statusOut ? statusOut.split("\n").map((l) => l.trim()).filter(Boolean) : [];
+  const logOut = gitCmd(projectPath, ["log", "--oneline", "-5"]);
+  const recent_commits = logOut ? logOut.split("\n").filter(Boolean).map((line) => {
+    const spaceIdx = line.indexOf(" ");
+    return {
+      hash: spaceIdx > 0 ? line.slice(0, spaceIdx) : line,
+      message: spaceIdx > 0 ? line.slice(spaceIdx + 1) : ""
+    };
+  }) : [];
+  return { branch, dirty_files, recent_commits };
+}
+function getFileTree(projectPath, subdir) {
+  const targetDir = subdir ? (0, import_node_path10.resolve)(projectPath, subdir) : projectPath;
+  if (!targetDir.startsWith(projectPath + "/") && targetDir !== projectPath) {
+    throw new Error("Path traversal blocked");
+  }
+  const entries = [];
+  try {
+    const items = (0, import_node_fs17.readdirSync)(targetDir, { withFileTypes: true });
+    for (const item of items) {
+      if (entries.length >= MAX_ENTRIES) break;
+      if (item.name.startsWith(".") && item.name !== ".gitignore" && item.name !== ".env.example") continue;
+      if (item.name === "node_modules" || item.name === ".git") continue;
+      if (item.isDirectory()) {
+        entries.push({ name: item.name, type: "directory" });
+      } else if (item.isFile()) {
+        try {
+          const st = (0, import_node_fs17.statSync)((0, import_node_path10.join)(targetDir, item.name));
+          entries.push({ name: item.name, type: "file", size: st.size });
+        } catch {
+          entries.push({ name: item.name, type: "file" });
+        }
+      }
+    }
+  } catch {
+  }
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+}
+function getFileContent(projectPath, filePath) {
+  const fullPath = (0, import_node_path10.resolve)(projectPath, filePath);
+  if (!fullPath.startsWith(projectPath + "/")) {
+    throw new Error("Path traversal blocked");
+  }
+  const st = (0, import_node_fs17.statSync)(fullPath);
+  const truncated = st.size > MAX_FILE_SIZE;
+  const readSize = truncated ? MAX_FILE_SIZE : st.size;
+  let content;
+  if (truncated) {
+    const buf = Buffer.alloc(readSize);
+    const fd = (0, import_node_fs17.openSync)(fullPath, "r");
+    try {
+      (0, import_node_fs17.readSync)(fd, buf, 0, readSize, 0);
+      content = buf.toString("utf-8");
+    } finally {
+      (0, import_node_fs17.closeSync)(fd);
+    }
+  } else {
+    content = (0, import_node_fs17.readFileSync)(fullPath, "utf-8");
+  }
+  return {
+    content,
+    language: detectLanguage(filePath),
+    size: st.size,
+    truncated
+  };
+}
 
 // src/daemon.ts
 var CLAUDE_WORKING_PATTERN = /esc to interrupt/;
@@ -3366,9 +3727,9 @@ function cleanPaneOutput(raw, maxLines = 3) {
   return meaningful.slice(-maxLines).join("\n");
 }
 function sleep2(ms) {
-  return new Promise((resolve5) => setTimeout(resolve5, ms));
+  return new Promise((resolve6) => setTimeout(resolve6, ms));
 }
-var TRACE_PATH = (0, import_node_path8.join)(
+var TRACE_PATH = (0, import_node_path11.join)(
   process.env.HOME ?? "/data/data/com.termux/files/home",
   ".local",
   "share",
@@ -3379,24 +3740,24 @@ var TRACE_PATH = (0, import_node_path8.join)(
 function trace(msg) {
   try {
     const ts = (/* @__PURE__ */ new Date()).toISOString().slice(11, 23);
-    (0, import_node_fs15.appendFileSync)(TRACE_PATH, `${ts} ${msg}
+    (0, import_node_fs18.appendFileSync)(TRACE_PATH, `${ts} ${msg}
 `);
   } catch {
   }
 }
 function resolveAdbPath() {
   try {
-    const result = (0, import_node_child_process7.spawnSync)("which", ["adb"], { encoding: "utf-8", timeout: 3e3 });
+    const result = (0, import_node_child_process8.spawnSync)("which", ["adb"], { encoding: "utf-8", timeout: 3e3 });
     if (result.stdout?.trim()) return result.stdout.trim();
   } catch {
   }
   const candidates = [
-    (0, import_node_path8.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
-    (0, import_node_path8.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
+    (0, import_node_path11.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    (0, import_node_path11.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
   ];
   for (const p of candidates) {
     try {
-      if ((0, import_node_fs15.existsSync)(p)) return p;
+      if ((0, import_node_fs18.existsSync)(p)) return p;
     } catch {
     }
   }
@@ -3405,22 +3766,22 @@ function resolveAdbPath() {
 var ADB_BIN = resolveAdbPath();
 function resolveTermuxBin3(name) {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const candidate = (0, import_node_path8.join)(prefix, "bin", name);
+  const candidate = (0, import_node_path11.join)(prefix, "bin", name);
   try {
-    if ((0, import_node_fs15.existsSync)(candidate)) return candidate;
+    if ((0, import_node_fs18.existsSync)(candidate)) return candidate;
   } catch {
   }
   return name;
 }
 function termuxApiEnv2() {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = (0, import_node_path8.join)(prefix, "lib", "libtermux-exec.so");
+  const ldPreload = (0, import_node_path11.join)(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 var TERMUX_NOTIFICATION_BIN = resolveTermuxBin3("termux-notification");
 function spawnTermuxApi(bin, args2, timeoutMs = 8e3) {
   try {
-    const child = (0, import_node_child_process7.spawn)(bin, args2, {
+    const child = (0, import_node_child_process8.spawn)(bin, args2, {
       stdio: "ignore",
       env: termuxApiEnv2(),
       detached: true
@@ -3450,7 +3811,7 @@ function removeNotification(id) {
 }
 function resolveLocalIp() {
   try {
-    const result = (0, import_node_child_process7.spawnSync)("ip", ["route", "get", "1"], {
+    const result = (0, import_node_child_process8.spawnSync)("ip", ["route", "get", "1"], {
       encoding: "utf-8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "pipe"]
@@ -3460,7 +3821,7 @@ function resolveLocalIp() {
   } catch {
   }
   try {
-    const result = (0, import_node_child_process7.spawnSync)("ifconfig", ["wlan0"], {
+    const result = (0, import_node_child_process8.spawnSync)("ifconfig", ["wlan0"], {
       encoding: "utf-8",
       timeout: 3e3,
       stdio: ["ignore", "pipe", "pipe"]
@@ -3501,6 +3862,8 @@ var Daemon = class _Daemon {
   _prevSummaryContent = "";
   /** One-shot flag: service notifications cleaned up on first cycle */
   _serviceNotifsCleared = false;
+  /** Last known conversation UUID per session — for delta detection */
+  lastConversationUuids = /* @__PURE__ */ new Map();
   adbSerial = null;
   adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -3525,7 +3888,7 @@ var Daemon = class _Daemon {
     );
     this.activity = new ActivityDetector(this.log);
     this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
-    const registryPath = (0, import_node_path8.join)((0, import_node_path8.dirname)(this.config.orchestrator.state_file), "registry.json");
+    const registryPath = (0, import_node_path11.join)((0, import_node_path11.dirname)(this.config.orchestrator.state_file), "registry.json");
     this.registry = new Registry(registryPath);
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
@@ -3540,18 +3903,18 @@ var Daemon = class _Daemon {
    */
   preflight() {
     const { log_dir, state_file, socket } = this.config.orchestrator;
-    if (!(0, import_node_fs15.existsSync)(log_dir)) {
-      (0, import_node_fs15.mkdirSync)(log_dir, { recursive: true });
+    if (!(0, import_node_fs18.existsSync)(log_dir)) {
+      (0, import_node_fs18.mkdirSync)(log_dir, { recursive: true });
       this.log.debug(`Created log directory: ${log_dir}`);
     }
-    const stateDir = (0, import_node_path8.dirname)(state_file);
-    if (!(0, import_node_fs15.existsSync)(stateDir)) {
-      (0, import_node_fs15.mkdirSync)(stateDir, { recursive: true });
+    const stateDir = (0, import_node_path11.dirname)(state_file);
+    if (!(0, import_node_fs18.existsSync)(stateDir)) {
+      (0, import_node_fs18.mkdirSync)(stateDir, { recursive: true });
       this.log.debug(`Created state directory: ${stateDir}`);
     }
-    const socketDir = (0, import_node_path8.dirname)(socket);
-    if (!(0, import_node_fs15.existsSync)(socketDir)) {
-      (0, import_node_fs15.mkdirSync)(socketDir, { recursive: true });
+    const socketDir = (0, import_node_path11.dirname)(socket);
+    if (!(0, import_node_fs18.existsSync)(socketDir)) {
+      (0, import_node_fs18.mkdirSync)(socketDir, { recursive: true });
       this.log.debug(`Created socket directory: ${socketDir}`);
     }
     const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
@@ -3584,8 +3947,8 @@ var Daemon = class _Daemon {
     }, 5 * 60 * 1e3);
     await this.startDashboard();
     notify("tmx daemon", "Orchestrator started");
-    await new Promise((resolve5) => {
-      this.shutdownResolve = resolve5;
+    await new Promise((resolve6) => {
+      this.shutdownResolve = resolve6;
     });
   }
   /** Full boot sequence: ADB fix → dependency-ordered start → cron */
@@ -3626,6 +3989,7 @@ var Daemon = class _Daemon {
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
       notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
+      appendNotification({ type: "daemon_start", title: "Daemon started", content: `${runningCount}/${sessionCount} sessions running` });
     }
     this.updateStatusNotification();
   }
@@ -3701,6 +4065,7 @@ var Daemon = class _Daemon {
     this.shutdownResolve?.();
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
+    appendNotification({ type: "daemon_stop", title: "Daemon stopped", content: "Graceful shutdown" });
   }
   // -- Session management -----------------------------------------------------
   /**
@@ -3948,7 +4313,7 @@ var Daemon = class _Daemon {
     const now = Date.now();
     if (this.adbSerial && now < this.adbSerialExpiry) return this.adbSerial;
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, ["devices"], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -3967,7 +4332,7 @@ var Daemon = class _Daemon {
       }
       for (const serial of stale) {
         this.log.debug(`Disconnecting stale ADB device: ${serial}`);
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", serial], { timeout: 3e3, stdio: "ignore" });
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, ["disconnect", serial], { timeout: 3e3, stdio: "ignore" });
       }
       if (online.length === 0) {
         this.adbSerial = null;
@@ -4009,7 +4374,7 @@ var Daemon = class _Daemon {
     this.log.info("Attempting ADB connection for phantom process fix");
     const { connect_script, connect_timeout_s, phantom_fix } = this.config.adb;
     try {
-      const result = (0, import_node_child_process7.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
+      const result = (0, import_node_child_process8.spawnSync)("timeout", [String(connect_timeout_s), connect_script], {
         encoding: "utf-8",
         timeout: (connect_timeout_s + 5) * 1e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -4046,7 +4411,7 @@ var Daemon = class _Daemon {
     if (!serial) return false;
     if (serial.startsWith("127.0.0.1:") || serial.startsWith("localhost:")) return true;
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, ["devices"], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -4082,14 +4447,14 @@ var Daemon = class _Daemon {
     const bgPkgs = ["com.termux", "com.microsoft.emmx.canary"];
     for (const cmd of phantomCmds) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs(...cmd), { timeout: 1e4, stdio: "ignore" });
       } catch (err) {
         this.log.warn(`Phantom fix command failed: ${cmd.join(" ")}`, { error: String(err) });
       }
     }
     for (const pkg of dozeWhitelistPkgs) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "deviceidle", "whitelist", `+${pkg}`), {
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "deviceidle", "whitelist", `+${pkg}`), {
           timeout: 1e4,
           stdio: "ignore"
         });
@@ -4099,7 +4464,7 @@ var Daemon = class _Daemon {
     }
     for (const pkg of standbyPkgs) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("am", "set-standby-bucket", pkg, "active"), {
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("am", "set-standby-bucket", pkg, "active"), {
           timeout: 1e4,
           stdio: "ignore"
         });
@@ -4109,7 +4474,7 @@ var Daemon = class _Daemon {
     }
     for (const pkg of bgPkgs) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "allow"), {
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "allow"), {
           timeout: 1e4,
           stdio: "ignore"
         });
@@ -4118,14 +4483,14 @@ var Daemon = class _Daemon {
       }
     }
     try {
-      const pidResult = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(
+      const pidResult = (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs(
         "sh",
         "-c",
         "pidof com.termux | head -1"
       ), { encoding: "utf-8", timeout: 1e4, stdio: ["ignore", "pipe", "pipe"] });
       const termuxPid = pidResult.stdout?.trim();
       if (termuxPid && /^\d+$/.test(termuxPid)) {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs(
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs(
           "sh",
           "-c",
           `echo -200 > /proc/${termuxPid}/oom_score_adj`
@@ -4137,7 +4502,7 @@ var Daemon = class _Daemon {
     }
     for (const pkg of ["com.termux", "com.microsoft.emmx.canary"]) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "activity", "set-inactive", pkg, "false"), {
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("cmd", "activity", "set-inactive", pkg, "false"), {
           timeout: 1e4,
           stdio: "ignore"
         });
@@ -4145,7 +4510,7 @@ var Daemon = class _Daemon {
       }
     }
     try {
-      (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("settings", "put", "global", "low_power_trigger_level", "1"), {
+      (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("settings", "put", "global", "low_power_trigger_level", "1"), {
         timeout: 1e4,
         stdio: "ignore"
       });
@@ -4158,7 +4523,7 @@ var Daemon = class _Daemon {
     ];
     for (const pkg of samsungPkgs) {
       try {
-        (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 1e4, stdio: "ignore" });
+        (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("pm", "enable", pkg), { timeout: 1e4, stdio: "ignore" });
       } catch {
       }
     }
@@ -4200,7 +4565,7 @@ var Daemon = class _Daemon {
   /** Re-create IPC socket if it was removed (e.g. Termux crash cleans $PREFIX/tmp) */
   async ensureSocket() {
     const socketPath = this.config.orchestrator.socket;
-    if (!(0, import_node_fs15.existsSync)(socketPath)) {
+    if (!(0, import_node_fs18.existsSync)(socketPath)) {
       this.log.warn("IPC socket missing (tmpdir cleaned?) \u2014 recreating");
       this.ipc.stop();
       this.ipc = new IpcServer(
@@ -4235,6 +4600,7 @@ var Daemon = class _Daemon {
           `Exceeded max restarts (${session.max_restarts})`
         );
         notify("tmx", `Session '${session.name}' failed \u2014 max restarts exceeded`, `tmx-fail-${session.name}`);
+        appendNotification({ type: "session_error", title: `Session '${session.name}' failed`, content: `Exceeded max restarts (${session.max_restarts})`, session: session.name });
         continue;
       }
       const backoffMs = session.restart_backoff_s * Math.pow(2, s.restart_count) * 1e3;
@@ -4286,7 +4652,7 @@ var Daemon = class _Daemon {
       const adoptedPid = this.adoptedPids.get(session.name);
       let pid = null;
       if (adoptedPid !== void 0) {
-        if ((0, import_node_fs15.existsSync)(`/proc/${adoptedPid}`)) {
+        if ((0, import_node_fs18.existsSync)(`/proc/${adoptedPid}`)) {
           pid = adoptedPid;
         } else {
           this.log.info(`Adopted session '${session.name}' PID ${adoptedPid} exited`, { session: session.name });
@@ -4318,6 +4684,7 @@ var Daemon = class _Daemon {
       this.state.updateSessionMetrics(session.name, rss_mb, activityState, lastOutput, claudeStatus);
     }
     this.autoSuspendOnPressure(sysMem?.pressure ?? "normal");
+    this.pushConversationDeltas();
     this.pushSseState();
     this.updateStatusNotification();
   }
@@ -4350,6 +4717,7 @@ var Daemon = class _Daemon {
           }
         }
         notify("tmx", `Paused ${names.join(", ")} \u2014 memory ${pressure}`, `tmx-autosuspend`);
+        appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
       }
     } else if (pressure === "normal") {
       const sessions = this.state.getState().sessions;
@@ -4368,6 +4736,28 @@ var Daemon = class _Daemon {
     const statusResp = this.cmdStatus();
     if (statusResp.ok) {
       this.dashboard.pushEvent("state", statusResp.data);
+    }
+  }
+  /** Push conversation deltas for claude sessions via SSE (live streaming) */
+  pushConversationDeltas() {
+    if (!this.dashboard || this.dashboard.sseClientCount === 0) return;
+    for (const cfg of this.config.sessions) {
+      if (cfg.type !== "claude" || !cfg.path) continue;
+      const s = this.state.getSession(cfg.name);
+      if (!s || s.status !== "running") continue;
+      try {
+        const lastUuid = this.lastConversationUuids.get(cfg.name) ?? null;
+        const delta = getConversationDelta(cfg.path, lastUuid, 10);
+        if (!delta || delta.entries.length === 0) continue;
+        const newestUuid = delta.entries[delta.entries.length - 1].uuid;
+        this.lastConversationUuids.set(cfg.name, newestUuid);
+        this.dashboard.pushEvent("conversation", {
+          session: cfg.name,
+          entries: delta.entries,
+          session_id: delta.session_id
+        });
+      } catch {
+      }
     }
   }
   /**
@@ -4558,19 +4948,19 @@ var Daemon = class _Daemon {
    */
   resolveBootSessions() {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path11.join)(home, ".claude", "history.jsonl");
     const recentProjects = parseRecentProjects(historyPath, 1e3);
     const namedSessions = findNamedSessions(historyPath, 7);
     const { auto_start, visible } = this.config.boot;
     const configByPath = /* @__PURE__ */ new Map();
     for (const s of this.config.sessions) {
-      if (s.path) configByPath.set((0, import_node_path8.resolve)(s.path), s);
+      if (s.path) configByPath.set((0, import_node_path11.resolve)(s.path), s);
     }
     const recentClaude = [];
     let rank = 0;
     for (const proj of recentProjects) {
       if (rank >= visible) break;
-      const resolvedPath = (0, import_node_path8.resolve)(proj.path);
+      const resolvedPath = (0, import_node_path11.resolve)(proj.path);
       const existing = configByPath.get(resolvedPath);
       if (existing) {
         if (existing.type === "claude" && existing.enabled) {
@@ -4610,7 +5000,7 @@ var Daemon = class _Daemon {
     for (const named of namedSessions) {
       if (rank >= visible) break;
       if (registeredIds.has(named.session_id)) continue;
-      const resolvedPath = (0, import_node_path8.resolve)(named.path);
+      const resolvedPath = (0, import_node_path11.resolve)(named.path);
       const titleName = named.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
       if (!titleName || !isValidName(titleName)) continue;
       const existingNames = this.config.sessions.map((s) => s.name);
@@ -4674,11 +5064,11 @@ var Daemon = class _Daemon {
   resolveOpenTarget(input) {
     const lower = input.toLowerCase();
     const configExact = this.config.sessions.find((s) => s.name === lower && s.path);
-    if (configExact?.path) return (0, import_node_path8.resolve)(configExact.path);
+    if (configExact?.path) return (0, import_node_path11.resolve)(configExact.path);
     const regExact = this.registry.find(lower);
     if (regExact) return regExact.path;
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path11.join)(home, ".claude", "history.jsonl");
     const recent = parseRecentProjects(historyPath, 1e3);
     const recentExact = recent.find((p) => p.name === lower);
     if (recentExact) return recentExact.path;
@@ -4688,18 +5078,18 @@ var Daemon = class _Daemon {
       ...recent
     ];
     const prefixMatches = allSources.filter((s) => s.name.startsWith(lower));
-    if (prefixMatches.length === 1) return (0, import_node_path8.resolve)(prefixMatches[0].path);
+    if (prefixMatches.length === 1) return (0, import_node_path11.resolve)(prefixMatches[0].path);
     const substringMatches = allSources.filter((s) => s.name.includes(lower));
-    if (substringMatches.length === 1) return (0, import_node_path8.resolve)(substringMatches[0].path);
-    if (prefixMatches.length > 0) return (0, import_node_path8.resolve)(prefixMatches[0].path);
-    if (substringMatches.length > 0) return (0, import_node_path8.resolve)(substringMatches[0].path);
+    if (substringMatches.length === 1) return (0, import_node_path11.resolve)(substringMatches[0].path);
+    if (prefixMatches.length > 0) return (0, import_node_path11.resolve)(prefixMatches[0].path);
+    if (substringMatches.length > 0) return (0, import_node_path11.resolve)(substringMatches[0].path);
     return null;
   }
   /** Open command — register and start a new dynamic Claude session (supports multi-instance) */
   async cmdOpen(path, name, autoGo = false, priority = 50) {
     let resolvedPath;
-    if ((0, import_node_fs15.existsSync)(path)) {
-      resolvedPath = (0, import_node_path8.resolve)(path);
+    if ((0, import_node_fs18.existsSync)(path)) {
+      resolvedPath = (0, import_node_path11.resolve)(path);
     } else {
       const matched = this.resolveOpenTarget(path);
       if (!matched) {
@@ -4712,7 +5102,7 @@ var Daemon = class _Daemon {
       return { ok: false, error: `Invalid session name '${baseName}' \u2014 must match [a-z0-9-]+` };
     }
     const existingByPath = this.config.sessions.filter(
-      (s) => s.path && (0, import_node_path8.resolve)(s.path) === resolvedPath
+      (s) => s.path && (0, import_node_path11.resolve)(s.path) === resolvedPath
     );
     let sessionName;
     if (existingByPath.length === 0) {
@@ -4772,7 +5162,7 @@ var Daemon = class _Daemon {
   /** Recent command — parse history.jsonl for recently active projects */
   cmdRecent(count = 20) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path11.join)(home, ".claude", "history.jsonl");
     const rawProjects = parseRecentProjects(historyPath, 1e3);
     const configNames = new Set(this.config.sessions.map((s) => s.name));
     const runningNames = /* @__PURE__ */ new Set();
@@ -4805,17 +5195,17 @@ var Daemon = class _Daemon {
   /** Register projects by scanning a directory (default ~/git) */
   cmdRegister(scanPath) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const dirPath = (0, import_node_path8.resolve)(scanPath ?? (0, import_node_path8.join)(home, "git"));
-    if (!(0, import_node_fs15.existsSync)(dirPath)) {
+    const dirPath = (0, import_node_path11.resolve)(scanPath ?? (0, import_node_path11.join)(home, "git"));
+    if (!(0, import_node_fs18.existsSync)(dirPath)) {
       return { ok: false, error: `Directory not found: ${dirPath}` };
     }
     let entries;
     try {
-      const names = (0, import_node_fs15.readdirSync)(dirPath);
+      const names = (0, import_node_fs18.readdirSync)(dirPath);
       entries = names.filter((n) => !n.startsWith(".")).map((n) => {
-        const full = (0, import_node_path8.join)(dirPath, n);
+        const full = (0, import_node_path11.join)(dirPath, n);
         try {
-          const st = (0, import_node_fs15.statSync)(full);
+          const st = (0, import_node_fs18.statSync)(full);
           if (!st.isDirectory()) return null;
           return { name: n, path: full, mtime: st.mtimeMs };
         } catch {
@@ -4859,11 +5249,11 @@ var Daemon = class _Daemon {
   /** Clone a git repo and register it */
   cmdClone(url, nameOverride) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const gitDir = (0, import_node_path8.join)(home, "git");
+    const gitDir = (0, import_node_path11.join)(home, "git");
     const urlBasename = url.replace(/\.git$/, "").split("/").pop() ?? "unnamed";
     const dirName = nameOverride ?? urlBasename.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    const targetDir = (0, import_node_path8.join)(gitDir, dirName);
-    if ((0, import_node_fs15.existsSync)(targetDir)) {
+    const targetDir = (0, import_node_path11.join)(gitDir, dirName);
+    if ((0, import_node_fs18.existsSync)(targetDir)) {
       if (this.registry.findByPath(targetDir)) {
         return { ok: true, data: { name: dirName, path: targetDir, message: "Already registered" } };
       }
@@ -4876,8 +5266,8 @@ var Daemon = class _Daemon {
       this.registry.add({ name: name2, path: targetDir, priority: 50, auto_go: false });
       return { ok: true, data: { name: name2, path: targetDir, message: "Existing dir registered" } };
     }
-    if (!(0, import_node_fs15.existsSync)(gitDir)) (0, import_node_fs15.mkdirSync)(gitDir, { recursive: true });
-    const result = (0, import_node_child_process7.spawnSync)("git", ["clone", url, targetDir], {
+    if (!(0, import_node_fs18.existsSync)(gitDir)) (0, import_node_fs18.mkdirSync)(gitDir, { recursive: true });
+    const result = (0, import_node_child_process8.spawnSync)("git", ["clone", url, targetDir], {
       timeout: 12e4,
       stdio: "pipe",
       env: process.env
@@ -4902,12 +5292,12 @@ var Daemon = class _Daemon {
       return { ok: false, error: `Invalid name '${name}' \u2014 must match [a-z0-9-]+` };
     }
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const targetDir = (0, import_node_path8.join)(home, "git", name);
-    if ((0, import_node_fs15.existsSync)(targetDir)) {
+    const targetDir = (0, import_node_path11.join)(home, "git", name);
+    if ((0, import_node_fs18.existsSync)(targetDir)) {
       return { ok: false, error: `Directory already exists: ${targetDir}` };
     }
-    (0, import_node_fs15.mkdirSync)(targetDir, { recursive: true });
-    (0, import_node_child_process7.spawnSync)("git", ["init"], { cwd: targetDir, timeout: 1e4, stdio: "pipe" });
+    (0, import_node_fs18.mkdirSync)(targetDir, { recursive: true });
+    (0, import_node_child_process8.spawnSync)("git", ["init"], { cwd: targetDir, timeout: 1e4, stdio: "pipe" });
     const existingNames = [
       ...this.config.sessions.map((s) => s.name),
       ...this.registry.entries().map((e) => e.name)
@@ -5019,8 +5409,15 @@ var Daemon = class _Daemon {
   /** Poll battery status, take action if critically low */
   batteryPoll() {
     trace("battery:poll");
+    const prevActive = this.battery.actionsActive;
     const status = this.battery.checkAndAct();
     if (!status) return;
+    if (this.battery.actionsActive && !prevActive) {
+      appendNotification({ type: "battery_low", title: "Battery critically low", content: `${status.percentage}%, not charging \u2014 radios disabled` });
+      if (this.dashboard && this.dashboard.sseClientCount > 0) {
+        this.dashboard.pushEvent("notification", { type: "battery_low", title: "Battery critically low", content: `${status.percentage}%` });
+      }
+    }
     this.state.updateBattery({
       percentage: status.percentage,
       charging: status.charging,
@@ -5037,7 +5434,7 @@ var Daemon = class _Daemon {
       return;
     }
     const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
-    const staticDir = (0, import_node_path8.join)(scriptDir, "..", "dashboard", "dist");
+    const staticDir = (0, import_node_path11.join)(scriptDir, "..", "dashboard", "dist");
     this.dashboard = new DashboardServer(
       port,
       staticDir,
@@ -5057,8 +5454,8 @@ var Daemon = class _Daemon {
   /** Read a JSON file, returning null on any error */
   readJsonFile(path) {
     try {
-      if (!(0, import_node_fs15.existsSync)(path)) return null;
-      return JSON.parse((0, import_node_fs15.readFileSync)(path, "utf-8"));
+      if (!(0, import_node_fs18.existsSync)(path)) return null;
+      return JSON.parse((0, import_node_fs18.readFileSync)(path, "utf-8"));
     } catch {
       return null;
     }
@@ -5066,8 +5463,8 @@ var Daemon = class _Daemon {
   /** Validate that a file path is safe to read/write (under ~/.claude/ or a known project) */
   isAllowedCustomizationPath(filePath) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const claudeDir = (0, import_node_path8.join)(home, ".claude");
-    const resolved = (0, import_node_path8.resolve)(filePath);
+    const claudeDir = (0, import_node_path11.join)(home, ".claude");
+    const resolved = (0, import_node_path11.resolve)(filePath);
     if (resolved.startsWith(claudeDir + "/")) return true;
     const knownPaths = this.config.sessions.map((s) => s.path).filter(Boolean);
     if (this.registry) {
@@ -5076,9 +5473,9 @@ var Daemon = class _Daemon {
       }
     }
     for (const p of knownPaths) {
-      const projectDir = (0, import_node_path8.resolve)(p);
-      if (resolved === (0, import_node_path8.join)(projectDir, "CLAUDE.md")) return true;
-      if (resolved.startsWith((0, import_node_path8.join)(projectDir, ".claude") + "/")) return true;
+      const projectDir = (0, import_node_path11.resolve)(p);
+      if (resolved === (0, import_node_path11.join)(projectDir, "CLAUDE.md")) return true;
+      if (resolved.startsWith((0, import_node_path11.join)(projectDir, ".claude") + "/")) return true;
     }
     return false;
   }
@@ -5094,13 +5491,13 @@ var Daemon = class _Daemon {
   cmdCustomization(projectPath) {
     try {
       const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-      const claudeDir = (0, import_node_path8.join)(home, ".claude");
-      const claudeJson = this.readJsonFile((0, import_node_path8.join)(home, ".claude.json"));
-      const settingsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "settings.json"));
-      const installedPluginsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "installed_plugins.json"));
-      const blocklistJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "blocklist.json"));
-      const installCountsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "install-counts-cache.json"));
-      const marketplacesJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "known_marketplaces.json"));
+      const claudeDir = (0, import_node_path11.join)(home, ".claude");
+      const claudeJson = this.readJsonFile((0, import_node_path11.join)(home, ".claude.json"));
+      const settingsJson = this.readJsonFile((0, import_node_path11.join)(claudeDir, "settings.json"));
+      const installedPluginsJson = this.readJsonFile((0, import_node_path11.join)(claudeDir, "plugins", "installed_plugins.json"));
+      const blocklistJson = this.readJsonFile((0, import_node_path11.join)(claudeDir, "plugins", "blocklist.json"));
+      const installCountsJson = this.readJsonFile((0, import_node_path11.join)(claudeDir, "plugins", "install-counts-cache.json"));
+      const marketplacesJson = this.readJsonFile((0, import_node_path11.join)(claudeDir, "plugins", "known_marketplaces.json"));
       const mcpServers = [];
       const cjMcps = claudeJson?.mcpServers ?? {};
       for (const [name, cfg] of Object.entries(cjMcps)) {
@@ -5172,14 +5569,14 @@ var Daemon = class _Daemon {
         let pluginAuthor = "";
         let pluginType = "native";
         if (entry.installPath) {
-          const pjPath = (0, import_node_path8.join)(entry.installPath, ".claude-plugin", "plugin.json");
+          const pjPath = (0, import_node_path11.join)(entry.installPath, ".claude-plugin", "plugin.json");
           const pj = this.readJsonFile(pjPath);
           if (pj) {
             pluginName = pj.name ?? pluginName;
             pluginDesc = pj.description ?? "";
             pluginAuthor = pj.author?.name ?? "";
           }
-          if ((0, import_node_fs15.existsSync)((0, import_node_path8.join)(entry.installPath, ".mcp.json"))) {
+          if ((0, import_node_fs18.existsSync)((0, import_node_path11.join)(entry.installPath, ".mcp.json"))) {
             pluginType = "external";
           }
         }
@@ -5200,14 +5597,14 @@ var Daemon = class _Daemon {
         });
       }
       const skills = [];
-      const userSkillsDir = (0, import_node_path8.join)(claudeDir, "skills");
-      if ((0, import_node_fs15.existsSync)(userSkillsDir)) {
+      const userSkillsDir = (0, import_node_path11.join)(claudeDir, "skills");
+      if ((0, import_node_fs18.existsSync)(userSkillsDir)) {
         try {
-          for (const f of (0, import_node_fs15.readdirSync)(userSkillsDir)) {
+          for (const f of (0, import_node_fs18.readdirSync)(userSkillsDir)) {
             if (!f.endsWith(".md")) continue;
             skills.push({
               name: f.replace(/\.md$/, ""),
-              path: (0, import_node_path8.join)(userSkillsDir, f),
+              path: (0, import_node_path11.join)(userSkillsDir, f),
               scope: "user"
             });
           }
@@ -5215,14 +5612,14 @@ var Daemon = class _Daemon {
         }
       }
       if (projectPath) {
-        const projSkillsDir = (0, import_node_path8.join)(projectPath, ".claude", "skills");
-        if ((0, import_node_fs15.existsSync)(projSkillsDir)) {
+        const projSkillsDir = (0, import_node_path11.join)(projectPath, ".claude", "skills");
+        if ((0, import_node_fs18.existsSync)(projSkillsDir)) {
           try {
-            for (const f of (0, import_node_fs15.readdirSync)(projSkillsDir)) {
+            for (const f of (0, import_node_fs18.readdirSync)(projSkillsDir)) {
               if (!f.endsWith(".md")) continue;
               skills.push({
                 name: f.replace(/\.md$/, ""),
-                path: (0, import_node_path8.join)(projSkillsDir, f),
+                path: (0, import_node_path11.join)(projSkillsDir, f),
                 scope: "project"
               });
             }
@@ -5231,27 +5628,27 @@ var Daemon = class _Daemon {
         }
       }
       const claudeMds = [];
-      const globalMd = (0, import_node_path8.join)(claudeDir, "CLAUDE.md");
-      if ((0, import_node_fs15.existsSync)(globalMd)) {
+      const globalMd = (0, import_node_path11.join)(claudeDir, "CLAUDE.md");
+      if ((0, import_node_fs18.existsSync)(globalMd)) {
         claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
       }
-      const projectsDir = (0, import_node_path8.join)(claudeDir, "projects");
-      if ((0, import_node_fs15.existsSync)(projectsDir)) {
+      const projectsDir = (0, import_node_path11.join)(claudeDir, "projects");
+      if ((0, import_node_fs18.existsSync)(projectsDir)) {
         try {
           const mangledProject = projectPath ? "-" + projectPath.replace(/[/.]/g, "-").replace(/^-+/, "") : null;
-          for (const d of (0, import_node_fs15.readdirSync)(projectsDir)) {
+          for (const d of (0, import_node_fs18.readdirSync)(projectsDir)) {
             if (mangledProject && d !== mangledProject) continue;
-            const memDir = (0, import_node_path8.join)(projectsDir, d, "memory");
-            if (!(0, import_node_fs15.existsSync)(memDir)) continue;
+            const memDir = (0, import_node_path11.join)(projectsDir, d, "memory");
+            if (!(0, import_node_fs18.existsSync)(memDir)) continue;
             const gitIdx = d.lastIndexOf("-git-");
             const projName = gitIdx >= 0 ? d.slice(gitIdx + 5) : d.split("-").filter(Boolean).pop() ?? d;
             try {
-              for (const f of (0, import_node_fs15.readdirSync)(memDir)) {
+              for (const f of (0, import_node_fs18.readdirSync)(memDir)) {
                 if (!f.endsWith(".md")) continue;
                 const fileName = f.replace(/\.md$/, "");
                 claudeMds.push({
                   label: `${projName}: ${fileName}`,
-                  path: (0, import_node_path8.join)(memDir, f),
+                  path: (0, import_node_path11.join)(memDir, f),
                   scope: "memory"
                 });
               }
@@ -5262,8 +5659,8 @@ var Daemon = class _Daemon {
         }
       }
       if (projectPath) {
-        const projMd = (0, import_node_path8.join)(projectPath, "CLAUDE.md");
-        if ((0, import_node_fs15.existsSync)(projMd)) {
+        const projMd = (0, import_node_path11.join)(projectPath, "CLAUDE.md");
+        if ((0, import_node_fs18.existsSync)(projMd)) {
           const projName = projectPath.split("/").pop() ?? projectPath;
           claudeMds.push({ label: `Project: ${projName}`, path: projMd, scope: "project" });
         }
@@ -5296,12 +5693,12 @@ var Daemon = class _Daemon {
             lastUpdated: mktCfg.lastUpdated ?? ""
           });
           const mktDir = mktCfg.installLocation;
-          if (!mktDir || !(0, import_node_fs15.existsSync)(mktDir)) continue;
-          const nativeDir = (0, import_node_path8.join)(mktDir, "plugins");
-          if ((0, import_node_fs15.existsSync)(nativeDir)) {
+          if (!mktDir || !(0, import_node_fs18.existsSync)(mktDir)) continue;
+          const nativeDir = (0, import_node_path11.join)(mktDir, "plugins");
+          if ((0, import_node_fs18.existsSync)(nativeDir)) {
             try {
-              for (const name of (0, import_node_fs15.readdirSync)(nativeDir)) {
-                const pluginJsonPath = (0, import_node_path8.join)(nativeDir, name, ".claude-plugin", "plugin.json");
+              for (const name of (0, import_node_fs18.readdirSync)(nativeDir)) {
+                const pluginJsonPath = (0, import_node_path11.join)(nativeDir, name, ".claude-plugin", "plugin.json");
                 const pj = this.readJsonFile(pluginJsonPath);
                 if (!pj) continue;
                 const pluginId = `${name}@${mktName}`;
@@ -5320,11 +5717,11 @@ var Daemon = class _Daemon {
             } catch {
             }
           }
-          const extDir = (0, import_node_path8.join)(mktDir, "external_plugins");
-          if ((0, import_node_fs15.existsSync)(extDir)) {
+          const extDir = (0, import_node_path11.join)(mktDir, "external_plugins");
+          if ((0, import_node_fs18.existsSync)(extDir)) {
             try {
-              for (const name of (0, import_node_fs15.readdirSync)(extDir)) {
-                const pluginJsonPath = (0, import_node_path8.join)(extDir, name, ".claude-plugin", "plugin.json");
+              for (const name of (0, import_node_fs18.readdirSync)(extDir)) {
+                const pluginJsonPath = (0, import_node_path11.join)(extDir, name, ".claude-plugin", "plugin.json");
                 const pj = this.readJsonFile(pluginJsonPath);
                 if (!pj) continue;
                 const pluginId = `${name}@${mktName}`;
@@ -5371,7 +5768,7 @@ var Daemon = class _Daemon {
       return { ok: false, error: "Path not allowed" };
     }
     try {
-      const content = (0, import_node_fs15.readFileSync)(filePath, "utf-8");
+      const content = (0, import_node_fs18.readFileSync)(filePath, "utf-8");
       return { ok: true, data: { content } };
     } catch (err) {
       return { ok: false, error: `Failed to read file: ${err}` };
@@ -5386,7 +5783,7 @@ var Daemon = class _Daemon {
       return { ok: false, error: "Only .md files can be edited" };
     }
     try {
-      (0, import_node_fs15.writeFileSync)(filePath, content, "utf-8");
+      (0, import_node_fs18.writeFileSync)(filePath, content, "utf-8");
       return { ok: true, data: { written: filePath } };
     } catch (err) {
       return { ok: false, error: `Failed to write file: ${err}` };
@@ -5396,24 +5793,24 @@ var Daemon = class _Daemon {
   /** Atomic JSON file write: write .tmp then rename */
   writeJsonFileAtomic(filePath, data) {
     const tmp = `${filePath}.tmp`;
-    (0, import_node_fs15.writeFileSync)(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
-    (0, import_node_fs15.renameSync)(tmp, filePath);
+    (0, import_node_fs18.writeFileSync)(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    (0, import_node_fs18.renameSync)(tmp, filePath);
   }
   /** Get path to ~/.claude.json */
   get claudeJsonPath() {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    return (0, import_node_path8.join)(home, ".claude.json");
+    return (0, import_node_path11.join)(home, ".claude.json");
   }
   /** Get path to settings.json (Claude Code settings) */
   get settingsJsonPath() {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    return (0, import_node_path8.join)(home, ".claude", "settings.json");
+    return (0, import_node_path11.join)(home, ".claude", "settings.json");
   }
   /** Read ~/.claude.json, returning parsed object or empty default */
   readClaudeJson() {
     try {
-      if ((0, import_node_fs15.existsSync)(this.claudeJsonPath)) {
-        return JSON.parse((0, import_node_fs15.readFileSync)(this.claudeJsonPath, "utf-8"));
+      if ((0, import_node_fs18.existsSync)(this.claudeJsonPath)) {
+        return JSON.parse((0, import_node_fs18.readFileSync)(this.claudeJsonPath, "utf-8"));
       }
     } catch {
     }
@@ -5481,9 +5878,9 @@ var Daemon = class _Daemon {
   cmdMcpToggle(serverName) {
     try {
       let settings = {};
-      if ((0, import_node_fs15.existsSync)(this.settingsJsonPath)) {
+      if ((0, import_node_fs18.existsSync)(this.settingsJsonPath)) {
         try {
-          settings = JSON.parse((0, import_node_fs15.readFileSync)(this.settingsJsonPath, "utf-8"));
+          settings = JSON.parse((0, import_node_fs18.readFileSync)(this.settingsJsonPath, "utf-8"));
         } catch {
         }
       }
@@ -5564,24 +5961,24 @@ var Daemon = class _Daemon {
             }
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
             const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-            const scriptPath = (0, import_node_path8.join)(prefix, "tmp", "tmx-bridge-start.sh");
+            const scriptPath = (0, import_node_path11.join)(prefix, "tmp", "tmx-bridge-start.sh");
             const bridgeCandidates = [
-              (0, import_node_path8.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
-              (0, import_node_path8.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
-              (0, import_node_path8.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
+              (0, import_node_path11.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              (0, import_node_path11.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              (0, import_node_path11.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
             ];
-            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs15.existsSync)(p)) ?? bridgeCandidates[0];
-            const bunPath = (0, import_node_fs15.existsSync)((0, import_node_path8.join)(home, ".bun/bin/bun")) ? (0, import_node_path8.join)(home, ".bun/bin/bun") : "bun";
-            const bridgeDir = (0, import_node_path8.dirname)(bridgeScript);
-            (0, import_node_fs15.writeFileSync)(scriptPath, [
+            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs18.existsSync)(p)) ?? bridgeCandidates[0];
+            const bunPath = (0, import_node_fs18.existsSync)((0, import_node_path11.join)(home, ".bun/bin/bun")) ? (0, import_node_path11.join)(home, ".bun/bin/bun") : "bun";
+            const bridgeDir = (0, import_node_path11.dirname)(bridgeScript);
+            (0, import_node_fs18.writeFileSync)(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
               `# CFC Bridge startup script (generated by tmx daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`
             ].join("\n") + "\n");
-            (0, import_node_fs15.chmodSync)(scriptPath, 493);
+            (0, import_node_fs18.chmodSync)(scriptPath, 493);
             const amBin = resolveTermuxBin3("am");
-            const svcResult = (0, import_node_child_process7.spawnSync)(amBin, [
+            const svcResult = (0, import_node_child_process8.spawnSync)(amBin, [
               "startservice",
               "-n",
               "com.termux/.app.TermuxService",
@@ -5616,27 +6013,27 @@ var Daemon = class _Daemon {
             }
             const home = process.env.HOME ?? "/data/data/com.termux/files/home";
             const bridgeCandidates = [
-              (0, import_node_path8.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
-              (0, import_node_path8.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
-              (0, import_node_path8.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
+              (0, import_node_path11.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              (0, import_node_path11.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              (0, import_node_path11.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
             ];
-            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs15.existsSync)(p));
+            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs18.existsSync)(p));
             if (!bridgeScript) {
               return { status: 500, data: { error: "Bridge script not found" } };
             }
             let runtime = "";
-            const bunPath = (0, import_node_path8.join)(home, ".bun/bin/bun");
-            if ((0, import_node_fs15.existsSync)(bunPath)) runtime = bunPath;
+            const bunPath = (0, import_node_path11.join)(home, ".bun/bin/bun");
+            if ((0, import_node_fs18.existsSync)(bunPath)) runtime = bunPath;
             else {
               try {
-                const which = (0, import_node_child_process7.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
+                const which = (0, import_node_child_process8.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
                 if (which.stdout?.trim()) runtime = which.stdout.trim();
               } catch {
               }
             }
             if (!runtime) {
               try {
-                const which = (0, import_node_child_process7.spawnSync)("which", ["node"], { encoding: "utf-8", timeout: 3e3 });
+                const which = (0, import_node_child_process8.spawnSync)("which", ["node"], { encoding: "utf-8", timeout: 3e3 });
                 if (which.stdout?.trim()) runtime = which.stdout.trim();
               } catch {
               }
@@ -5645,10 +6042,10 @@ var Daemon = class _Daemon {
               return { status: 500, data: { error: "No runtime (bun/node) found" } };
             }
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-            const logPath = (0, import_node_path8.join)(prefix, "tmp/bridge.log");
-            const logFd = (0, import_node_fs15.openSync)(logPath, "a");
+            const logPath = (0, import_node_path11.join)(prefix, "tmp/bridge.log");
+            const logFd = (0, import_node_fs18.openSync)(logPath, "a");
             try {
-              const child = (0, import_node_child_process7.spawn)(runtime, [bridgeScript], {
+              const child = (0, import_node_child_process8.spawn)(runtime, [bridgeScript], {
                 detached: true,
                 stdio: ["ignore", logFd, logFd]
               });
@@ -5656,7 +6053,7 @@ var Daemon = class _Daemon {
               this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
               return { status: 200, data: { status: "starting", pid: child.pid } };
             } finally {
-              (0, import_node_fs15.closeSync)(logFd);
+              (0, import_node_fs18.closeSync)(logFd);
             }
           }
           try {
@@ -5687,7 +6084,7 @@ var Daemon = class _Daemon {
           }
           if (createTermuxTab(name, this.log)) {
             try {
-              (0, import_node_child_process7.spawnSync)("tmux", ["select-window", "-t", name], { timeout: 3e3 });
+              (0, import_node_child_process8.spawnSync)("tmux", ["select-window", "-t", name], { timeout: 3e3 });
             } catch {
             }
             bringTermuxToForeground(this.log);
@@ -5700,8 +6097,8 @@ var Daemon = class _Daemon {
           if (!name) return { status: 400, data: { error: "Session name required" } };
           const buildCfg = this.config.sessions.find((s) => s.name === name);
           if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
-          const buildScript = (0, import_node_path8.join)(buildCfg.path, "build-on-termux.sh");
-          if (!(0, import_node_fs15.existsSync)(buildScript)) {
+          const buildScript = (0, import_node_path11.join)(buildCfg.path, "build-on-termux.sh");
+          if (!(0, import_node_fs18.existsSync)(buildScript)) {
             return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
           }
           if (runScriptInTab(buildScript, buildCfg.path, name, this.log)) {
@@ -5902,7 +6299,7 @@ var Daemon = class _Daemon {
         case "timeline": {
           if (!name) return { status: 400, data: { error: "Session name required" } };
           const tlPath = this.resolveSessionPath(name);
-          const tracePath = (0, import_node_path8.join)(this.config.orchestrator.log_dir, "trace.log");
+          const tracePath = (0, import_node_path11.join)(this.config.orchestrator.log_dir, "trace.log");
           let jsonlPath;
           if (tlPath) {
             const active = resolveActiveJsonl(tlPath);
@@ -5920,7 +6317,7 @@ var Daemon = class _Daemon {
         case "mcp": {
           if (method === "GET" && !name) {
             const config = this.readClaudeJson();
-            const settingsData = (0, import_node_fs15.existsSync)(this.settingsJsonPath) ? JSON.parse((0, import_node_fs15.readFileSync)(this.settingsJsonPath, "utf-8")) : {};
+            const settingsData = (0, import_node_fs18.existsSync)(this.settingsJsonPath) ? JSON.parse((0, import_node_fs18.readFileSync)(this.settingsJsonPath, "utf-8")) : {};
             const disabled = settingsData.disabledMcpServers ?? [];
             const servers = Object.entries(config.mcpServers ?? {}).map(([n, cfg]) => ({
               name: n,
@@ -5959,6 +6356,107 @@ var Daemon = class _Daemon {
           }
           return { status: 405, data: { error: "Method not allowed" } };
         }
+        case "prompts": {
+          const promptAction = segments[2] ? decodeURIComponent(segments[2]) : void 0;
+          if (promptAction === "star" && name) {
+            if (method === "POST") {
+              starPrompt(name);
+              return { status: 200, data: { ok: true } };
+            } else if (method === "DELETE") {
+              unstarPrompt(name);
+              return { status: 200, data: { ok: true } };
+            }
+            return { status: 405, data: { error: "Method not allowed" } };
+          }
+          const result = searchPrompts({
+            q: queryParams.get("q") ?? void 0,
+            starred: queryParams.get("starred") === "true",
+            project: queryParams.get("project") ?? void 0,
+            limit: parseInt(queryParams.get("limit") ?? "50", 10),
+            offset: parseInt(queryParams.get("offset") ?? "0", 10)
+          });
+          return { status: 200, data: result };
+        }
+        case "cost-timeline": {
+          const days = parseInt(queryParams.get("days") ?? "14", 10);
+          try {
+            const allSessions = [];
+            for (const cfg of this.config.sessions) {
+              if (cfg.type !== "claude" || !cfg.path) continue;
+              allSessions.push({ name: cfg.name, path: cfg.path });
+            }
+            for (const entry of this.registry.entries()) {
+              if (!entry.path) continue;
+              if (allSessions.some((s) => s.path === entry.path)) continue;
+              allSessions.push({ name: entry.name, path: entry.path });
+            }
+            const timeline = await getDailyCostTimeline(allSessions, days);
+            return { status: 200, data: timeline };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to compute cost timeline: ${err}` } };
+          }
+        }
+        case "notifications": {
+          const nLimit = parseInt(queryParams.get("limit") ?? "50", 10);
+          const nSince = queryParams.get("since") ?? void 0;
+          try {
+            const records = readNotifications({ limit: nLimit, since: nSince });
+            return { status: 200, data: records };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read notifications: ${err}` } };
+          }
+        }
+        case "git": {
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const gitPath = this.resolveSessionPath(name);
+          if (!gitPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          try {
+            const info = getGitInfo(gitPath);
+            return { status: 200, data: info };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read git info: ${err}` } };
+          }
+        }
+        case "files": {
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const filesPath = this.resolveSessionPath(name);
+          if (!filesPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const subdir = queryParams.get("path") ?? void 0;
+          try {
+            const tree = getFileTree(filesPath, subdir);
+            return { status: 200, data: tree };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read files: ${err}` } };
+          }
+        }
+        case "file-content": {
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const fcPath = this.resolveSessionPath(name);
+          if (!fcPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const filePath = queryParams.get("path");
+          if (!filePath) return { status: 400, data: { error: "path query parameter required" } };
+          try {
+            const content = getFileContent(fcPath, filePath);
+            return { status: 200, data: content };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read file: ${err}` } };
+          }
+        }
+        case "branch": {
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body);
+            if (!parsed.session_id) return { status: 400, data: { error: "session_id required" } };
+            const branchName = `${name}-branch-${Date.now().toString(36)}`;
+            const sessionPath = this.resolveSessionPath(name);
+            if (!sessionPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+            const openResp = await this.cmdOpen(sessionPath, branchName);
+            return { status: openResp.ok ? 200 : 400, data: openResp.ok ? { ok: true, name: branchName } : { error: openResp.error } };
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
+        }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -5985,12 +6483,12 @@ var Daemon = class _Daemon {
     if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
     const scripts = [];
     try {
-      const entries = (0, import_node_fs15.readdirSync)(sessionPath);
+      const entries = (0, import_node_fs18.readdirSync)(sessionPath);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          const full = (0, import_node_path8.join)(sessionPath, f);
+          const full = (0, import_node_path11.join)(sessionPath, f);
           try {
-            if ((0, import_node_fs15.statSync)(full).isFile()) {
+            if ((0, import_node_fs18.statSync)(full).isFile()) {
               scripts.push({ name: f, path: full, source: "root" });
             }
           } catch {
@@ -6000,18 +6498,18 @@ var Daemon = class _Daemon {
     } catch {
     }
     try {
-      const scriptsDir = (0, import_node_path8.join)(sessionPath, "scripts");
-      const entries = (0, import_node_fs15.readdirSync)(scriptsDir);
+      const scriptsDir = (0, import_node_path11.join)(sessionPath, "scripts");
+      const entries = (0, import_node_fs18.readdirSync)(scriptsDir);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          scripts.push({ name: f, path: (0, import_node_path8.join)(scriptsDir, f), source: "scripts" });
+          scripts.push({ name: f, path: (0, import_node_path11.join)(scriptsDir, f), source: "scripts" });
         }
       }
     } catch {
     }
     try {
-      const pkgPath = (0, import_node_path8.join)(sessionPath, "package.json");
-      const pkg = JSON.parse((0, import_node_fs15.readFileSync)(pkgPath, "utf-8"));
+      const pkgPath = (0, import_node_path11.join)(sessionPath, "package.json");
+      const pkg = JSON.parse((0, import_node_fs18.readFileSync)(pkgPath, "utf-8"));
       if (pkg.scripts) {
         for (const [scriptName, cmd] of Object.entries(pkg.scripts)) {
           scripts.push({ name: scriptName, path: "", source: "package.json", command: cmd });
@@ -6020,11 +6518,11 @@ var Daemon = class _Daemon {
     } catch {
     }
     try {
-      const savedDir = (0, import_node_path8.join)(sessionPath, ".tmx-scripts");
-      const entries = (0, import_node_fs15.readdirSync)(savedDir);
+      const savedDir = (0, import_node_path11.join)(sessionPath, ".tmx-scripts");
+      const entries = (0, import_node_fs18.readdirSync)(savedDir);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          scripts.push({ name: f, path: (0, import_node_path8.join)(savedDir, f), source: "saved" });
+          scripts.push({ name: f, path: (0, import_node_path11.join)(savedDir, f), source: "saved" });
         }
       }
     } catch {
@@ -6039,8 +6537,8 @@ var Daemon = class _Daemon {
     if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
     const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
     if (opts.command) {
-      const tempScript = (0, import_node_path8.join)(prefix, "tmp", `tmx-cmd-${resolved}.sh`);
-      (0, import_node_fs15.writeFileSync)(tempScript, `#!/data/data/com.termux/files/usr/bin/bash
+      const tempScript = (0, import_node_path11.join)(prefix, "tmp", `tmx-cmd-${resolved}.sh`);
+      (0, import_node_fs18.writeFileSync)(tempScript, `#!/data/data/com.termux/files/usr/bin/bash
 ${opts.command}
 `, { mode: 493 });
       if (runScriptInTab(tempScript, sessionPath, resolved, this.log)) {
@@ -6052,14 +6550,14 @@ ${opts.command}
       let scriptPath;
       switch (opts.source) {
         case "root":
-          scriptPath = (0, import_node_path8.join)(sessionPath, opts.script);
+          scriptPath = (0, import_node_path11.join)(sessionPath, opts.script);
           break;
         case "scripts":
-          scriptPath = (0, import_node_path8.join)(sessionPath, "scripts", opts.script);
+          scriptPath = (0, import_node_path11.join)(sessionPath, "scripts", opts.script);
           break;
         case "package.json": {
-          const tempScript = (0, import_node_path8.join)(prefix, "tmp", `tmx-npm-${resolved}.sh`);
-          (0, import_node_fs15.writeFileSync)(
+          const tempScript = (0, import_node_path11.join)(prefix, "tmp", `tmx-npm-${resolved}.sh`);
+          (0, import_node_fs18.writeFileSync)(
             tempScript,
             `#!/data/data/com.termux/files/usr/bin/bash
 cd "${sessionPath}" || exit 1
@@ -6073,12 +6571,12 @@ bun run ${opts.script}
           return { status: 500, data: { error: "Failed to launch npm script" } };
         }
         case "saved":
-          scriptPath = (0, import_node_path8.join)(sessionPath, ".tmx-scripts", opts.script);
+          scriptPath = (0, import_node_path11.join)(sessionPath, ".tmx-scripts", opts.script);
           break;
         default:
           return { status: 400, data: { error: `Unknown script source: ${opts.source}` } };
       }
-      if (!(0, import_node_fs15.existsSync)(scriptPath)) {
+      if (!(0, import_node_fs18.existsSync)(scriptPath)) {
         return { status: 404, data: { error: `Script not found: ${scriptPath}` } };
       }
       if (runScriptInTab(scriptPath, sessionPath, resolved, this.log)) {
@@ -6098,11 +6596,11 @@ bun run ${opts.script}
     if (!opts.command?.trim()) {
       return { status: 400, data: { error: "Command cannot be empty" } };
     }
-    const savedDir = (0, import_node_path8.join)(sessionPath, ".tmx-scripts");
-    (0, import_node_fs15.mkdirSync)(savedDir, { recursive: true });
+    const savedDir = (0, import_node_path11.join)(sessionPath, ".tmx-scripts");
+    (0, import_node_fs18.mkdirSync)(savedDir, { recursive: true });
     const fileName = opts.name.endsWith(".sh") ? opts.name : `${opts.name}.sh`;
-    const filePath = (0, import_node_path8.join)(savedDir, fileName);
-    (0, import_node_fs15.writeFileSync)(
+    const filePath = (0, import_node_path11.join)(savedDir, fileName);
+    (0, import_node_fs18.writeFileSync)(
       filePath,
       `#!/data/data/com.termux/files/usr/bin/bash
 ${opts.command}
@@ -6205,7 +6703,7 @@ ${opts.command}
    */
   getAndroidApps() {
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("ps", "-A", "-o", "PID,RSS,NAME"), {
         encoding: "utf-8",
         timeout: 8e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -6264,7 +6762,7 @@ ${opts.command}
       return { status: 403, data: { error: `Cannot stop system package: ${pkg}` } };
     }
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, this.adbShellArgs("am", "force-stop", pkg), {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -6282,7 +6780,7 @@ ${opts.command}
   /** List connected ADB devices */
   getAdbDevices() {
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["devices"], {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, ["devices"], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -6299,12 +6797,12 @@ ${opts.command}
   }
   /** Initiate ADB wireless connection using the adbc script */
   adbWirelessConnect() {
-    const script = (0, import_node_path8.join)(
+    const script = (0, import_node_path11.join)(
       process.env.HOME ?? "/data/data/com.termux/files/home",
       "git/termux-tools/tools/adb-wireless-connect.sh"
     );
     try {
-      const result = (0, import_node_child_process7.spawnSync)("bash", [script], {
+      const result = (0, import_node_child_process8.spawnSync)("bash", [script], {
         encoding: "utf-8",
         timeout: 2e4,
         stdio: ["ignore", "pipe", "pipe"],
@@ -6324,7 +6822,7 @@ ${opts.command}
   /** Disconnect all ADB devices */
   adbDisconnectAll() {
     try {
-      (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", "-a"], {
+      (0, import_node_child_process8.spawnSync)(ADB_BIN, ["disconnect", "-a"], {
         timeout: 5e3,
         stdio: "ignore"
       });
@@ -6338,7 +6836,7 @@ ${opts.command}
   /** Disconnect a specific ADB device by serial */
   adbDisconnectDevice(serial) {
     try {
-      const result = (0, import_node_child_process7.spawnSync)(ADB_BIN, ["disconnect", serial], {
+      const result = (0, import_node_child_process8.spawnSync)(ADB_BIN, ["disconnect", serial], {
         encoding: "utf-8",
         timeout: 5e3,
         stdio: ["ignore", "pipe", "pipe"]
@@ -6355,9 +6853,9 @@ ${opts.command}
   /** Start crond if not already running */
   startCron() {
     try {
-      const result = (0, import_node_child_process7.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
+      const result = (0, import_node_child_process8.spawnSync)("pgrep", ["-x", "crond"], { timeout: 5e3, stdio: "ignore" });
       if (result.status !== 0) {
-        (0, import_node_child_process7.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
+        (0, import_node_child_process8.spawnSync)("crond", ["-s", "-P"], { timeout: 5e3, stdio: "ignore" });
         this.log.info("Started crond");
       }
     } catch {
@@ -6476,7 +6974,7 @@ ${opts.command}
             ...s,
             type: cfg?.type ?? "daemon",
             path: cfg?.path ?? null,
-            has_build_script: cfg?.path ? (0, import_node_fs15.existsSync)((0, import_node_path8.join)(cfg.path, "build-on-termux.sh")) : false,
+            has_build_script: cfg?.path ? (0, import_node_fs18.existsSync)((0, import_node_path11.join)(cfg.path, "build-on-termux.sh")) : false,
             uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
           };
         })
@@ -6586,7 +7084,7 @@ ${opts.command}
         skipped++;
       }
       if (i < targetSessions.length - 1) {
-        (0, import_node_child_process7.spawnSync)("sleep", ["1.5"], { timeout: 3e3 });
+        (0, import_node_child_process8.spawnSync)("sleep", ["1.5"], { timeout: 3e3 });
       }
     }
     return { ok: true, data: { restored, skipped, total: targetSessions.length } };
@@ -6619,12 +7117,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs16 = require("node:fs");
+var import_node_fs19 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs16.existsSync)(filePath)) {
+  if (!(0, import_node_fs19.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs16.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs19.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -6717,7 +7215,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs16.existsSync) ?? null;
+  return candidates.find(import_node_fs19.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -6740,17 +7238,17 @@ var STATUS_COLORS = {
 };
 function resolveBunPath() {
   try {
-    const result = (0, import_node_child_process8.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
+    const result = (0, import_node_child_process9.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
     if (result.stdout?.trim()) return result.stdout.trim();
   } catch {
   }
   const home = process.env.HOME ?? "/data/data/com.termux/files/home";
   const candidates = [
-    (0, import_node_path9.join)(home, ".bun", "bin", "bun"),
-    (0, import_node_path9.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
+    (0, import_node_path12.join)(home, ".bun", "bin", "bun"),
+    (0, import_node_path12.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
   ];
   for (const p of candidates) {
-    if ((0, import_node_fs17.existsSync)(p)) return p;
+    if ((0, import_node_fs20.existsSync)(p)) return p;
   }
   return process.argv[0];
 }
@@ -6827,9 +7325,9 @@ async function runBoot() {
     } catch {
       logDir = `${process.env.HOME}/.local/share/tmx/logs`;
     }
-    (0, import_node_fs17.mkdirSync)(logDir, { recursive: true });
+    (0, import_node_fs20.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
-    const stderrFd = (0, import_node_fs17.openSync)(stderrPath, "a");
+    const stderrFd = (0, import_node_fs20.openSync)(stderrPath, "a");
     const daemonEnv = { ...process.env };
     delete daemonEnv.CLAUDECODE;
     for (const key of Object.keys(daemonEnv)) {
@@ -6838,13 +7336,13 @@ async function runBoot() {
       }
     }
     const bunPath = resolveBunPath();
-    const child = (0, import_node_child_process8.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
+    const child = (0, import_node_child_process9.spawn)(bunPath, [process.argv[1], ...daemonArgs], {
       detached: true,
       stdio: ["ignore", "ignore", stderrFd],
       env: daemonEnv
     });
     child.unref();
-    (0, import_node_fs17.closeSync)(stderrFd);
+    (0, import_node_fs20.closeSync)(stderrFd);
     for (let i = 0; i < 20; i++) {
       await sleep3(500);
       if (await client.isRunning()) break;
@@ -6866,7 +7364,7 @@ async function runBoot() {
   }
   if (subArgs.includes("--attach")) {
     await sleep3(1e3);
-    const tmuxBin = (0, import_node_path9.join)(
+    const tmuxBin = (0, import_node_path12.join)(
       process.env.PREFIX ?? "/data/data/com.termux/files/usr",
       "bin",
       "tmux"
@@ -6881,7 +7379,7 @@ async function runBoot() {
 async function runUpgrade() {
   const configPath = getConfigFlag();
   const client = getClient(configPath);
-  const callerSession = process.env.TMUX ? (0, import_node_child_process8.spawnSync)("tmux", ["display-message", "-p", "#{session_name}"], {
+  const callerSession = process.env.TMUX ? (0, import_node_child_process9.spawnSync)("tmux", ["display-message", "-p", "#{session_name}"], {
     encoding: "utf-8",
     timeout: 3e3,
     stdio: ["ignore", "pipe", "ignore"]
@@ -6904,8 +7402,8 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
     }
   }
   console.log(`${CYAN}Building...${RESET2}`);
-  const buildResult = (0, import_node_child_process8.spawnSync)("bun", ["run", "build"], {
-    cwd: (0, import_node_path9.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+  const buildResult = (0, import_node_child_process9.spawnSync)("bun", ["run", "build"], {
+    cwd: (0, import_node_path12.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
     encoding: "utf-8",
     timeout: 3e4,
     stdio: ["ignore", "pipe", "pipe"]
@@ -6935,7 +7433,7 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
     process.exit(1);
   }
   console.log(`${GREEN}Daemon stopped${RESET2}`);
-  const watchdogCheck = (0, import_node_child_process8.spawnSync)("pgrep", ["-f", "watchdog.sh"], {
+  const watchdogCheck = (0, import_node_child_process9.spawnSync)("pgrep", ["-f", "watchdog.sh"], {
     timeout: 3e3,
     stdio: "ignore"
   });
@@ -6955,7 +7453,7 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
   const bootArgs = ["boot"];
   if (configPath) bootArgs.push("--config", configPath);
   const bunPath = resolveBunPath();
-  const bootResult = (0, import_node_child_process8.spawnSync)(bunPath, [process.argv[1], ...bootArgs], {
+  const bootResult = (0, import_node_child_process9.spawnSync)(bunPath, [process.argv[1], ...bootArgs], {
     encoding: "utf-8",
     timeout: 12e4,
     stdio: "inherit"
@@ -6965,8 +7463,8 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
 function printStartupDiagnostics(logDir, stderrPath) {
   console.error();
   try {
-    if ((0, import_node_fs17.existsSync)(stderrPath)) {
-      const stderr = (0, import_node_fs17.readFileSync)(stderrPath, "utf-8").trim();
+    if ((0, import_node_fs20.existsSync)(stderrPath)) {
+      const stderr = (0, import_node_fs20.readFileSync)(stderrPath, "utf-8").trim();
       if (stderr) {
         const lines = stderr.split("\n").slice(-20);
         console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET2}`);
@@ -6980,8 +7478,8 @@ function printStartupDiagnostics(logDir, stderrPath) {
   }
   try {
     const logFile = `${logDir}/tmx.jsonl`;
-    if ((0, import_node_fs17.existsSync)(logFile)) {
-      const content = (0, import_node_fs17.readFileSync)(logFile, "utf-8").trim();
+    if ((0, import_node_fs20.existsSync)(logFile)) {
+      const content = (0, import_node_fs20.readFileSync)(logFile, "utf-8").trim();
       if (content) {
         const entries = content.split("\n").slice(-10);
         console.error(`${YELLOW}Recent log entries:${RESET2}`);
@@ -7074,15 +7572,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs17.existsSync)(outDir)) {
-    (0, import_node_fs17.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs20.existsSync)(outDir)) {
+    (0, import_node_fs20.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs17.existsSync)(outPath)) {
+  if ((0, import_node_fs20.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs17.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs20.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs17.writeFileSync)(outPath, toml);
+    (0, import_node_fs20.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -7127,7 +7625,7 @@ async function runRecentOrIpc() {
     }
   }
   const home = process.env.HOME ?? "";
-  const historyPath = (0, import_node_path9.join)(home, ".claude", "history.jsonl");
+  const historyPath = (0, import_node_path12.join)(home, ".claude", "history.jsonl");
   const projects = parseRecentProjects(historyPath, 1e3);
   if (projects.length === 0) {
     console.log(`${DIM2}No recent projects found${RESET2}`);
@@ -7149,7 +7647,7 @@ async function runIpcCommand() {
     process.exit(1);
   }
   const socketPath = client.socketPath;
-  if (!(0, import_node_fs17.existsSync)(socketPath)) {
+  if (!(0, import_node_fs20.existsSync)(socketPath)) {
     console.log(`${DIM2}Socket missing (Termux crash?) \u2014 requesting daemon re-create it...${RESET2}`);
     try {
       await fetch("http://127.0.0.1:18970/api/fix-socket", { method: "POST" });
@@ -7157,9 +7655,9 @@ async function runIpcCommand() {
     }
     for (let i = 0; i < 5; i++) {
       await sleep3(500);
-      if ((0, import_node_fs17.existsSync)(socketPath)) break;
+      if ((0, import_node_fs20.existsSync)(socketPath)) break;
     }
-    if (!(0, import_node_fs17.existsSync)(socketPath)) {
+    if (!(0, import_node_fs20.existsSync)(socketPath)) {
       console.error(`${RED}Socket not re-created. Try: tmx shutdown && tmx boot${RESET2}`);
       process.exit(1);
     }
@@ -7471,7 +7969,7 @@ function getConfigFlag() {
   return void 0;
 }
 function sleep3(ms) {
-  return new Promise((resolve5) => setTimeout(resolve5, ms));
+  return new Promise((resolve6) => setTimeout(resolve6, ms));
 }
 function getFlag(args2, flag) {
   const idx = args2.indexOf(flag);
@@ -7527,7 +8025,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs17.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs20.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

@@ -8,7 +8,8 @@
 import type {
   DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject,
   CustomizationResponse, ScriptEntry, ProjectTokenUsage, ConversationPage,
-  TimelineEvent, McpServerInfo,
+  TimelineEvent, McpServerInfo, PromptSearchResult, DailyCost,
+  NotificationRecord, GitInfo, FileEntry, FileContentResponse,
 } from "./types";
 
 /** Callback type for state updates */
@@ -71,7 +72,7 @@ export class SseClient {
     };
 
     // Listen for known events
-    for (const event of ["state", "memory", "log", "connected"]) {
+    for (const event of ["state", "memory", "log", "connected", "conversation", "notification"]) {
       this.es.addEventListener(event, (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
@@ -448,6 +449,91 @@ export async function deleteMcpServer(name: string): Promise<void> {
 /** Toggle MCP server enable/disable */
 export async function toggleMcpServer(name: string): Promise<{ disabled: boolean }> {
   const res = await fetch(`/api/mcp/${encodeURIComponent(name)}/toggle`, { method: "POST" });
+  return checkedJson(res);
+}
+
+// -- Prompt library -----------------------------------------------------------
+
+/** Search/list prompts from history */
+export async function fetchPrompts(opts?: {
+  q?: string; starred?: boolean; project?: string; limit?: number; offset?: number;
+}): Promise<PromptSearchResult> {
+  const params = new URLSearchParams();
+  if (opts?.q) params.set("q", opts.q);
+  if (opts?.starred) params.set("starred", "true");
+  if (opts?.project) params.set("project", opts.project);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.offset) params.set("offset", String(opts.offset));
+  const qs = params.toString();
+  const res = await fetch(`/api/prompts${qs ? `?${qs}` : ""}`);
+  return checkedJson(res);
+}
+
+/** Star a prompt */
+export async function starPrompt(id: string): Promise<void> {
+  await checkedPost(`/api/prompts/${encodeURIComponent(id)}/star`);
+}
+
+/** Unstar a prompt */
+export async function unstarPrompt(id: string): Promise<void> {
+  const res = await fetch(`/api/prompts/${encodeURIComponent(id)}/star`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+}
+
+// -- Cost timeline ------------------------------------------------------------
+
+/** Fetch daily cost aggregation */
+export async function fetchCostTimeline(days = 14): Promise<DailyCost[]> {
+  const res = await fetch(`/api/cost-timeline?days=${days}`);
+  return checkedJson(res);
+}
+
+// -- Notification history -----------------------------------------------------
+
+/** Fetch notification history */
+export async function fetchNotifications(opts?: {
+  limit?: number; since?: string;
+}): Promise<NotificationRecord[]> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.since) params.set("since", opts.since);
+  const qs = params.toString();
+  const res = await fetch(`/api/notifications${qs ? `?${qs}` : ""}`);
+  return checkedJson(res);
+}
+
+// -- Git info -----------------------------------------------------------------
+
+/** Fetch git info for a session */
+export async function fetchGitInfo(name: string): Promise<GitInfo> {
+  const res = await fetch(`/api/git/${encodeURIComponent(name)}`);
+  return checkedJson(res);
+}
+
+/** Fetch file tree for a session */
+export async function fetchFileTree(name: string, subPath?: string): Promise<FileEntry[]> {
+  const params = subPath ? `?path=${encodeURIComponent(subPath)}` : "";
+  const res = await fetch(`/api/files/${encodeURIComponent(name)}${params}`);
+  return checkedJson(res);
+}
+
+/** Fetch file content for a session */
+export async function fetchFileContentForSession(
+  name: string, filePath: string,
+): Promise<FileContentResponse> {
+  const res = await fetch(`/api/file-content/${encodeURIComponent(name)}?path=${encodeURIComponent(filePath)}`);
+  return checkedJson(res);
+}
+
+/** Create a branch (resume session) */
+export async function branchSession(
+  name: string, sessionId: string,
+): Promise<{ ok: boolean; name?: string }> {
+  const res = await fetch(`/api/branch/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
   return checkedJson(res);
 }
 

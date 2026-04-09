@@ -33,7 +33,23 @@ import {
   readTimeline,
   resolveJsonlFiles,
   resolveActiveJsonl,
+  getConversationDelta,
+  getDailyCostTimeline,
 } from "./claude-session.js";
+import {
+  searchPrompts,
+  starPrompt,
+  unstarPrompt,
+} from "./prompts.js";
+import {
+  appendNotification,
+  readNotifications,
+} from "./notifications.js";
+import {
+  getGitInfo,
+  getFileTree,
+  getFileContent,
+} from "./git-info.js";
 import {
   createSession,
   sessionExists,
@@ -246,6 +262,8 @@ export class Daemon {
   private _prevSummaryContent = "";
   /** One-shot flag: service notifications cleaned up on first cycle */
   private _serviceNotifsCleared = false;
+  /** Last known conversation UUID per session — for delta detection */
+  private lastConversationUuids = new Map<string, string>();
   private adbSerial: string | null = null;
   private adbSerialExpiry = 0;
   /** Cached local IP for ADB self-identification */
@@ -432,6 +450,7 @@ export class Daemon {
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
       notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
+      appendNotification({ type: "daemon_start", title: "Daemon started", content: `${runningCount}/${sessionCount} sessions running` });
     }
 
     // Initial persistent status notification
@@ -529,6 +548,7 @@ export class Daemon {
     this.shutdownResolve?.();
     this.log.info("Shutdown complete");
     notify("tmx", "Orchestrator stopped");
+    appendNotification({ type: "daemon_stop", title: "Daemon stopped", content: "Graceful shutdown" });
   }
 
   // -- Session management -----------------------------------------------------
@@ -1227,6 +1247,7 @@ export class Daemon {
         this.state.transition(session.name, "failed",
           `Exceeded max restarts (${session.max_restarts})`);
         notify("tmx", `Session '${session.name}' failed — max restarts exceeded`, `tmx-fail-${session.name}`);
+        appendNotification({ type: "session_error", title: `Session '${session.name}' failed`, content: `Exceeded max restarts (${session.max_restarts})`, session: session.name });
         continue;
       }
 
@@ -1343,6 +1364,9 @@ export class Daemon {
     // Auto-suspend/resume based on memory pressure
     this.autoSuspendOnPressure(sysMem?.pressure ?? "normal");
 
+    // Push conversation deltas for claude sessions (live streaming)
+    this.pushConversationDeltas();
+
     // Push SSE update with combined state+memory
     this.pushSseState();
 
@@ -1384,6 +1408,7 @@ export class Daemon {
           }
         }
         notify("tmx", `Paused ${names.join(", ")} — memory ${pressure}`, `tmx-autosuspend`);
+        appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
       }
     } else if (pressure === "normal") {
       // Auto-resume sessions that were auto-suspended (not manually suspended)
@@ -1406,6 +1431,36 @@ export class Daemon {
     const statusResp = this.cmdStatus();
     if (statusResp.ok) {
       this.dashboard.pushEvent("state", statusResp.data);
+    }
+  }
+
+  /** Push conversation deltas for claude sessions via SSE (live streaming) */
+  private pushConversationDeltas(): void {
+    if (!this.dashboard || this.dashboard.sseClientCount === 0) return;
+
+    for (const cfg of this.config.sessions) {
+      if (cfg.type !== "claude" || !cfg.path) continue;
+      const s = this.state.getSession(cfg.name);
+      if (!s || s.status !== "running") continue;
+
+      try {
+        const lastUuid = this.lastConversationUuids.get(cfg.name) ?? null;
+        const delta = getConversationDelta(cfg.path, lastUuid, 10);
+        if (!delta || delta.entries.length === 0) continue;
+
+        // Track the newest UUID for next iteration
+        const newestUuid = delta.entries[delta.entries.length - 1].uuid;
+        this.lastConversationUuids.set(cfg.name, newestUuid);
+
+        // Push via SSE
+        this.dashboard.pushEvent("conversation", {
+          session: cfg.name,
+          entries: delta.entries,
+          session_id: delta.session_id,
+        });
+      } catch {
+        // Non-fatal — skip this session's delta
+      }
     }
   }
 
@@ -2160,8 +2215,17 @@ export class Daemon {
   /** Poll battery status, take action if critically low */
   private batteryPoll(): void {
     trace("battery:poll");
+    const prevActive = this.battery.actionsActive;
     const status = this.battery.checkAndAct();
     if (!status) return;
+
+    // Log battery_low notification when actions first trigger
+    if (this.battery.actionsActive && !prevActive) {
+      appendNotification({ type: "battery_low", title: "Battery critically low", content: `${status.percentage}%, not charging — radios disabled` });
+      if (this.dashboard && this.dashboard.sseClientCount > 0) {
+        this.dashboard.pushEvent("notification", { type: "battery_low", title: "Battery critically low", content: `${status.percentage}%` });
+      }
+    }
 
     // Update state for dashboard/status display
     this.state.updateBattery({
@@ -3262,6 +3326,119 @@ export class Daemon {
             return this.cmdMcpDelete(name);
           }
           return { status: 405, data: { error: "Method not allowed" } };
+        }
+        case "prompts": {
+          // GET /api/prompts?q=&starred=true&project=&limit=50&offset=0
+          // POST /api/prompts/:id/star — star a prompt
+          // DELETE /api/prompts/:id/star — unstar a prompt
+          const promptAction = segments[2] ? decodeURIComponent(segments[2]) : undefined;
+          if (promptAction === "star" && name) {
+            if (method === "POST") {
+              starPrompt(name);
+              return { status: 200, data: { ok: true } };
+            } else if (method === "DELETE") {
+              unstarPrompt(name);
+              return { status: 200, data: { ok: true } };
+            }
+            return { status: 405, data: { error: "Method not allowed" } };
+          }
+          // Search/list
+          const result = searchPrompts({
+            q: queryParams.get("q") ?? undefined,
+            starred: queryParams.get("starred") === "true",
+            project: queryParams.get("project") ?? undefined,
+            limit: parseInt(queryParams.get("limit") ?? "50", 10),
+            offset: parseInt(queryParams.get("offset") ?? "0", 10),
+          });
+          return { status: 200, data: result };
+        }
+        case "cost-timeline": {
+          // GET /api/cost-timeline?days=14
+          const days = parseInt(queryParams.get("days") ?? "14", 10);
+          try {
+            const allSessions: Array<{ name: string; path: string }> = [];
+            for (const cfg of this.config.sessions) {
+              if (cfg.type !== "claude" || !cfg.path) continue;
+              allSessions.push({ name: cfg.name, path: cfg.path });
+            }
+            for (const entry of this.registry.entries()) {
+              if (!entry.path) continue;
+              if (allSessions.some(s => s.path === entry.path)) continue;
+              allSessions.push({ name: entry.name, path: entry.path });
+            }
+            const timeline = await getDailyCostTimeline(allSessions, days);
+            return { status: 200, data: timeline };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to compute cost timeline: ${err}` } };
+          }
+        }
+        case "notifications": {
+          // GET /api/notifications?limit=50&since=iso
+          const nLimit = parseInt(queryParams.get("limit") ?? "50", 10);
+          const nSince = queryParams.get("since") ?? undefined;
+          try {
+            const records = readNotifications({ limit: nLimit, since: nSince });
+            return { status: 200, data: records };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read notifications: ${err}` } };
+          }
+        }
+        case "git": {
+          // GET /api/git/:name — git info for a session
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const gitPath = this.resolveSessionPath(name);
+          if (!gitPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          try {
+            const info = getGitInfo(gitPath);
+            return { status: 200, data: info };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read git info: ${err}` } };
+          }
+        }
+        case "files": {
+          // GET /api/files/:name?path=subdir — file tree for a session
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const filesPath = this.resolveSessionPath(name);
+          if (!filesPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const subdir = queryParams.get("path") ?? undefined;
+          try {
+            const tree = getFileTree(filesPath, subdir);
+            return { status: 200, data: tree };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read files: ${err}` } };
+          }
+        }
+        case "file-content": {
+          // GET /api/file-content/:name?path=src/index.ts — file content
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const fcPath = this.resolveSessionPath(name);
+          if (!fcPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const filePath = queryParams.get("path");
+          if (!filePath) return { status: 400, data: { error: "path query parameter required" } };
+          try {
+            const content = getFileContent(fcPath, filePath);
+            return { status: 200, data: content };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read file: ${err}` } };
+          }
+        }
+        case "branch": {
+          // POST /api/branch/:name { session_id } — create branched session via --resume
+          if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          try {
+            const parsed = JSON.parse(body) as { session_id: string };
+            if (!parsed.session_id) return { status: 400, data: { error: "session_id required" } };
+            // Create a new session name with suffix
+            const branchName = `${name}-branch-${Date.now().toString(36)}`;
+            const sessionPath = this.resolveSessionPath(name);
+            if (!sessionPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+            // Open a new session with the resume session ID
+            const openResp = await this.cmdOpen(sessionPath, branchName);
+            return { status: openResp.ok ? 200 : 400, data: openResp.ok ? { ok: true, name: branchName } : { error: openResp.error } };
+          } catch {
+            return { status: 400, data: { error: "Invalid JSON body" } };
+          }
         }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };

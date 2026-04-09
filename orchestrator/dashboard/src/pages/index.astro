@@ -8,6 +8,7 @@ import AdbStatus from "../components/AdbStatus.svelte";
 import ServiceStatus from "../components/ServiceStatus.svelte";
 import TokenSummary from "../components/TokenSummary.svelte";
 import RecentSessions from "../components/RecentSessions.svelte";
+import PromptLibrary from "../components/PromptLibrary.svelte";
 ---
 
 <Layout title="tmx dashboard" active="overview">
@@ -25,6 +26,12 @@ import RecentSessions from "../components/RecentSessions.svelte";
   <div class="card mb-4">
     <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Sessions</h2>
     <SessionTable client:load />
+  </div>
+
+  <!-- Prompt library -->
+  <div class="card mb-4">
+    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Prompt Library</h2>
+    <PromptLibrary client:load />
   </div>
 
   <!-- Recent projects from history -->

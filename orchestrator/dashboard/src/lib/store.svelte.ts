@@ -5,15 +5,21 @@
  */
 
 import { SseClient, fetchStatus } from "./api";
-import type { DaemonStatus } from "./types";
+import type { DaemonStatus, ConversationDelta, NotificationRecord } from "./types";
 
 /** Reactive store object — mutate properties, don't reassign */
 export const store = $state<{
   daemon: DaemonStatus | null;
   error: string | null;
+  /** Live conversation deltas pushed by daemon, keyed by session name */
+  conversationDeltas: Record<string, ConversationDelta> | null;
+  /** Latest notification pushed via SSE */
+  lastNotification: NotificationRecord | null;
 }>({
   daemon: null,
   error: null,
+  conversationDeltas: null,
+  lastNotification: null,
 });
 
 /** Re-fetch status on demand (e.g. after session actions) */
@@ -33,5 +39,14 @@ if (typeof window !== "undefined") {
   sse.on<DaemonStatus>("state", (data) => {
     store.daemon = data;
     store.error = null;
+  });
+
+  sse.on<ConversationDelta>("conversation", (data) => {
+    if (!store.conversationDeltas) store.conversationDeltas = {};
+    store.conversationDeltas[data.session] = data;
+  });
+
+  sse.on<NotificationRecord>("notification", (data) => {
+    store.lastNotification = data;
   });
 }

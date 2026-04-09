@@ -247,9 +247,13 @@
       </div>
     {:else}
       {#each prompts as prompt (prompt.id)}
-        <button
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
           class="prompt-item"
           onclick={() => handleSelect(prompt)}
+          onkeydown={(e) => { if (e.key === "Enter") handleSelect(prompt); }}
+          role="button"
+          tabindex="0"
           title={prompt.display}
         >
           <div class="prompt-text">{truncate(prompt.display, 120)}</div>
@@ -260,7 +264,7 @@
               <span class="prompt-session">{prompt.sessionId.slice(0, 6)}</span>
             {/if}
           </div>
-          <!-- Star toggle (stop propagation so click doesn't fire onselect) -->
+          <!-- Star toggle -->
           <button
             class="star-btn"
             class:starred={prompt.starred}
@@ -269,7 +273,7 @@
           >
             {prompt.starred ? "\u2605" : "\u2606"}
           </button>
-        </button>
+        </div>
       {/each}
 
       {#if hasMore}

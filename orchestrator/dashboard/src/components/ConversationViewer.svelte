@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { fetchConversation, sendToSession } from "../lib/api";
+  import { fetchConversation, sendToSession, branchSession } from "../lib/api";
   import { store } from "../lib/store.svelte";
   import type { ConversationPage, ConversationEntry, ConversationBlock } from "../lib/types";
+  import PromptLibrary from "./PromptLibrary.svelte";
 
   /** Session name (tmx) to load conversation for */
   interface Props {
@@ -23,6 +24,27 @@
   // Expanded blocks (keyed by entry uuid + block index)
   let expandedBlocks = $state(new Set<string>());
 
+  // Prompt library dropdown
+  let showLibrary = $state(false);
+
+  // Message recall (arrow key history)
+  let sentMessages: string[] = $state([]);
+  let recallIndex = $state(-1);
+  let savedDraft = $state("");
+  const RECALL_STORAGE_KEY = `tmx-recall-${sessionName}`;
+
+  // Template pills for quick prompts
+  const TEMPLATE_PILLS = [
+    "review this code",
+    "explain the bug",
+    "write tests for",
+    "refactor to be more",
+    "summarize changes",
+    "create PR description",
+    "fix failing test",
+    "add error handling to",
+  ];
+
   /** Claude status from SSE store */
   const claudeStatus = $derived(
     store.daemon?.sessions.find(s => s.name === sessionName)?.claude_status ?? null
@@ -40,7 +62,6 @@
   /** Format cost badge */
   function fmtCost(usage: ConversationEntry["usage"]): string {
     if (!usage) return "";
-    // Approximate cost using same pricing as claude-session.ts
     const cost = (usage.input * 15 + usage.output * 75 + usage.cache_read * 1.5 + usage.cache_create * 18.75) / 1_000_000;
     if (cost < 0.001) return "";
     if (cost < 0.01) return "<1c";
@@ -53,7 +74,6 @@
     } else {
       expandedBlocks.add(key);
     }
-    // Trigger reactivity
     expandedBlocks = new Set(expandedBlocks);
   }
 
@@ -68,7 +88,6 @@
       if (!selectedSessionId && page.session_id) {
         selectedSessionId = page.session_id;
       }
-      // Scroll to bottom after load
       requestAnimationFrame(() => {
         if (scrollContainer) {
           scrollContainer.scrollTop = scrollContainer.scrollHeight;
@@ -90,7 +109,6 @@
         before: page.oldest_uuid,
         limit: 20,
       });
-      // Prepend older entries
       page = {
         ...older,
         entries: [...older.entries, ...page.entries],
@@ -114,8 +132,14 @@
     sending = true;
     try {
       await sendToSession(sessionName, text);
+      // Add to recall history (keep last 50)
+      sentMessages = [...sentMessages.filter(m => m !== text), text].slice(-50);
+      try {
+        localStorage.setItem(RECALL_STORAGE_KEY, JSON.stringify(sentMessages));
+      } catch { /* quota exceeded */ }
       promptText = "";
-      // Reload conversation after a brief delay to show the sent message
+      recallIndex = -1;
+      savedDraft = "";
       setTimeout(() => loadConversation(selectedSessionId), 1000);
     } catch (e: any) {
       error = `Send failed: ${e.message}`;
@@ -128,6 +152,37 @@
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendPrompt();
+      return;
+    }
+
+    // Message recall: ArrowUp/ArrowDown when input is empty or in recall mode
+    if (e.key === "ArrowUp" && (promptText === "" || recallIndex >= 0)) {
+      e.preventDefault();
+      if (recallIndex < 0) {
+        savedDraft = promptText;
+      }
+      const newIdx = Math.min(recallIndex + 1, sentMessages.length - 1);
+      if (newIdx >= 0 && newIdx < sentMessages.length) {
+        recallIndex = newIdx;
+        promptText = sentMessages[sentMessages.length - 1 - newIdx];
+      }
+      return;
+    }
+    if (e.key === "ArrowDown" && recallIndex >= 0) {
+      e.preventDefault();
+      recallIndex--;
+      if (recallIndex < 0) {
+        promptText = savedDraft;
+      } else {
+        promptText = sentMessages[sentMessages.length - 1 - recallIndex];
+      }
+      return;
+    }
+    if (e.key === "Escape" && recallIndex >= 0) {
+      e.preventDefault();
+      recallIndex = -1;
+      promptText = savedDraft;
+      return;
     }
   }
 
@@ -139,8 +194,59 @@
     }
   }
 
+  /** Insert template/library text into prompt */
+  function insertPrompt(text: string) {
+    promptText = promptText ? `${promptText} ${text}` : text;
+    showLibrary = false;
+  }
+
+  /** Branch from an assistant message */
+  async function handleBranch(entry: ConversationEntry) {
+    if (!page?.session_id) return;
+    try {
+      const result = await branchSession(sessionName, page.session_id);
+      if (result.ok && result.name) {
+        error = null;
+        // Could open new tab — for now just notify
+        alert(`Branched session: ${result.name}`);
+      }
+    } catch (e: any) {
+      error = `Branch failed: ${e.message}`;
+    }
+  }
+
+  // Live conversation updates from SSE
+  $effect(() => {
+    const delta = store.conversationDeltas?.[sessionName];
+    if (!delta || !page || delta.entries.length === 0) return;
+
+    // Dedup: only add entries with UUIDs not already present
+    const existingUuids = new Set(page.entries.map(e => e.uuid));
+    const newEntries = delta.entries.filter(e => !existingUuids.has(e.uuid));
+    if (newEntries.length === 0) return;
+
+    page = {
+      ...page,
+      entries: [...page.entries, ...newEntries],
+    };
+
+    // Auto-scroll if near bottom
+    requestAnimationFrame(() => {
+      if (!scrollContainer) return;
+      const distFromBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight;
+      if (distFromBottom < 100) {
+        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      }
+    });
+  });
+
   $effect(() => {
     if (typeof window === "undefined") return;
+    // Load recall history from localStorage
+    try {
+      const stored = localStorage.getItem(RECALL_STORAGE_KEY);
+      if (stored) sentMessages = JSON.parse(stored);
+    } catch { /* ignore */ }
     loadConversation();
   });
 </script>
@@ -156,6 +262,26 @@
           </option>
         {/each}
       </select>
+    </div>
+  {/if}
+
+  <!-- Template pills row -->
+  <div class="template-row">
+    {#each TEMPLATE_PILLS as pill}
+      <button class="template-pill" onclick={() => insertPrompt(pill)}>{pill}</button>
+    {/each}
+    <button
+      class="template-pill library-btn"
+      class:active={showLibrary}
+      onclick={() => showLibrary = !showLibrary}
+      title="Prompt Library"
+    >&#x1F4D6;</button>
+  </div>
+
+  <!-- Prompt library dropdown -->
+  {#if showLibrary}
+    <div class="library-dropdown">
+      <PromptLibrary compact onselect={insertPrompt} />
     </div>
   {/if}
 
@@ -221,10 +347,10 @@
               {#if fmtCost(entry.usage)}
                 <span class="cost-badge">{fmtCost(entry.usage)}</span>
               {/if}
+              <button class="branch-btn" onclick={() => handleBranch(entry)} title="Branch from here">&#x2387;</button>
             </div>
           </div>
         {:else if entry.type === "tool_result"}
-          <!-- Tool result continuation (collapsed by default) -->
           <div class="msg msg-tool-result">
             {#each (entry.blocks ?? []) as block, idx (`${entry.uuid}-${idx}`)}
               {#if block.type === "tool_result"}
@@ -244,6 +370,11 @@
       {/each}
     {/if}
   </div>
+
+  <!-- Recall indicator -->
+  {#if recallIndex >= 0}
+    <div class="recall-hint">history {recallIndex + 1}/{sentMessages.length} (Esc to cancel)</div>
+  {/if}
 
   <!-- Prompt input bar -->
   <div class="prompt-bar">
@@ -291,6 +422,49 @@
     border: 1px solid var(--border);
     border-radius: 4px;
     padding: 0.375rem 0.5rem;
+  }
+
+  /* Template pills */
+  .template-row {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.375rem 0.75rem;
+    overflow-x: auto;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+  .template-row::-webkit-scrollbar { display: none; }
+  .template-pill {
+    flex-shrink: 0;
+    font-size: 0.5625rem;
+    font-family: inherit;
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0.1875rem 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .template-pill:hover {
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+  }
+  .library-btn { font-size: 0.6875rem; padding: 0.125rem 0.375rem; }
+  .library-btn.active {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+  }
+
+  /* Library dropdown */
+  .library-dropdown {
+    max-height: 240px;
+    overflow-y: auto;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
 
   /* Message list */
@@ -378,6 +552,19 @@
   }
   .cost-badge { color: var(--accent-green); }
 
+  /* Branch button */
+  .branch-btn {
+    font-size: 0.625rem;
+    color: var(--text-muted);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 0.125rem;
+    opacity: 0.4;
+    font-family: inherit;
+  }
+  .branch-btn:hover { opacity: 1; color: var(--accent-purple, #a78bfa); }
+
   /* Content blocks */
   .block-text {
     font-size: 0.75rem;
@@ -451,6 +638,16 @@
     font-family: "SF Mono", "Cascadia Code", monospace;
   }
 
+  /* Recall hint */
+  .recall-hint {
+    font-size: 0.5625rem;
+    color: var(--text-muted);
+    padding: 0.125rem 0.75rem;
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
   /* Prompt bar */
   .prompt-bar {
     flex-shrink: 0;
@@ -513,5 +710,6 @@
     .msg { max-width: 95%; }
     .user-content, .block-text { font-size: 0.6875rem; }
     .prompt-input { font-size: 0.6875rem; }
+    .template-pill { font-size: 0.5rem; }
   }
 </style>

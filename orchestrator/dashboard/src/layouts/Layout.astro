@@ -1,4 +1,6 @@
 ---
+import NotificationBell from "../components/NotificationBell.svelte";
+
 interface Props {
   title?: string;
   active?: string;
@@ -30,13 +32,16 @@ const navItems = [
           <span class="text-[var(--accent-blue)] font-bold text-sm">tmx</span>
           <span class="text-[var(--text-muted)] text-xs">dashboard</span>
         </div>
-        <nav class="flex gap-1">
-          {navItems.map((item) => (
-            <a href={item.href} class:list={[active === item.id && "active"]}>
-              {item.label}
-            </a>
-          ))}
-        </nav>
+        <div class="flex items-center gap-2">
+          <nav class="flex gap-1">
+            {navItems.map((item) => (
+              <a href={item.href} class:list={[active === item.id && "active"]}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <NotificationBell client:load />
+        </div>
       </div>
     </header>
     <main class="max-w-5xl mx-auto main-content">

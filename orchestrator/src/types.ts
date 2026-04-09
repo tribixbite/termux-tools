@@ -369,6 +369,90 @@ export interface TimelineEvent {
   detail?: string;
 }
 
+// -- Prompt library -----------------------------------------------------------
+
+/** A single prompt from history.jsonl */
+export interface PromptEntry {
+  id: string;
+  display: string;
+  timestamp: number;
+  project: string;
+  sessionId?: string;
+  starred: boolean;
+}
+
+/** Paginated prompt search result */
+export interface PromptSearchResult {
+  prompts: PromptEntry[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+// -- Daily cost timeline ------------------------------------------------------
+
+/** Aggregated cost data for a single day */
+export interface DailyCost {
+  date: string;
+  input_cost: number;
+  output_cost: number;
+  cache_cost: number;
+  total_cost: number;
+  turns: number;
+  sessions: Array<{ session_id: string; name: string; cost: number }>;
+}
+
+// -- Conversation delta (live streaming) --------------------------------------
+
+/** New conversation entries pushed via SSE */
+export interface ConversationDelta {
+  session: string;
+  entries: ConversationEntry[];
+  session_id: string;
+}
+
+// -- Notification history -----------------------------------------------------
+
+/** Notification types emitted by the daemon */
+export type NotificationType =
+  | "session_start" | "session_stop" | "session_error"
+  | "battery_low" | "memory_pressure"
+  | "daemon_start" | "daemon_stop";
+
+/** A single notification record */
+export interface NotificationRecord {
+  id: string;
+  timestamp: string;
+  type: NotificationType;
+  title: string;
+  content: string;
+  session?: string;
+}
+
+// -- Git info -----------------------------------------------------------------
+
+/** Git repository status for a session */
+export interface GitInfo {
+  branch: string;
+  dirty_files: string[];
+  recent_commits: Array<{ hash: string; message: string }>;
+}
+
+/** File entry in a directory listing */
+export interface FileEntry {
+  name: string;
+  type: "file" | "directory";
+  size?: number;
+}
+
+/** File content response */
+export interface FileContentResponse {
+  content: string;
+  language: string;
+  size: number;
+  truncated: boolean;
+}
+
 // -- Dependency graph ---------------------------------------------------------
 
 /** Batch of sessions that can start in parallel */

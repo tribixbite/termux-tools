@@ -9,6 +9,8 @@
   import ScriptRunner from "./ScriptRunner.svelte";
   import SessionTimeline from "./SessionTimeline.svelte";
   import ConversationDrawer from "./ConversationDrawer.svelte";
+  import GitPanel from "./GitPanel.svelte";
+  import FileExplorer from "./FileExplorer.svelte";
 
   let expandedSession: string | null = $state(null);
   let actionError: string | null = $state(null);
@@ -175,6 +177,10 @@
             <SessionCard {session} />
             {#if session.type === "claude"}
               <SessionTimeline sessionName={session.name} />
+            {/if}
+            {#if session.path}
+              <GitPanel sessionName={session.name} />
+              <FileExplorer sessionName={session.name} />
             {/if}
           </td></tr>
         {/if}
