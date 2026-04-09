@@ -4718,6 +4718,11 @@ var Daemon = class _Daemon {
         }
         notify("tmx", `Paused ${names.join(", ")} \u2014 memory ${pressure}`, `tmx-autosuspend`);
         appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
+        fetch("http://127.0.0.1:18963/memory-pressure", {
+          method: "POST",
+          signal: AbortSignal.timeout(3e3)
+        }).catch(() => {
+        });
       }
     } else if (pressure === "normal") {
       const sessions = this.state.getState().sessions;
@@ -5999,6 +6004,21 @@ var Daemon = class _Daemon {
             }
             this.log.warn("TermuxService bridge start failed", { stderr: svcResult.stderr?.slice(0, 200) });
             return { status: 500, data: { error: "TermuxService intent failed", stderr: svcResult.stderr?.slice(0, 200) } };
+          }
+          if (method === "POST" && name === "memory-pressure") {
+            try {
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 3e3);
+              const resp2 = await fetch("http://127.0.0.1:18963/memory-pressure", {
+                method: "POST",
+                signal: ctrl.signal
+              });
+              clearTimeout(t);
+              const data = await resp2.json();
+              return { status: 200, data };
+            } catch {
+              return { status: 502, data: { error: "Bridge not reachable" } };
+            }
           }
           if (method === "POST" && name !== "termux-service") {
             try {

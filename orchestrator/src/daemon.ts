@@ -1409,6 +1409,10 @@ export class Daemon {
         }
         notify("tmx", `Paused ${names.join(", ")} — memory ${pressure}`, `tmx-autosuspend`);
         appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
+        // Nudge Edge renderers to GC via CFC bridge CDP (non-blocking, best-effort)
+        fetch("http://127.0.0.1:18963/memory-pressure", {
+          method: "POST", signal: AbortSignal.timeout(3000),
+        }).catch(() => {});
       }
     } else if (pressure === "normal") {
       // Auto-resume sessions that were auto-suspended (not manually suspended)
@@ -2939,6 +2943,22 @@ export class Daemon {
             }
             this.log.warn("TermuxService bridge start failed", { stderr: svcResult.stderr?.slice(0, 200) });
             return { status: 500, data: { error: "TermuxService intent failed", stderr: svcResult.stderr?.slice(0, 200) } };
+          }
+
+          // POST /api/bridge/memory-pressure — trigger CDP Memory.simulatePressureNotification
+          if (method === "POST" && name === "memory-pressure") {
+            try {
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 3000);
+              const resp = await fetch("http://127.0.0.1:18963/memory-pressure", {
+                method: "POST", signal: ctrl.signal,
+              });
+              clearTimeout(t);
+              const data = await resp.json();
+              return { status: 200, data };
+            } catch {
+              return { status: 502, data: { error: "Bridge not reachable" } };
+            }
           }
 
           if (method === "POST" && name !== "termux-service") {

@@ -873,6 +873,43 @@ class CdpManager {
     };
   }
 
+  /**
+   * Send Memory.simulatePressureNotification to all page renderers to force GC
+   * and release cached resources. Called after tab close or on demand via /memory-pressure.
+   * Uses "moderate" level to trigger GC without killing renderers.
+   */
+  async simulateMemoryPressure(): Promise<{ targeted: number; errors: number }> {
+    if (!this.isAvailable()) return { targeted: 0, errors: 0 };
+    await this.refreshTargets();
+    const pages = this.cachedTargets.filter((t) => t.type === "page");
+    let targeted = 0;
+    let errors = 0;
+    for (const page of pages) {
+      try {
+        // Attach if not already attached
+        let sessionId = this.sessionMap.get(page.targetId);
+        if (!sessionId) {
+          const attach = await this.sendCommand("Target.attachToTarget", {
+            targetId: page.targetId, flatten: true,
+          }) as { sessionId: string };
+          sessionId = attach.sessionId;
+          this.sessionMap.set(page.targetId, sessionId);
+        }
+        await this.sendCommand("Memory.simulatePressureNotification", {
+          level: "moderate",
+        }, sessionId);
+        targeted++;
+      } catch (err) {
+        log("debug", `CDP: memory pressure failed for ${page.url} — ${(err as Error).message}`);
+        errors++;
+      }
+    }
+    if (targeted > 0) {
+      log("info", `CDP: sent memory pressure to ${targeted} page renderer(s)`);
+    }
+    return { targeted, errors };
+  }
+
   /** Schedule exponential backoff reconnect: 2s, 4s, 8s, 16s, max 30s */
   private scheduleExpBackoff(): void {
     if (this.backoffTimer) return; // already scheduled
@@ -1747,6 +1784,15 @@ const server: BridgeServer = createBridgeServer({
       );
     }
 
+    // Trigger GC on all page renderers via CDP Memory.simulatePressureNotification
+    if (url.pathname === "/memory-pressure" && req.method === "POST") {
+      const result = await cdpManager.simulateMemoryPressure();
+      return new Response(
+        JSON.stringify(result),
+        { headers: { "Content-Type": "application/json" } }
+      );
+    }
+
     // GIF encoding endpoint — accepts JSON {frames: [{data, ts}], delay?, maxWidth?}
     if (url.pathname === "/gif" && req.method === "POST") {
       try {
@@ -2035,6 +2081,13 @@ const server: BridgeServer = createBridgeServer({
         if (parsed.type === "ping") {
           ws.send(JSON.stringify({ type: "pong" }));
           return;
+        }
+
+        // Tab removed — trigger CDP memory pressure on surviving renderers after a short delay
+        // to let the browser finish tearing down the closed renderer process
+        if (parsed.type === "tab_removed") {
+          log("info", `Tab ${parsed.tabId} removed (mcp=${parsed.wasMcpTab}), scheduling memory pressure`);
+          setTimeout(() => cdpManager.simulateMemoryPressure(), 2000);
         }
 
         // Cache tab URLs from tabs_context_mcp responses for CDP target mapping

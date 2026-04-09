@@ -943,6 +943,7 @@ function broadcastState() {
 // --- Tab tracking ------------------------------------------------------------
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const wasMcpTab = mcpTabGroup.has(tabId);
   mcpTabGroup.delete(tabId);
   networkRequests.delete(tabId);
   tabQueues.delete(tabId);
@@ -953,6 +954,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     try { port.disconnect(); } catch {}
   }
   contentPorts.delete(tabId);
+  // Notify bridge so it can trigger CDP memory pressure on surviving renderers
+  sendMessage({ type: "tab_removed", tabId, wasMcpTab });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
