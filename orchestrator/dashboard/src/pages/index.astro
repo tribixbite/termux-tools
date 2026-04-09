@@ -29,10 +29,7 @@ import PromptLibrary from "../components/PromptLibrary.svelte";
   </div>
 
   <!-- Prompt library -->
-  <div class="card mb-4">
-    <h2 class="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide mb-3">Prompt Library</h2>
-    <PromptLibrary client:load />
-  </div>
+  <PromptLibrary client:load />
 
   <!-- Recent projects from history -->
   <RecentSessions client:load />

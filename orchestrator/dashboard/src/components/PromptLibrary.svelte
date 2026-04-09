@@ -16,7 +16,7 @@
 
   let searchInput = $state("");
   let debouncedQuery = $state("");
-  let debounceTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let showStarred = $state(false);
   let selectedProject = $state("");
 
