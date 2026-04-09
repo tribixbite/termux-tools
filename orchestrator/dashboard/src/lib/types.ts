@@ -190,6 +190,80 @@ export interface MarketplaceInfo {
   available: MarketplacePlugin[];
 }
 
+// -- Token tracking -----------------------------------------------------------
+
+/** Token usage for a single Claude session JSONL file */
+export interface SessionTokenUsage {
+  session_id: string;
+  jsonl_path: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  turns: number;
+  cost_usd: number;
+  file_size_bytes: number;
+  last_modified: string;
+}
+
+/** Aggregated token usage for a project (all JSONL files) */
+export interface ProjectTokenUsage {
+  name: string;
+  path: string;
+  sessions: SessionTokenUsage[];
+  total: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    turns: number;
+    cost_usd: number;
+  };
+}
+
+// -- Conversation viewer ------------------------------------------------------
+
+/** A single structured block within an assistant message */
+export interface ConversationBlock {
+  type: "text" | "thinking" | "tool_use" | "tool_result";
+  text?: string;
+  tool_name?: string;
+  tool_input?: string;
+  tool_result?: string;
+}
+
+/** A single conversation entry */
+export interface ConversationEntry {
+  uuid: string;
+  type: "user" | "assistant" | "tool_result";
+  timestamp: string;
+  content: string;
+  blocks?: ConversationBlock[];
+  usage?: { input: number; output: number; cache_read: number; cache_create: number };
+  model?: string;
+}
+
+/** Paginated conversation response */
+export interface ConversationPage {
+  entries: ConversationEntry[];
+  oldest_uuid: string | null;
+  has_more: boolean;
+  session_id: string;
+  session_list: Array<{ id: string; last_modified: string }>;
+}
+
+// -- Session timeline ---------------------------------------------------------
+
+/** A single event in the session timeline */
+export interface TimelineEvent {
+  timestamp: string;
+  source: "trace" | "conversation" | "state";
+  event: string;
+  detail?: string;
+}
+
+// -- Customization / Settings types ------------------------------------------
+
 /** Full customization response from /api/customization */
 export interface CustomizationResponse {
   mcpServers: McpServerInfo[];

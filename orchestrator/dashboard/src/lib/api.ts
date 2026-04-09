@@ -5,7 +5,11 @@
  * fetch wrappers for REST endpoints.
  */
 
-import type { DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject, CustomizationResponse, ScriptEntry } from "./types";
+import type {
+  DaemonStatus, MemoryResponse, LogEntry, BridgeHealth, RecentProject,
+  CustomizationResponse, ScriptEntry, ProjectTokenUsage, ConversationPage,
+  TimelineEvent, McpServerInfo,
+} from "./types";
 
 /** Callback type for state updates */
 export type StateCallback = (data: DaemonStatus) => void;
@@ -361,6 +365,90 @@ export async function fetchFileContent(filePath: string): Promise<string> {
 /** Save file content (only .md files allowed) */
 export async function saveFileContent(path: string, content: string): Promise<void> {
   await checkedPost("/api/customization-file", JSON.stringify({ path, content }));
+}
+
+// -- Token tracking -----------------------------------------------------------
+
+/** Fetch token usage for all running Claude sessions */
+export async function fetchTokens(): Promise<ProjectTokenUsage[]> {
+  const res = await fetch("/api/tokens");
+  return checkedJson(res);
+}
+
+/** Fetch token usage for a specific session */
+export async function fetchSessionTokens(name: string): Promise<ProjectTokenUsage> {
+  const res = await fetch(`/api/tokens/${encodeURIComponent(name)}`);
+  return checkedJson(res);
+}
+
+// -- Conversation viewer ------------------------------------------------------
+
+/** Fetch paginated conversation entries for a session */
+export async function fetchConversation(
+  name: string,
+  opts?: { before?: string; limit?: number; session_id?: string },
+): Promise<ConversationPage> {
+  const params = new URLSearchParams();
+  if (opts?.before) params.set("before", opts.before);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.session_id) params.set("session_id", opts.session_id);
+  const qs = params.toString();
+  const res = await fetch(`/api/conversation/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`);
+  return checkedJson(res);
+}
+
+// -- Session timeline ---------------------------------------------------------
+
+/** Fetch timeline events for a session */
+export async function fetchTimeline(
+  name: string,
+  opts?: { since?: string; limit?: number },
+): Promise<TimelineEvent[]> {
+  const params = new URLSearchParams();
+  if (opts?.since) params.set("since", opts.since);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/timeline/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`);
+  return checkedJson(res);
+}
+
+// -- MCP CRUD -----------------------------------------------------------------
+
+/** Add a new MCP server */
+export async function addMcpServer(
+  name: string, command: string, args?: string[], env?: Record<string, string>,
+): Promise<void> {
+  await checkedPost("/api/mcp", JSON.stringify({ name, command, args, env }));
+}
+
+/** Update an existing MCP server */
+export async function updateMcpServer(
+  name: string, config: { command?: string; args?: string[]; env?: Record<string, string> },
+): Promise<void> {
+  const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+/** Delete an MCP server */
+export async function deleteMcpServer(name: string): Promise<void> {
+  const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
+    throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+}
+
+/** Toggle MCP server enable/disable */
+export async function toggleMcpServer(name: string): Promise<{ disabled: boolean }> {
+  const res = await fetch(`/api/mcp/${encodeURIComponent(name)}/toggle`, { method: "POST" });
+  return checkedJson(res);
 }
 
 /** Client-side blob download for a file */

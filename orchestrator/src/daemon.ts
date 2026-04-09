@@ -10,7 +10,7 @@
  */
 
 import { execSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, readFileSync, chmodSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, appendFileSync, writeFileSync, readFileSync, chmodSync, readdirSync, statSync, renameSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { TmxConfig, IpcCommand, IpcResponse, SessionConfig, SessionStatus } from "./types.js";
 import { loadConfig } from "./config.js";
@@ -27,6 +27,13 @@ import { BatteryMonitor } from "./battery.js";
 import { Registry, parseRecentProjects, findNamedSessions, deriveName, isValidName, nextSuffix } from "./registry.js";
 import type { RecentProject } from "./registry.js";
 import { DashboardServer } from "./http.js";
+import {
+  getProjectTokenUsage,
+  getConversationPage,
+  readTimeline,
+  resolveJsonlFiles,
+  resolveActiveJsonl,
+} from "./claude-session.js";
 import {
   createSession,
   sessionExists,
@@ -2629,14 +2636,142 @@ export class Daemon {
     }
   }
 
+  // -- MCP CRUD ---------------------------------------------------------------
+
+  /** Atomic JSON file write: write .tmp then rename */
+  private writeJsonFileAtomic(filePath: string, data: unknown): void {
+    const tmp = `${filePath}.tmp`;
+    writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    renameSync(tmp, filePath);
+  }
+
+  /** Get path to ~/.claude.json */
+  private get claudeJsonPath(): string {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    return join(home, ".claude.json");
+  }
+
+  /** Get path to settings.json (Claude Code settings) */
+  private get settingsJsonPath(): string {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    return join(home, ".claude", "settings.json");
+  }
+
+  /** Read ~/.claude.json, returning parsed object or empty default */
+  private readClaudeJson(): Record<string, unknown> {
+    try {
+      if (existsSync(this.claudeJsonPath)) {
+        return JSON.parse(readFileSync(this.claudeJsonPath, "utf-8")) as Record<string, unknown>;
+      }
+    } catch { /* fall through */ }
+    return {};
+  }
+
+  /** Add a new MCP server to ~/.claude.json */
+  private cmdMcpAdd(
+    serverName: string,
+    config: { command: string; args?: string[]; env?: Record<string, string> },
+  ): { status: number; data: unknown } {
+    try {
+      const data = this.readClaudeJson();
+      if (!data.mcpServers) data.mcpServers = {};
+      const servers = data.mcpServers as Record<string, unknown>;
+      if (servers[serverName]) {
+        return { status: 409, data: { error: `MCP server '${serverName}' already exists` } };
+      }
+      servers[serverName] = {
+        command: config.command,
+        args: config.args ?? [],
+        ...(config.env && Object.keys(config.env).length > 0 ? { env: config.env } : {}),
+      };
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true, servers: Object.keys(servers) } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to add MCP server: ${err}` } };
+    }
+  }
+
+  /** Update an existing MCP server in ~/.claude.json */
+  private cmdMcpUpdate(
+    serverName: string,
+    config: { command?: string; args?: string[]; env?: Record<string, string> },
+  ): { status: number; data: unknown } {
+    try {
+      const data = this.readClaudeJson();
+      const servers = (data.mcpServers ?? {}) as Record<string, Record<string, unknown>>;
+      if (!servers[serverName]) {
+        return { status: 404, data: { error: `MCP server '${serverName}' not found` } };
+      }
+      if (config.command !== undefined) servers[serverName].command = config.command;
+      if (config.args !== undefined) servers[serverName].args = config.args;
+      if (config.env !== undefined) {
+        if (Object.keys(config.env).length > 0) {
+          servers[serverName].env = config.env;
+        } else {
+          delete servers[serverName].env;
+        }
+      }
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to update MCP server: ${err}` } };
+    }
+  }
+
+  /** Delete an MCP server from ~/.claude.json */
+  private cmdMcpDelete(serverName: string): { status: number; data: unknown } {
+    try {
+      const data = this.readClaudeJson();
+      const servers = (data.mcpServers ?? {}) as Record<string, unknown>;
+      if (!servers[serverName]) {
+        return { status: 404, data: { error: `MCP server '${serverName}' not found` } };
+      }
+      delete servers[serverName];
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true, servers: Object.keys(servers) } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to delete MCP server: ${err}` } };
+    }
+  }
+
+  /** Toggle MCP server enable/disable in settings.json */
+  private cmdMcpToggle(serverName: string): { status: number; data: unknown } {
+    try {
+      let settings: Record<string, unknown> = {};
+      if (existsSync(this.settingsJsonPath)) {
+        try {
+          settings = JSON.parse(readFileSync(this.settingsJsonPath, "utf-8")) as Record<string, unknown>;
+        } catch { /* use empty */ }
+      }
+      const disabled = (settings.disabledMcpServers ?? []) as string[];
+      const idx = disabled.indexOf(serverName);
+      if (idx >= 0) {
+        // Re-enable: remove from disabled list
+        disabled.splice(idx, 1);
+      } else {
+        // Disable: add to disabled list
+        disabled.push(serverName);
+      }
+      settings.disabledMcpServers = disabled;
+      this.writeJsonFileAtomic(this.settingsJsonPath, settings);
+      return { status: 200, data: { ok: true, disabled: idx >= 0 ? false : true } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to toggle MCP server: ${err}` } };
+    }
+  }
+
   /** Map REST API paths to IPC command handlers */
   private async handleDashboardApi(
     method: string,
     path: string,
     body: string,
   ): Promise<{ status: number; data: unknown }> {
+    // Separate query string from path: /api/command/name?key=val
+    const [pathPart, queryPart] = path.split("?", 2);
+    const queryParams = new URLSearchParams(queryPart ?? "");
+
     // Extract path segments: /api/command/name
-    const segments = path.replace(/^\/api\//, "").split("/");
+    const segments = pathPart.replace(/^\/api\//, "").split("/");
     const command = segments[0];
     const name = segments[1] ? decodeURIComponent(segments[1]) : undefined;
 
@@ -3003,6 +3138,130 @@ export class Daemon {
             return { status: 405, data: { error: "Method not allowed" } };
           }
           break;
+        }
+        case "tokens": {
+          // GET /api/tokens — all running Claude sessions' token usage
+          // GET /api/tokens/:name — single session's token usage
+          if (name) {
+            const sessionPath = this.resolveSessionPath(name);
+            if (!sessionPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+            try {
+              const usage = await getProjectTokenUsage(name, sessionPath);
+              return { status: 200, data: usage };
+            } catch (err) {
+              return { status: 500, data: { error: `Failed to compute tokens: ${err}` } };
+            }
+          }
+          // All running Claude sessions
+          try {
+            const results = [];
+            for (const cfg of this.config.sessions) {
+              if (cfg.type !== "claude" || !cfg.path) continue;
+              const state = this.state.getSession(cfg.name);
+              if (!state || state.status === "stopped" || state.status === "failed") continue;
+              try {
+                results.push(await getProjectTokenUsage(cfg.name, cfg.path));
+              } catch { /* skip */ }
+            }
+            // Also check registry entries
+            for (const entry of this.registry.entries()) {
+              if (!entry.path) continue;
+              const state = this.state.getSession(entry.name);
+              if (!state || state.status === "stopped" || state.status === "failed") continue;
+              // Avoid duplicates from config sessions
+              if (results.some(r => r.path === entry.path)) continue;
+              try {
+                results.push(await getProjectTokenUsage(entry.name, entry.path));
+              } catch { /* skip */ }
+            }
+            return { status: 200, data: results };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to compute tokens: ${err}` } };
+          }
+        }
+        case "conversation": {
+          // GET /api/conversation/:name?before=<uuid>&limit=20&session_id=<uuid>
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const convPath = this.resolveSessionPath(name);
+          if (!convPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const beforeUuid = queryParams.get("before") ?? undefined;
+          const convLimit = parseInt(queryParams.get("limit") ?? "20", 10);
+          const sessionIdParam = queryParams.get("session_id") ?? undefined;
+          try {
+            const page = getConversationPage(convPath, sessionIdParam, convLimit, beforeUuid);
+            return { status: 200, data: page };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read conversation: ${err}` } };
+          }
+        }
+        case "timeline": {
+          // GET /api/timeline/:name?since=<iso>&limit=100
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const tlPath = this.resolveSessionPath(name);
+          const tracePath = join(this.config.orchestrator.log_dir, "trace.log");
+          let jsonlPath: string | undefined;
+          if (tlPath) {
+            const active = resolveActiveJsonl(tlPath);
+            if (active) jsonlPath = active.path;
+          }
+          const since = queryParams.get("since") ?? undefined;
+          const tlLimit = parseInt(queryParams.get("limit") ?? "100", 10);
+          try {
+            const events = readTimeline(name, tracePath, jsonlPath, since, tlLimit);
+            return { status: 200, data: events };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read timeline: ${err}` } };
+          }
+        }
+        case "mcp": {
+          // GET /api/mcp — list all MCP servers
+          // POST /api/mcp — add MCP server
+          // PUT /api/mcp/:name — update MCP server
+          // DELETE /api/mcp/:name — delete MCP server
+          // POST /api/mcp/:name/toggle — toggle enable/disable
+          if (method === "GET" && !name) {
+            const config = this.readClaudeJson();
+            const settingsData = existsSync(this.settingsJsonPath)
+              ? JSON.parse(readFileSync(this.settingsJsonPath, "utf-8")) : {};
+            const disabled: string[] = settingsData.disabledMcpServers ?? [];
+            const servers = Object.entries(config.mcpServers ?? {}).map(([n, cfg]: [string, any]) => ({
+              name: n,
+              command: cfg.command ?? "",
+              args: cfg.args ?? [],
+              env: cfg.env ?? {},
+              enabled: !disabled.includes(n),
+              source: "claude-json" as const,
+            }));
+            return { status: 200, data: { servers } };
+          }
+          const mcpAction = segments[2] ? decodeURIComponent(segments[2]) : undefined;
+          if (mcpAction === "toggle" && name) {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.cmdMcpToggle(name);
+          }
+          if (method === "POST" && !name) {
+            // Add new MCP server
+            try {
+              const parsed = JSON.parse(body) as { name: string; command: string; args?: string[]; env?: Record<string, string> };
+              if (!parsed.name || !parsed.command) return { status: 400, data: { error: "name and command required" } };
+              return this.cmdMcpAdd(parsed.name, parsed);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          }
+          if (method === "PUT" && name) {
+            // Update MCP server
+            try {
+              const parsed = JSON.parse(body) as { command?: string; args?: string[]; env?: Record<string, string> };
+              return this.cmdMcpUpdate(name, parsed);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          }
+          if (method === "DELETE" && name) {
+            return this.cmdMcpDelete(name);
+          }
+          return { status: 405, data: { error: "Method not allowed" } };
         }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command}` } };

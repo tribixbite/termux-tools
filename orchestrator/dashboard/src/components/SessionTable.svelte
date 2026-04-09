@@ -7,9 +7,13 @@
   import type { DaemonStatus, SessionState } from "../lib/types";
   import SessionCard from "./SessionCard.svelte";
   import ScriptRunner from "./ScriptRunner.svelte";
+  import SessionTimeline from "./SessionTimeline.svelte";
+  import ConversationDrawer from "./ConversationDrawer.svelte";
 
   let expandedSession: string | null = $state(null);
   let actionError: string | null = $state(null);
+  /** Session name for the conversation drawer (null = closed) */
+  let drawerSession: string | null = $state(null);
 
   /** Derived from shared store — no own SSE/fetch needed */
   const status = $derived<DaemonStatus | null>(store.daemon);
@@ -90,6 +94,11 @@
       actionError = `Close failed for ${name}: ${(err as Error).message}`;
     }
   }
+
+  function openDrawer(e: Event, name: string) {
+    e.stopPropagation();
+    drawerSession = name;
+  }
 </script>
 
 {#if error}
@@ -135,6 +144,9 @@
             {/if}
           </td>
           <td class="td-actions" onclick={(e) => e.stopPropagation()}>
+            {#if session.type === "claude"}
+              <button class="btn-icon chat" onclick={(e) => openDrawer(e, session.name)} title="Conversation">&#x2709;</button>
+            {/if}
             {#if session.status === "running" || session.status === "degraded"}
               <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
               <button class="btn-icon" onclick={(e) => handleAction(e, "restart", session.name)} title="Restart">&#x21BB;</button>
@@ -161,6 +173,9 @@
               <ScriptRunner sessionName={session.name} sessionPath={session.path} />
             {/if}
             <SessionCard {session} />
+            {#if session.type === "claude"}
+              <SessionTimeline sessionName={session.name} />
+            {/if}
           </td></tr>
         {/if}
       {/each}
@@ -168,6 +183,13 @@
   </table>
 {:else if !error}
   <p class="text-[var(--text-muted)] text-sm">Loading...</p>
+{/if}
+
+{#if drawerSession}
+  <ConversationDrawer
+    sessionName={drawerSession}
+    onclose={() => drawerSession = null}
+  />
 {/if}
 
 <style>
@@ -186,7 +208,7 @@
     padding: 0 0.375rem 0.5rem;
   }
   .th-rss { text-align: right; }
-  .th-actions { text-align: right; width: 7.5rem; }
+  .th-actions { text-align: right; width: 8.5rem; }
   .session-row {
     cursor: pointer;
     transition: background 0.15s;
@@ -270,6 +292,9 @@
     max-height: 4.5rem;
     overflow: hidden;
   }
+  /* Chat button */
+  .td-actions :global(.btn-icon.chat) { color: var(--accent-blue); opacity: 0.6; }
+  .td-actions :global(.btn-icon.chat:hover) { opacity: 1; background: rgba(88, 166, 255, 0.1); }
   /* Muted button for pause */
   .td-actions :global(.btn-icon.muted) { color: var(--text-muted); }
   .td-actions :global(.btn-icon.muted:hover) { background: rgba(255, 255, 255, 0.08); }

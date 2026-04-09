@@ -27,9 +27,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(require("fs").realpathSync(__filename)).href : void 0;
 
 // src/tmx.ts
-var import_node_fs15 = require("node:fs");
+var import_node_fs17 = require("node:fs");
 var import_node_child_process8 = require("node:child_process");
-var import_node_path8 = require("node:path");
+var import_node_path9 = require("node:path");
 
 // src/ipc.ts
 var net = __toESM(require("node:net"));
@@ -228,8 +228,8 @@ var IpcClient = class {
 
 // src/daemon.ts
 var import_node_child_process7 = require("node:child_process");
-var import_node_fs13 = require("node:fs");
-var import_node_path7 = require("node:path");
+var import_node_fs15 = require("node:fs");
+var import_node_path8 = require("node:path");
 
 // src/config.ts
 var import_node_fs2 = require("node:fs");
@@ -2722,7 +2722,7 @@ data: ${JSON.stringify(data)}
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
     const path = url.pathname;
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") {
       res.writeHead(204);
@@ -2735,7 +2735,8 @@ data: ${JSON.stringify(data)}
         return;
       }
       if (path.startsWith("/api/")) {
-        await this.handleApi(req, res, path);
+        const fullPath = path + url.search;
+        await this.handleApi(req, res, fullPath);
         return;
       }
       this.handleStatic(res, path);
@@ -2769,7 +2770,7 @@ data: ${JSON.stringify({ id: clientId })}
   /** Handle API request */
   async handleApi(req, res, path) {
     let body = "";
-    if (req.method === "POST") {
+    if (req.method === "POST" || req.method === "PUT" || req.method === "DELETE") {
       try {
         body = await new Promise((resolve5, reject) => {
           const chunks = [];
@@ -2905,6 +2906,445 @@ data: ${JSON.stringify({ id: clientId })}
   }
 };
 
+// src/claude-session.ts
+var import_node_fs13 = require("node:fs");
+var import_node_path7 = require("node:path");
+var import_node_fs14 = require("node:fs");
+var import_node_readline = require("node:readline");
+var HOME = process.env.HOME ?? "/data/data/com.termux/files/home";
+var CLAUDE_DIR = (0, import_node_path7.join)(HOME, ".claude");
+var PROJECTS_DIR = (0, import_node_path7.join)(CLAUDE_DIR, "projects");
+var HISTORY_PATH = (0, import_node_path7.join)(CLAUDE_DIR, "history.jsonl");
+var PRICING = {
+  input: 15,
+  // $15/M input tokens
+  output: 75,
+  // $75/M output tokens
+  cache_read: 1.5,
+  // $1.50/M cache read tokens
+  cache_creation: 18.75
+  // $18.75/M cache creation tokens
+};
+function manglePath(projectPath) {
+  return projectPath.replace(/[^a-zA-Z0-9]/g, "-");
+}
+function resolveJsonlFiles(projectPath) {
+  const mangled = manglePath(projectPath);
+  const dir = (0, import_node_path7.join)(PROJECTS_DIR, mangled);
+  if (!(0, import_node_fs13.existsSync)(dir)) return [];
+  const results = [];
+  try {
+    for (const entry of (0, import_node_fs13.readdirSync)(dir)) {
+      if (!entry.endsWith(".jsonl")) continue;
+      const fullPath = (0, import_node_path7.join)(dir, entry);
+      try {
+        const st = (0, import_node_fs13.statSync)(fullPath);
+        if (!st.isFile()) continue;
+        results.push({
+          id: entry.replace(".jsonl", ""),
+          path: fullPath,
+          mtime: st.mtimeMs,
+          size: st.size
+        });
+      } catch {
+      }
+    }
+  } catch {
+  }
+  results.sort((a, b) => b.mtime - a.mtime);
+  return results;
+}
+function resolveActiveJsonl(projectPath) {
+  const files = resolveJsonlFiles(projectPath);
+  if (files.length === 0) return null;
+  if ((0, import_node_fs13.existsSync)(HISTORY_PATH)) {
+    try {
+      const content = (0, import_node_fs13.readFileSync)(HISTORY_PATH, "utf-8");
+      const lines = content.trim().split("\n");
+      for (let i = lines.length - 1; i >= Math.max(0, lines.length - 500); i--) {
+        try {
+          const entry = JSON.parse(lines[i]);
+          if (entry.project === projectPath && entry.sessionId) {
+            const match = files.find((f) => f.id === entry.sessionId);
+            if (match) return match;
+          }
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  return files[0];
+}
+var tokenCache = /* @__PURE__ */ new Map();
+var TOKEN_CACHE_MAX = 10;
+function tokenCacheKey(path, mtime, size) {
+  return `${path}|${mtime}|${size}`;
+}
+function evictTokenCache() {
+  if (tokenCache.size <= TOKEN_CACHE_MAX) return;
+  let oldest = null;
+  let oldestTime = Infinity;
+  for (const [key, val] of tokenCache) {
+    if (val.accessTime < oldestTime) {
+      oldestTime = val.accessTime;
+      oldest = key;
+    }
+  }
+  if (oldest) tokenCache.delete(oldest);
+}
+function calculateCost(usage) {
+  return usage.input_tokens * PRICING.input / 1e6 + usage.output_tokens * PRICING.output / 1e6 + usage.cache_read_tokens * PRICING.cache_read / 1e6 + usage.cache_creation_tokens * PRICING.cache_creation / 1e6;
+}
+async function streamTokenUsage(jsonlPath) {
+  const st = (0, import_node_fs13.statSync)(jsonlPath);
+  const cacheKey = tokenCacheKey(jsonlPath, st.mtimeMs, st.size);
+  const cached = tokenCache.get(cacheKey);
+  if (cached) {
+    cached.accessTime = Date.now();
+    return cached.result;
+  }
+  const sessionId = (0, import_node_path7.basename)(jsonlPath, ".jsonl");
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+  let turns = 0;
+  let lineCount = 0;
+  return new Promise((resolve5, reject) => {
+    const rl = (0, import_node_readline.createInterface)({
+      input: (0, import_node_fs14.createReadStream)(jsonlPath, { encoding: "utf-8" }),
+      crlfDelay: Infinity
+    });
+    rl.on("line", (line) => {
+      lineCount++;
+      if (lineCount % 2e3 === 0) {
+        rl.pause();
+        setImmediate(() => rl.resume());
+      }
+      if (!line.includes('"type":"assistant"') && !line.includes('"type": "assistant"')) return;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== "assistant") return;
+        const usage = entry.message?.usage;
+        if (usage) {
+          inputTokens += usage.input_tokens ?? 0;
+          outputTokens += usage.output_tokens ?? 0;
+          cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+          cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
+        }
+        if (entry.message?.stop_reason) {
+          turns++;
+        }
+      } catch {
+      }
+    });
+    rl.on("close", () => {
+      const result = {
+        session_id: sessionId,
+        jsonl_path: jsonlPath,
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_read_tokens: cacheReadTokens,
+        cache_creation_tokens: cacheCreationTokens,
+        turns,
+        cost_usd: calculateCost({
+          input_tokens: inputTokens,
+          output_tokens: outputTokens,
+          cache_read_tokens: cacheReadTokens,
+          cache_creation_tokens: cacheCreationTokens
+        }),
+        file_size_bytes: st.size,
+        last_modified: new Date(st.mtimeMs).toISOString()
+      };
+      tokenCache.set(cacheKey, { result, accessTime: Date.now() });
+      evictTokenCache();
+      resolve5(result);
+    });
+    rl.on("error", reject);
+  });
+}
+async function getProjectTokenUsage(name, projectPath) {
+  const files = resolveJsonlFiles(projectPath);
+  const sessions = [];
+  for (const file of files) {
+    try {
+      const usage = await streamTokenUsage(file.path);
+      if (usage.turns > 0 || usage.output_tokens > 0) {
+        sessions.push(usage);
+      }
+    } catch {
+    }
+  }
+  const total = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_creation_tokens: 0,
+    turns: 0,
+    cost_usd: 0
+  };
+  for (const s of sessions) {
+    total.input_tokens += s.input_tokens;
+    total.output_tokens += s.output_tokens;
+    total.cache_read_tokens += s.cache_read_tokens;
+    total.cache_creation_tokens += s.cache_creation_tokens;
+    total.turns += s.turns;
+    total.cost_usd += s.cost_usd;
+  }
+  return { name, path: projectPath, sessions, total };
+}
+function truncate(s, max) {
+  if (s.length <= max) return s;
+  return s.slice(0, max - 3) + "...";
+}
+function extractUserContent(message) {
+  if (typeof message.content === "string") return message.content;
+  if (Array.isArray(message.content)) {
+    return message.content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n");
+  }
+  return "";
+}
+function parseAssistantBlocks(content) {
+  const blocks = [];
+  const textParts = [];
+  for (const block of content) {
+    switch (block.type) {
+      case "text":
+        blocks.push({ type: "text", text: block.text ?? "" });
+        textParts.push(block.text ?? "");
+        break;
+      case "thinking":
+        blocks.push({ type: "thinking", text: truncate(block.thinking ?? "", 500) });
+        break;
+      case "tool_use":
+        blocks.push({
+          type: "tool_use",
+          tool_name: block.name ?? "unknown",
+          tool_input: truncate(
+            typeof block.input === "string" ? block.input : JSON.stringify(block.input ?? {}),
+            200
+          )
+        });
+        break;
+      case "tool_result":
+        blocks.push({
+          type: "tool_result",
+          tool_result: truncate(
+            typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? ""),
+            1e3
+          )
+        });
+        break;
+    }
+  }
+  return { blocks, text: textParts.join("\n") };
+}
+function readConversationTail(jsonlPath, limit = 20, beforeUuid) {
+  if (!(0, import_node_fs13.existsSync)(jsonlPath)) return { entries: [], hasMore: false };
+  const st = (0, import_node_fs13.statSync)(jsonlPath);
+  if (st.size === 0) return { entries: [], hasMore: false };
+  const CHUNK_SIZE = 65536;
+  const fd = (0, import_node_fs13.openSync)(jsonlPath, "r");
+  const entries = [];
+  let reachedBeforeUuid = !beforeUuid;
+  let hasMore = false;
+  try {
+    let offset = st.size;
+    let remainder = "";
+    const linesToParse = [];
+    while (offset > 0 && linesToParse.length < limit * 10) {
+      const readSize = Math.min(CHUNK_SIZE, offset);
+      offset -= readSize;
+      const buf = Buffer.alloc(readSize);
+      (0, import_node_fs13.readSync)(fd, buf, 0, readSize, offset);
+      const chunk = buf.toString("utf-8") + remainder;
+      const lines = chunk.split("\n");
+      remainder = offset > 0 ? lines.shift() ?? "" : "";
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line) linesToParse.push(line);
+      }
+      if (linesToParse.length >= limit * 10) break;
+    }
+    if (remainder.trim()) {
+      linesToParse.push(remainder.trim());
+    }
+    const rawEntries = [];
+    for (const line of linesToParse) {
+      if (line.includes('"type":"file-history-snapshot"') || line.includes('"type": "file-history-snapshot"')) continue;
+      if (line.includes('"type":"progress"') || line.includes('"type": "progress"')) continue;
+      try {
+        const raw = JSON.parse(line);
+        if (!raw.uuid || !raw.type) continue;
+        if (raw.type === "user" && raw.message) {
+          const content = extractUserContent(raw.message);
+          if (!content && Array.isArray(raw.message.content)) {
+            const toolResults = raw.message.content.filter((b) => b.type === "tool_result");
+            if (toolResults.length > 0) {
+              const { blocks } = parseAssistantBlocks(raw.message.content);
+              rawEntries.push({
+                uuid: raw.uuid,
+                type: "tool_result",
+                timestamp: raw.timestamp ?? "",
+                entry: {
+                  uuid: raw.uuid,
+                  type: "tool_result",
+                  timestamp: raw.timestamp ?? "",
+                  content: "",
+                  blocks
+                }
+              });
+              continue;
+            }
+          }
+          if (!content) continue;
+          rawEntries.push({
+            uuid: raw.uuid,
+            type: "user",
+            timestamp: raw.timestamp ?? "",
+            entry: {
+              uuid: raw.uuid,
+              type: "user",
+              timestamp: raw.timestamp ?? "",
+              content
+            }
+          });
+        } else if (raw.type === "assistant" && raw.message) {
+          const contentArr = Array.isArray(raw.message.content) ? raw.message.content : [];
+          const { blocks, text } = parseAssistantBlocks(contentArr);
+          const usage = raw.message.usage;
+          rawEntries.push({
+            uuid: raw.uuid,
+            type: "assistant",
+            timestamp: raw.timestamp ?? "",
+            entry: {
+              uuid: raw.uuid,
+              type: "assistant",
+              timestamp: raw.timestamp ?? "",
+              content: text,
+              blocks,
+              usage: usage ? {
+                input: usage.input_tokens ?? 0,
+                output: usage.output_tokens ?? 0,
+                cache_read: usage.cache_read_input_tokens ?? 0,
+                cache_create: usage.cache_creation_input_tokens ?? 0
+              } : void 0,
+              model: raw.message.model
+            }
+          });
+        }
+      } catch {
+      }
+    }
+    for (const raw of rawEntries) {
+      if (!reachedBeforeUuid) {
+        if (raw.uuid === beforeUuid) {
+          reachedBeforeUuid = true;
+        }
+        continue;
+      }
+      entries.push(raw.entry);
+      if (entries.length >= limit) {
+        hasMore = true;
+        break;
+      }
+    }
+    if (!hasMore && entries.length < rawEntries.length - (beforeUuid ? 1 : 0)) {
+      hasMore = true;
+    }
+  } finally {
+    (0, import_node_fs13.closeSync)(fd);
+  }
+  entries.reverse();
+  return { entries, hasMore };
+}
+function getConversationPage(projectPath, sessionId, limit = 20, beforeUuid) {
+  const files = resolveJsonlFiles(projectPath);
+  const sessionList = files.map((f) => ({
+    id: f.id,
+    last_modified: new Date(f.mtime).toISOString()
+  }));
+  let jsonlFile = null;
+  if (sessionId) {
+    jsonlFile = files.find((f) => f.id === sessionId) ?? null;
+  }
+  if (!jsonlFile) {
+    jsonlFile = resolveActiveJsonl(projectPath);
+  }
+  if (!jsonlFile) {
+    return {
+      entries: [],
+      oldest_uuid: null,
+      has_more: false,
+      session_id: "",
+      session_list: sessionList
+    };
+  }
+  const { entries, hasMore } = readConversationTail(jsonlFile.path, limit, beforeUuid);
+  return {
+    entries,
+    oldest_uuid: entries.length > 0 ? entries[0].uuid : null,
+    has_more: hasMore,
+    session_id: jsonlFile.id,
+    session_list: sessionList
+  };
+}
+function readTimeline(sessionName, tracePath, jsonlPath, since, limit = 100) {
+  const events = [];
+  const sinceDate = since ? new Date(since) : null;
+  if ((0, import_node_fs13.existsSync)(tracePath)) {
+    try {
+      const content = (0, import_node_fs13.readFileSync)(tracePath, "utf-8");
+      const lines = content.split("\n");
+      const traceStat = (0, import_node_fs13.statSync)(tracePath);
+      const fileDate = new Date(traceStat.mtimeMs).toISOString().slice(0, 10);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line.includes(sessionName)) continue;
+        const timeMatch = line.match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s+(.+)/);
+        if (!timeMatch) continue;
+        const timestamp = `${fileDate}T${timeMatch[1]}Z`;
+        if (sinceDate && new Date(timestamp) < sinceDate) continue;
+        events.push({
+          timestamp,
+          source: "trace",
+          event: timeMatch[2].trim()
+        });
+        if (events.length >= limit * 2) break;
+      }
+    } catch {
+    }
+  }
+  if (jsonlPath && (0, import_node_fs13.existsSync)(jsonlPath)) {
+    try {
+      const content = (0, import_node_fs13.readFileSync)(jsonlPath, "utf-8");
+      const lines = content.split("\n");
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i];
+        if (!line.includes('"type":"user"') && !line.includes('"type": "user"')) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry.type !== "user" || !entry.timestamp) continue;
+          if (sinceDate && new Date(entry.timestamp) < sinceDate) continue;
+          const content2 = extractUserContent(entry.message ?? {});
+          events.push({
+            timestamp: entry.timestamp,
+            source: "conversation",
+            event: "User prompt",
+            detail: truncate(content2, 80)
+          });
+          if (events.length >= limit * 3) break;
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  events.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+  return events.slice(0, limit);
+}
+
 // src/daemon.ts
 var CLAUDE_WORKING_PATTERN = /esc to interrupt/;
 var ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
@@ -2928,7 +3368,7 @@ function cleanPaneOutput(raw, maxLines = 3) {
 function sleep2(ms) {
   return new Promise((resolve5) => setTimeout(resolve5, ms));
 }
-var TRACE_PATH = (0, import_node_path7.join)(
+var TRACE_PATH = (0, import_node_path8.join)(
   process.env.HOME ?? "/data/data/com.termux/files/home",
   ".local",
   "share",
@@ -2939,7 +3379,7 @@ var TRACE_PATH = (0, import_node_path7.join)(
 function trace(msg) {
   try {
     const ts = (/* @__PURE__ */ new Date()).toISOString().slice(11, 23);
-    (0, import_node_fs13.appendFileSync)(TRACE_PATH, `${ts} ${msg}
+    (0, import_node_fs15.appendFileSync)(TRACE_PATH, `${ts} ${msg}
 `);
   } catch {
   }
@@ -2951,12 +3391,12 @@ function resolveAdbPath() {
   } catch {
   }
   const candidates = [
-    (0, import_node_path7.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
-    (0, import_node_path7.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
+    (0, import_node_path8.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "adb"),
+    (0, import_node_path8.join)(process.env.HOME ?? "", "android-sdk", "platform-tools", "adb")
   ];
   for (const p of candidates) {
     try {
-      if ((0, import_node_fs13.existsSync)(p)) return p;
+      if ((0, import_node_fs15.existsSync)(p)) return p;
     } catch {
     }
   }
@@ -2965,16 +3405,16 @@ function resolveAdbPath() {
 var ADB_BIN = resolveAdbPath();
 function resolveTermuxBin3(name) {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const candidate = (0, import_node_path7.join)(prefix, "bin", name);
+  const candidate = (0, import_node_path8.join)(prefix, "bin", name);
   try {
-    if ((0, import_node_fs13.existsSync)(candidate)) return candidate;
+    if ((0, import_node_fs15.existsSync)(candidate)) return candidate;
   } catch {
   }
   return name;
 }
 function termuxApiEnv2() {
   const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-  const ldPreload = (0, import_node_path7.join)(prefix, "lib", "libtermux-exec.so");
+  const ldPreload = (0, import_node_path8.join)(prefix, "lib", "libtermux-exec.so");
   return { ...process.env, LD_PRELOAD: ldPreload };
 }
 var TERMUX_NOTIFICATION_BIN = resolveTermuxBin3("termux-notification");
@@ -3085,7 +3525,7 @@ var Daemon = class _Daemon {
     );
     this.activity = new ActivityDetector(this.log);
     this.battery = new BatteryMonitor(this.log, this.config.battery.low_threshold_pct);
-    const registryPath = (0, import_node_path7.join)((0, import_node_path7.dirname)(this.config.orchestrator.state_file), "registry.json");
+    const registryPath = (0, import_node_path8.join)((0, import_node_path8.dirname)(this.config.orchestrator.state_file), "registry.json");
     this.registry = new Registry(registryPath);
     this.ipc = new IpcServer(
       this.config.orchestrator.socket,
@@ -3100,18 +3540,18 @@ var Daemon = class _Daemon {
    */
   preflight() {
     const { log_dir, state_file, socket } = this.config.orchestrator;
-    if (!(0, import_node_fs13.existsSync)(log_dir)) {
-      (0, import_node_fs13.mkdirSync)(log_dir, { recursive: true });
+    if (!(0, import_node_fs15.existsSync)(log_dir)) {
+      (0, import_node_fs15.mkdirSync)(log_dir, { recursive: true });
       this.log.debug(`Created log directory: ${log_dir}`);
     }
-    const stateDir = (0, import_node_path7.dirname)(state_file);
-    if (!(0, import_node_fs13.existsSync)(stateDir)) {
-      (0, import_node_fs13.mkdirSync)(stateDir, { recursive: true });
+    const stateDir = (0, import_node_path8.dirname)(state_file);
+    if (!(0, import_node_fs15.existsSync)(stateDir)) {
+      (0, import_node_fs15.mkdirSync)(stateDir, { recursive: true });
       this.log.debug(`Created state directory: ${stateDir}`);
     }
-    const socketDir = (0, import_node_path7.dirname)(socket);
-    if (!(0, import_node_fs13.existsSync)(socketDir)) {
-      (0, import_node_fs13.mkdirSync)(socketDir, { recursive: true });
+    const socketDir = (0, import_node_path8.dirname)(socket);
+    if (!(0, import_node_fs15.existsSync)(socketDir)) {
+      (0, import_node_fs15.mkdirSync)(socketDir, { recursive: true });
       this.log.debug(`Created socket directory: ${socketDir}`);
     }
     const enabledCount = this.config.sessions.filter((s) => s.enabled).length;
@@ -3760,7 +4200,7 @@ var Daemon = class _Daemon {
   /** Re-create IPC socket if it was removed (e.g. Termux crash cleans $PREFIX/tmp) */
   async ensureSocket() {
     const socketPath = this.config.orchestrator.socket;
-    if (!(0, import_node_fs13.existsSync)(socketPath)) {
+    if (!(0, import_node_fs15.existsSync)(socketPath)) {
       this.log.warn("IPC socket missing (tmpdir cleaned?) \u2014 recreating");
       this.ipc.stop();
       this.ipc = new IpcServer(
@@ -3846,7 +4286,7 @@ var Daemon = class _Daemon {
       const adoptedPid = this.adoptedPids.get(session.name);
       let pid = null;
       if (adoptedPid !== void 0) {
-        if ((0, import_node_fs13.existsSync)(`/proc/${adoptedPid}`)) {
+        if ((0, import_node_fs15.existsSync)(`/proc/${adoptedPid}`)) {
           pid = adoptedPid;
         } else {
           this.log.info(`Adopted session '${session.name}' PID ${adoptedPid} exited`, { session: session.name });
@@ -4118,19 +4558,19 @@ var Daemon = class _Daemon {
    */
   resolveBootSessions() {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
     const recentProjects = parseRecentProjects(historyPath, 1e3);
     const namedSessions = findNamedSessions(historyPath, 7);
     const { auto_start, visible } = this.config.boot;
     const configByPath = /* @__PURE__ */ new Map();
     for (const s of this.config.sessions) {
-      if (s.path) configByPath.set((0, import_node_path7.resolve)(s.path), s);
+      if (s.path) configByPath.set((0, import_node_path8.resolve)(s.path), s);
     }
     const recentClaude = [];
     let rank = 0;
     for (const proj of recentProjects) {
       if (rank >= visible) break;
-      const resolvedPath = (0, import_node_path7.resolve)(proj.path);
+      const resolvedPath = (0, import_node_path8.resolve)(proj.path);
       const existing = configByPath.get(resolvedPath);
       if (existing) {
         if (existing.type === "claude" && existing.enabled) {
@@ -4170,7 +4610,7 @@ var Daemon = class _Daemon {
     for (const named of namedSessions) {
       if (rank >= visible) break;
       if (registeredIds.has(named.session_id)) continue;
-      const resolvedPath = (0, import_node_path7.resolve)(named.path);
+      const resolvedPath = (0, import_node_path8.resolve)(named.path);
       const titleName = named.title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
       if (!titleName || !isValidName(titleName)) continue;
       const existingNames = this.config.sessions.map((s) => s.name);
@@ -4234,11 +4674,11 @@ var Daemon = class _Daemon {
   resolveOpenTarget(input) {
     const lower = input.toLowerCase();
     const configExact = this.config.sessions.find((s) => s.name === lower && s.path);
-    if (configExact?.path) return (0, import_node_path7.resolve)(configExact.path);
+    if (configExact?.path) return (0, import_node_path8.resolve)(configExact.path);
     const regExact = this.registry.find(lower);
     if (regExact) return regExact.path;
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
     const recent = parseRecentProjects(historyPath, 1e3);
     const recentExact = recent.find((p) => p.name === lower);
     if (recentExact) return recentExact.path;
@@ -4248,18 +4688,18 @@ var Daemon = class _Daemon {
       ...recent
     ];
     const prefixMatches = allSources.filter((s) => s.name.startsWith(lower));
-    if (prefixMatches.length === 1) return (0, import_node_path7.resolve)(prefixMatches[0].path);
+    if (prefixMatches.length === 1) return (0, import_node_path8.resolve)(prefixMatches[0].path);
     const substringMatches = allSources.filter((s) => s.name.includes(lower));
-    if (substringMatches.length === 1) return (0, import_node_path7.resolve)(substringMatches[0].path);
-    if (prefixMatches.length > 0) return (0, import_node_path7.resolve)(prefixMatches[0].path);
-    if (substringMatches.length > 0) return (0, import_node_path7.resolve)(substringMatches[0].path);
+    if (substringMatches.length === 1) return (0, import_node_path8.resolve)(substringMatches[0].path);
+    if (prefixMatches.length > 0) return (0, import_node_path8.resolve)(prefixMatches[0].path);
+    if (substringMatches.length > 0) return (0, import_node_path8.resolve)(substringMatches[0].path);
     return null;
   }
   /** Open command — register and start a new dynamic Claude session (supports multi-instance) */
   async cmdOpen(path, name, autoGo = false, priority = 50) {
     let resolvedPath;
-    if ((0, import_node_fs13.existsSync)(path)) {
-      resolvedPath = (0, import_node_path7.resolve)(path);
+    if ((0, import_node_fs15.existsSync)(path)) {
+      resolvedPath = (0, import_node_path8.resolve)(path);
     } else {
       const matched = this.resolveOpenTarget(path);
       if (!matched) {
@@ -4272,7 +4712,7 @@ var Daemon = class _Daemon {
       return { ok: false, error: `Invalid session name '${baseName}' \u2014 must match [a-z0-9-]+` };
     }
     const existingByPath = this.config.sessions.filter(
-      (s) => s.path && (0, import_node_path7.resolve)(s.path) === resolvedPath
+      (s) => s.path && (0, import_node_path8.resolve)(s.path) === resolvedPath
     );
     let sessionName;
     if (existingByPath.length === 0) {
@@ -4332,7 +4772,7 @@ var Daemon = class _Daemon {
   /** Recent command — parse history.jsonl for recently active projects */
   cmdRecent(count = 20) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const historyPath = (0, import_node_path7.join)(home, ".claude", "history.jsonl");
+    const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
     const rawProjects = parseRecentProjects(historyPath, 1e3);
     const configNames = new Set(this.config.sessions.map((s) => s.name));
     const runningNames = /* @__PURE__ */ new Set();
@@ -4365,17 +4805,17 @@ var Daemon = class _Daemon {
   /** Register projects by scanning a directory (default ~/git) */
   cmdRegister(scanPath) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const dirPath = (0, import_node_path7.resolve)(scanPath ?? (0, import_node_path7.join)(home, "git"));
-    if (!(0, import_node_fs13.existsSync)(dirPath)) {
+    const dirPath = (0, import_node_path8.resolve)(scanPath ?? (0, import_node_path8.join)(home, "git"));
+    if (!(0, import_node_fs15.existsSync)(dirPath)) {
       return { ok: false, error: `Directory not found: ${dirPath}` };
     }
     let entries;
     try {
-      const names = (0, import_node_fs13.readdirSync)(dirPath);
+      const names = (0, import_node_fs15.readdirSync)(dirPath);
       entries = names.filter((n) => !n.startsWith(".")).map((n) => {
-        const full = (0, import_node_path7.join)(dirPath, n);
+        const full = (0, import_node_path8.join)(dirPath, n);
         try {
-          const st = (0, import_node_fs13.statSync)(full);
+          const st = (0, import_node_fs15.statSync)(full);
           if (!st.isDirectory()) return null;
           return { name: n, path: full, mtime: st.mtimeMs };
         } catch {
@@ -4419,11 +4859,11 @@ var Daemon = class _Daemon {
   /** Clone a git repo and register it */
   cmdClone(url, nameOverride) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const gitDir = (0, import_node_path7.join)(home, "git");
+    const gitDir = (0, import_node_path8.join)(home, "git");
     const urlBasename = url.replace(/\.git$/, "").split("/").pop() ?? "unnamed";
     const dirName = nameOverride ?? urlBasename.toLowerCase().replace(/[^a-z0-9-]/g, "-");
-    const targetDir = (0, import_node_path7.join)(gitDir, dirName);
-    if ((0, import_node_fs13.existsSync)(targetDir)) {
+    const targetDir = (0, import_node_path8.join)(gitDir, dirName);
+    if ((0, import_node_fs15.existsSync)(targetDir)) {
       if (this.registry.findByPath(targetDir)) {
         return { ok: true, data: { name: dirName, path: targetDir, message: "Already registered" } };
       }
@@ -4436,7 +4876,7 @@ var Daemon = class _Daemon {
       this.registry.add({ name: name2, path: targetDir, priority: 50, auto_go: false });
       return { ok: true, data: { name: name2, path: targetDir, message: "Existing dir registered" } };
     }
-    if (!(0, import_node_fs13.existsSync)(gitDir)) (0, import_node_fs13.mkdirSync)(gitDir, { recursive: true });
+    if (!(0, import_node_fs15.existsSync)(gitDir)) (0, import_node_fs15.mkdirSync)(gitDir, { recursive: true });
     const result = (0, import_node_child_process7.spawnSync)("git", ["clone", url, targetDir], {
       timeout: 12e4,
       stdio: "pipe",
@@ -4462,11 +4902,11 @@ var Daemon = class _Daemon {
       return { ok: false, error: `Invalid name '${name}' \u2014 must match [a-z0-9-]+` };
     }
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const targetDir = (0, import_node_path7.join)(home, "git", name);
-    if ((0, import_node_fs13.existsSync)(targetDir)) {
+    const targetDir = (0, import_node_path8.join)(home, "git", name);
+    if ((0, import_node_fs15.existsSync)(targetDir)) {
       return { ok: false, error: `Directory already exists: ${targetDir}` };
     }
-    (0, import_node_fs13.mkdirSync)(targetDir, { recursive: true });
+    (0, import_node_fs15.mkdirSync)(targetDir, { recursive: true });
     (0, import_node_child_process7.spawnSync)("git", ["init"], { cwd: targetDir, timeout: 1e4, stdio: "pipe" });
     const existingNames = [
       ...this.config.sessions.map((s) => s.name),
@@ -4597,7 +5037,7 @@ var Daemon = class _Daemon {
       return;
     }
     const scriptDir = typeof import_meta_url === "string" ? new URL(".", import_meta_url).pathname : __dirname ?? process.cwd();
-    const staticDir = (0, import_node_path7.join)(scriptDir, "..", "dashboard", "dist");
+    const staticDir = (0, import_node_path8.join)(scriptDir, "..", "dashboard", "dist");
     this.dashboard = new DashboardServer(
       port,
       staticDir,
@@ -4617,8 +5057,8 @@ var Daemon = class _Daemon {
   /** Read a JSON file, returning null on any error */
   readJsonFile(path) {
     try {
-      if (!(0, import_node_fs13.existsSync)(path)) return null;
-      return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf-8"));
+      if (!(0, import_node_fs15.existsSync)(path)) return null;
+      return JSON.parse((0, import_node_fs15.readFileSync)(path, "utf-8"));
     } catch {
       return null;
     }
@@ -4626,8 +5066,8 @@ var Daemon = class _Daemon {
   /** Validate that a file path is safe to read/write (under ~/.claude/ or a known project) */
   isAllowedCustomizationPath(filePath) {
     const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-    const claudeDir = (0, import_node_path7.join)(home, ".claude");
-    const resolved = (0, import_node_path7.resolve)(filePath);
+    const claudeDir = (0, import_node_path8.join)(home, ".claude");
+    const resolved = (0, import_node_path8.resolve)(filePath);
     if (resolved.startsWith(claudeDir + "/")) return true;
     const knownPaths = this.config.sessions.map((s) => s.path).filter(Boolean);
     if (this.registry) {
@@ -4636,9 +5076,9 @@ var Daemon = class _Daemon {
       }
     }
     for (const p of knownPaths) {
-      const projectDir = (0, import_node_path7.resolve)(p);
-      if (resolved === (0, import_node_path7.join)(projectDir, "CLAUDE.md")) return true;
-      if (resolved.startsWith((0, import_node_path7.join)(projectDir, ".claude") + "/")) return true;
+      const projectDir = (0, import_node_path8.resolve)(p);
+      if (resolved === (0, import_node_path8.join)(projectDir, "CLAUDE.md")) return true;
+      if (resolved.startsWith((0, import_node_path8.join)(projectDir, ".claude") + "/")) return true;
     }
     return false;
   }
@@ -4654,13 +5094,13 @@ var Daemon = class _Daemon {
   cmdCustomization(projectPath) {
     try {
       const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-      const claudeDir = (0, import_node_path7.join)(home, ".claude");
-      const claudeJson = this.readJsonFile((0, import_node_path7.join)(home, ".claude.json"));
-      const settingsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "settings.json"));
-      const installedPluginsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "installed_plugins.json"));
-      const blocklistJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "blocklist.json"));
-      const installCountsJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "install-counts-cache.json"));
-      const marketplacesJson = this.readJsonFile((0, import_node_path7.join)(claudeDir, "plugins", "known_marketplaces.json"));
+      const claudeDir = (0, import_node_path8.join)(home, ".claude");
+      const claudeJson = this.readJsonFile((0, import_node_path8.join)(home, ".claude.json"));
+      const settingsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "settings.json"));
+      const installedPluginsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "installed_plugins.json"));
+      const blocklistJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "blocklist.json"));
+      const installCountsJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "install-counts-cache.json"));
+      const marketplacesJson = this.readJsonFile((0, import_node_path8.join)(claudeDir, "plugins", "known_marketplaces.json"));
       const mcpServers = [];
       const cjMcps = claudeJson?.mcpServers ?? {};
       for (const [name, cfg] of Object.entries(cjMcps)) {
@@ -4732,14 +5172,14 @@ var Daemon = class _Daemon {
         let pluginAuthor = "";
         let pluginType = "native";
         if (entry.installPath) {
-          const pjPath = (0, import_node_path7.join)(entry.installPath, ".claude-plugin", "plugin.json");
+          const pjPath = (0, import_node_path8.join)(entry.installPath, ".claude-plugin", "plugin.json");
           const pj = this.readJsonFile(pjPath);
           if (pj) {
             pluginName = pj.name ?? pluginName;
             pluginDesc = pj.description ?? "";
             pluginAuthor = pj.author?.name ?? "";
           }
-          if ((0, import_node_fs13.existsSync)((0, import_node_path7.join)(entry.installPath, ".mcp.json"))) {
+          if ((0, import_node_fs15.existsSync)((0, import_node_path8.join)(entry.installPath, ".mcp.json"))) {
             pluginType = "external";
           }
         }
@@ -4760,14 +5200,14 @@ var Daemon = class _Daemon {
         });
       }
       const skills = [];
-      const userSkillsDir = (0, import_node_path7.join)(claudeDir, "skills");
-      if ((0, import_node_fs13.existsSync)(userSkillsDir)) {
+      const userSkillsDir = (0, import_node_path8.join)(claudeDir, "skills");
+      if ((0, import_node_fs15.existsSync)(userSkillsDir)) {
         try {
-          for (const f of (0, import_node_fs13.readdirSync)(userSkillsDir)) {
+          for (const f of (0, import_node_fs15.readdirSync)(userSkillsDir)) {
             if (!f.endsWith(".md")) continue;
             skills.push({
               name: f.replace(/\.md$/, ""),
-              path: (0, import_node_path7.join)(userSkillsDir, f),
+              path: (0, import_node_path8.join)(userSkillsDir, f),
               scope: "user"
             });
           }
@@ -4775,14 +5215,14 @@ var Daemon = class _Daemon {
         }
       }
       if (projectPath) {
-        const projSkillsDir = (0, import_node_path7.join)(projectPath, ".claude", "skills");
-        if ((0, import_node_fs13.existsSync)(projSkillsDir)) {
+        const projSkillsDir = (0, import_node_path8.join)(projectPath, ".claude", "skills");
+        if ((0, import_node_fs15.existsSync)(projSkillsDir)) {
           try {
-            for (const f of (0, import_node_fs13.readdirSync)(projSkillsDir)) {
+            for (const f of (0, import_node_fs15.readdirSync)(projSkillsDir)) {
               if (!f.endsWith(".md")) continue;
               skills.push({
                 name: f.replace(/\.md$/, ""),
-                path: (0, import_node_path7.join)(projSkillsDir, f),
+                path: (0, import_node_path8.join)(projSkillsDir, f),
                 scope: "project"
               });
             }
@@ -4791,27 +5231,27 @@ var Daemon = class _Daemon {
         }
       }
       const claudeMds = [];
-      const globalMd = (0, import_node_path7.join)(claudeDir, "CLAUDE.md");
-      if ((0, import_node_fs13.existsSync)(globalMd)) {
+      const globalMd = (0, import_node_path8.join)(claudeDir, "CLAUDE.md");
+      if ((0, import_node_fs15.existsSync)(globalMd)) {
         claudeMds.push({ label: "Global (User)", path: globalMd, scope: "user" });
       }
-      const projectsDir = (0, import_node_path7.join)(claudeDir, "projects");
-      if ((0, import_node_fs13.existsSync)(projectsDir)) {
+      const projectsDir = (0, import_node_path8.join)(claudeDir, "projects");
+      if ((0, import_node_fs15.existsSync)(projectsDir)) {
         try {
           const mangledProject = projectPath ? "-" + projectPath.replace(/[/.]/g, "-").replace(/^-+/, "") : null;
-          for (const d of (0, import_node_fs13.readdirSync)(projectsDir)) {
+          for (const d of (0, import_node_fs15.readdirSync)(projectsDir)) {
             if (mangledProject && d !== mangledProject) continue;
-            const memDir = (0, import_node_path7.join)(projectsDir, d, "memory");
-            if (!(0, import_node_fs13.existsSync)(memDir)) continue;
+            const memDir = (0, import_node_path8.join)(projectsDir, d, "memory");
+            if (!(0, import_node_fs15.existsSync)(memDir)) continue;
             const gitIdx = d.lastIndexOf("-git-");
             const projName = gitIdx >= 0 ? d.slice(gitIdx + 5) : d.split("-").filter(Boolean).pop() ?? d;
             try {
-              for (const f of (0, import_node_fs13.readdirSync)(memDir)) {
+              for (const f of (0, import_node_fs15.readdirSync)(memDir)) {
                 if (!f.endsWith(".md")) continue;
                 const fileName = f.replace(/\.md$/, "");
                 claudeMds.push({
                   label: `${projName}: ${fileName}`,
-                  path: (0, import_node_path7.join)(memDir, f),
+                  path: (0, import_node_path8.join)(memDir, f),
                   scope: "memory"
                 });
               }
@@ -4822,8 +5262,8 @@ var Daemon = class _Daemon {
         }
       }
       if (projectPath) {
-        const projMd = (0, import_node_path7.join)(projectPath, "CLAUDE.md");
-        if ((0, import_node_fs13.existsSync)(projMd)) {
+        const projMd = (0, import_node_path8.join)(projectPath, "CLAUDE.md");
+        if ((0, import_node_fs15.existsSync)(projMd)) {
           const projName = projectPath.split("/").pop() ?? projectPath;
           claudeMds.push({ label: `Project: ${projName}`, path: projMd, scope: "project" });
         }
@@ -4856,12 +5296,12 @@ var Daemon = class _Daemon {
             lastUpdated: mktCfg.lastUpdated ?? ""
           });
           const mktDir = mktCfg.installLocation;
-          if (!mktDir || !(0, import_node_fs13.existsSync)(mktDir)) continue;
-          const nativeDir = (0, import_node_path7.join)(mktDir, "plugins");
-          if ((0, import_node_fs13.existsSync)(nativeDir)) {
+          if (!mktDir || !(0, import_node_fs15.existsSync)(mktDir)) continue;
+          const nativeDir = (0, import_node_path8.join)(mktDir, "plugins");
+          if ((0, import_node_fs15.existsSync)(nativeDir)) {
             try {
-              for (const name of (0, import_node_fs13.readdirSync)(nativeDir)) {
-                const pluginJsonPath = (0, import_node_path7.join)(nativeDir, name, ".claude-plugin", "plugin.json");
+              for (const name of (0, import_node_fs15.readdirSync)(nativeDir)) {
+                const pluginJsonPath = (0, import_node_path8.join)(nativeDir, name, ".claude-plugin", "plugin.json");
                 const pj = this.readJsonFile(pluginJsonPath);
                 if (!pj) continue;
                 const pluginId = `${name}@${mktName}`;
@@ -4880,11 +5320,11 @@ var Daemon = class _Daemon {
             } catch {
             }
           }
-          const extDir = (0, import_node_path7.join)(mktDir, "external_plugins");
-          if ((0, import_node_fs13.existsSync)(extDir)) {
+          const extDir = (0, import_node_path8.join)(mktDir, "external_plugins");
+          if ((0, import_node_fs15.existsSync)(extDir)) {
             try {
-              for (const name of (0, import_node_fs13.readdirSync)(extDir)) {
-                const pluginJsonPath = (0, import_node_path7.join)(extDir, name, ".claude-plugin", "plugin.json");
+              for (const name of (0, import_node_fs15.readdirSync)(extDir)) {
+                const pluginJsonPath = (0, import_node_path8.join)(extDir, name, ".claude-plugin", "plugin.json");
                 const pj = this.readJsonFile(pluginJsonPath);
                 if (!pj) continue;
                 const pluginId = `${name}@${mktName}`;
@@ -4931,7 +5371,7 @@ var Daemon = class _Daemon {
       return { ok: false, error: "Path not allowed" };
     }
     try {
-      const content = (0, import_node_fs13.readFileSync)(filePath, "utf-8");
+      const content = (0, import_node_fs15.readFileSync)(filePath, "utf-8");
       return { ok: true, data: { content } };
     } catch (err) {
       return { ok: false, error: `Failed to read file: ${err}` };
@@ -4946,15 +5386,126 @@ var Daemon = class _Daemon {
       return { ok: false, error: "Only .md files can be edited" };
     }
     try {
-      (0, import_node_fs13.writeFileSync)(filePath, content, "utf-8");
+      (0, import_node_fs15.writeFileSync)(filePath, content, "utf-8");
       return { ok: true, data: { written: filePath } };
     } catch (err) {
       return { ok: false, error: `Failed to write file: ${err}` };
     }
   }
+  // -- MCP CRUD ---------------------------------------------------------------
+  /** Atomic JSON file write: write .tmp then rename */
+  writeJsonFileAtomic(filePath, data) {
+    const tmp = `${filePath}.tmp`;
+    (0, import_node_fs15.writeFileSync)(tmp, JSON.stringify(data, null, 2) + "\n", "utf-8");
+    (0, import_node_fs15.renameSync)(tmp, filePath);
+  }
+  /** Get path to ~/.claude.json */
+  get claudeJsonPath() {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    return (0, import_node_path8.join)(home, ".claude.json");
+  }
+  /** Get path to settings.json (Claude Code settings) */
+  get settingsJsonPath() {
+    const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+    return (0, import_node_path8.join)(home, ".claude", "settings.json");
+  }
+  /** Read ~/.claude.json, returning parsed object or empty default */
+  readClaudeJson() {
+    try {
+      if ((0, import_node_fs15.existsSync)(this.claudeJsonPath)) {
+        return JSON.parse((0, import_node_fs15.readFileSync)(this.claudeJsonPath, "utf-8"));
+      }
+    } catch {
+    }
+    return {};
+  }
+  /** Add a new MCP server to ~/.claude.json */
+  cmdMcpAdd(serverName, config) {
+    try {
+      const data = this.readClaudeJson();
+      if (!data.mcpServers) data.mcpServers = {};
+      const servers = data.mcpServers;
+      if (servers[serverName]) {
+        return { status: 409, data: { error: `MCP server '${serverName}' already exists` } };
+      }
+      servers[serverName] = {
+        command: config.command,
+        args: config.args ?? [],
+        ...config.env && Object.keys(config.env).length > 0 ? { env: config.env } : {}
+      };
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true, servers: Object.keys(servers) } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to add MCP server: ${err}` } };
+    }
+  }
+  /** Update an existing MCP server in ~/.claude.json */
+  cmdMcpUpdate(serverName, config) {
+    try {
+      const data = this.readClaudeJson();
+      const servers = data.mcpServers ?? {};
+      if (!servers[serverName]) {
+        return { status: 404, data: { error: `MCP server '${serverName}' not found` } };
+      }
+      if (config.command !== void 0) servers[serverName].command = config.command;
+      if (config.args !== void 0) servers[serverName].args = config.args;
+      if (config.env !== void 0) {
+        if (Object.keys(config.env).length > 0) {
+          servers[serverName].env = config.env;
+        } else {
+          delete servers[serverName].env;
+        }
+      }
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to update MCP server: ${err}` } };
+    }
+  }
+  /** Delete an MCP server from ~/.claude.json */
+  cmdMcpDelete(serverName) {
+    try {
+      const data = this.readClaudeJson();
+      const servers = data.mcpServers ?? {};
+      if (!servers[serverName]) {
+        return { status: 404, data: { error: `MCP server '${serverName}' not found` } };
+      }
+      delete servers[serverName];
+      this.writeJsonFileAtomic(this.claudeJsonPath, data);
+      return { status: 200, data: { ok: true, servers: Object.keys(servers) } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to delete MCP server: ${err}` } };
+    }
+  }
+  /** Toggle MCP server enable/disable in settings.json */
+  cmdMcpToggle(serverName) {
+    try {
+      let settings = {};
+      if ((0, import_node_fs15.existsSync)(this.settingsJsonPath)) {
+        try {
+          settings = JSON.parse((0, import_node_fs15.readFileSync)(this.settingsJsonPath, "utf-8"));
+        } catch {
+        }
+      }
+      const disabled = settings.disabledMcpServers ?? [];
+      const idx = disabled.indexOf(serverName);
+      if (idx >= 0) {
+        disabled.splice(idx, 1);
+      } else {
+        disabled.push(serverName);
+      }
+      settings.disabledMcpServers = disabled;
+      this.writeJsonFileAtomic(this.settingsJsonPath, settings);
+      return { status: 200, data: { ok: true, disabled: idx >= 0 ? false : true } };
+    } catch (err) {
+      return { status: 500, data: { error: `Failed to toggle MCP server: ${err}` } };
+    }
+  }
   /** Map REST API paths to IPC command handlers */
   async handleDashboardApi(method, path, body) {
-    const segments = path.replace(/^\/api\//, "").split("/");
+    const [pathPart, queryPart] = path.split("?", 2);
+    const queryParams = new URLSearchParams(queryPart ?? "");
+    const segments = pathPart.replace(/^\/api\//, "").split("/");
     const command2 = segments[0];
     const name = segments[1] ? decodeURIComponent(segments[1]) : void 0;
     try {
@@ -5013,22 +5564,22 @@ var Daemon = class _Daemon {
             }
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
             const home = process.env.HOME ?? "/data/data/com.termux/files/home";
-            const scriptPath = (0, import_node_path7.join)(prefix, "tmp", "tmx-bridge-start.sh");
+            const scriptPath = (0, import_node_path8.join)(prefix, "tmp", "tmx-bridge-start.sh");
             const bridgeCandidates = [
-              (0, import_node_path7.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
-              (0, import_node_path7.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
-              (0, import_node_path7.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
+              (0, import_node_path8.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              (0, import_node_path8.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              (0, import_node_path8.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
             ];
-            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs13.existsSync)(p)) ?? bridgeCandidates[0];
-            const bunPath = (0, import_node_fs13.existsSync)((0, import_node_path7.join)(home, ".bun/bin/bun")) ? (0, import_node_path7.join)(home, ".bun/bin/bun") : "bun";
-            const bridgeDir = (0, import_node_path7.dirname)(bridgeScript);
-            (0, import_node_fs13.writeFileSync)(scriptPath, [
+            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs15.existsSync)(p)) ?? bridgeCandidates[0];
+            const bunPath = (0, import_node_fs15.existsSync)((0, import_node_path8.join)(home, ".bun/bin/bun")) ? (0, import_node_path8.join)(home, ".bun/bin/bun") : "bun";
+            const bridgeDir = (0, import_node_path8.dirname)(bridgeScript);
+            (0, import_node_fs15.writeFileSync)(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
               `# CFC Bridge startup script (generated by tmx daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`
             ].join("\n") + "\n");
-            (0, import_node_fs13.chmodSync)(scriptPath, 493);
+            (0, import_node_fs15.chmodSync)(scriptPath, 493);
             const amBin = resolveTermuxBin3("am");
             const svcResult = (0, import_node_child_process7.spawnSync)(amBin, [
               "startservice",
@@ -5065,17 +5616,17 @@ var Daemon = class _Daemon {
             }
             const home = process.env.HOME ?? "/data/data/com.termux/files/home";
             const bridgeCandidates = [
-              (0, import_node_path7.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
-              (0, import_node_path7.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
-              (0, import_node_path7.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
+              (0, import_node_path8.join)(home, "git/termux-tools/claude-chrome-bridge.ts"),
+              (0, import_node_path8.join)(home, ".bun/install/global/node_modules/claude-chrome-android/dist/cli.js"),
+              (0, import_node_path8.join)(home, ".npm/lib/node_modules/claude-chrome-android/dist/cli.js")
             ];
-            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs13.existsSync)(p));
+            const bridgeScript = bridgeCandidates.find((p) => (0, import_node_fs15.existsSync)(p));
             if (!bridgeScript) {
               return { status: 500, data: { error: "Bridge script not found" } };
             }
             let runtime = "";
-            const bunPath = (0, import_node_path7.join)(home, ".bun/bin/bun");
-            if ((0, import_node_fs13.existsSync)(bunPath)) runtime = bunPath;
+            const bunPath = (0, import_node_path8.join)(home, ".bun/bin/bun");
+            if ((0, import_node_fs15.existsSync)(bunPath)) runtime = bunPath;
             else {
               try {
                 const which = (0, import_node_child_process7.spawnSync)("which", ["bun"], { encoding: "utf-8", timeout: 3e3 });
@@ -5094,8 +5645,8 @@ var Daemon = class _Daemon {
               return { status: 500, data: { error: "No runtime (bun/node) found" } };
             }
             const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
-            const logPath = (0, import_node_path7.join)(prefix, "tmp/bridge.log");
-            const logFd = (0, import_node_fs13.openSync)(logPath, "a");
+            const logPath = (0, import_node_path8.join)(prefix, "tmp/bridge.log");
+            const logFd = (0, import_node_fs15.openSync)(logPath, "a");
             try {
               const child = (0, import_node_child_process7.spawn)(runtime, [bridgeScript], {
                 detached: true,
@@ -5105,7 +5656,7 @@ var Daemon = class _Daemon {
               this.log.info("Bridge spawned via HTTP API", { pid: child.pid, script: bridgeScript });
               return { status: 200, data: { status: "starting", pid: child.pid } };
             } finally {
-              (0, import_node_fs13.closeSync)(logFd);
+              (0, import_node_fs15.closeSync)(logFd);
             }
           }
           try {
@@ -5149,8 +5700,8 @@ var Daemon = class _Daemon {
           if (!name) return { status: 400, data: { error: "Session name required" } };
           const buildCfg = this.config.sessions.find((s) => s.name === name);
           if (!buildCfg?.path) return { status: 400, data: { error: `Session '${name}' has no path` } };
-          const buildScript = (0, import_node_path7.join)(buildCfg.path, "build-on-termux.sh");
-          if (!(0, import_node_fs13.existsSync)(buildScript)) {
+          const buildScript = (0, import_node_path8.join)(buildCfg.path, "build-on-termux.sh");
+          if (!(0, import_node_fs15.existsSync)(buildScript)) {
             return { status: 404, data: { error: `No build-on-termux.sh in ${buildCfg.path}` } };
           }
           if (runScriptInTab(buildScript, buildCfg.path, name, this.log)) {
@@ -5297,6 +5848,117 @@ var Daemon = class _Daemon {
           }
           break;
         }
+        case "tokens": {
+          if (name) {
+            const sessionPath = this.resolveSessionPath(name);
+            if (!sessionPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+            try {
+              const usage = await getProjectTokenUsage(name, sessionPath);
+              return { status: 200, data: usage };
+            } catch (err) {
+              return { status: 500, data: { error: `Failed to compute tokens: ${err}` } };
+            }
+          }
+          try {
+            const results = [];
+            for (const cfg of this.config.sessions) {
+              if (cfg.type !== "claude" || !cfg.path) continue;
+              const state = this.state.getSession(cfg.name);
+              if (!state || state.status === "stopped" || state.status === "failed") continue;
+              try {
+                results.push(await getProjectTokenUsage(cfg.name, cfg.path));
+              } catch {
+              }
+            }
+            for (const entry of this.registry.entries()) {
+              if (!entry.path) continue;
+              const state = this.state.getSession(entry.name);
+              if (!state || state.status === "stopped" || state.status === "failed") continue;
+              if (results.some((r) => r.path === entry.path)) continue;
+              try {
+                results.push(await getProjectTokenUsage(entry.name, entry.path));
+              } catch {
+              }
+            }
+            return { status: 200, data: results };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to compute tokens: ${err}` } };
+          }
+        }
+        case "conversation": {
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const convPath = this.resolveSessionPath(name);
+          if (!convPath) return { status: 400, data: { error: `Session '${name}' has no path` } };
+          const beforeUuid = queryParams.get("before") ?? void 0;
+          const convLimit = parseInt(queryParams.get("limit") ?? "20", 10);
+          const sessionIdParam = queryParams.get("session_id") ?? void 0;
+          try {
+            const page = getConversationPage(convPath, sessionIdParam, convLimit, beforeUuid);
+            return { status: 200, data: page };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read conversation: ${err}` } };
+          }
+        }
+        case "timeline": {
+          if (!name) return { status: 400, data: { error: "Session name required" } };
+          const tlPath = this.resolveSessionPath(name);
+          const tracePath = (0, import_node_path8.join)(this.config.orchestrator.log_dir, "trace.log");
+          let jsonlPath;
+          if (tlPath) {
+            const active = resolveActiveJsonl(tlPath);
+            if (active) jsonlPath = active.path;
+          }
+          const since = queryParams.get("since") ?? void 0;
+          const tlLimit = parseInt(queryParams.get("limit") ?? "100", 10);
+          try {
+            const events = readTimeline(name, tracePath, jsonlPath, since, tlLimit);
+            return { status: 200, data: events };
+          } catch (err) {
+            return { status: 500, data: { error: `Failed to read timeline: ${err}` } };
+          }
+        }
+        case "mcp": {
+          if (method === "GET" && !name) {
+            const config = this.readClaudeJson();
+            const settingsData = (0, import_node_fs15.existsSync)(this.settingsJsonPath) ? JSON.parse((0, import_node_fs15.readFileSync)(this.settingsJsonPath, "utf-8")) : {};
+            const disabled = settingsData.disabledMcpServers ?? [];
+            const servers = Object.entries(config.mcpServers ?? {}).map(([n, cfg]) => ({
+              name: n,
+              command: cfg.command ?? "",
+              args: cfg.args ?? [],
+              env: cfg.env ?? {},
+              enabled: !disabled.includes(n),
+              source: "claude-json"
+            }));
+            return { status: 200, data: { servers } };
+          }
+          const mcpAction = segments[2] ? decodeURIComponent(segments[2]) : void 0;
+          if (mcpAction === "toggle" && name) {
+            if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
+            return this.cmdMcpToggle(name);
+          }
+          if (method === "POST" && !name) {
+            try {
+              const parsed = JSON.parse(body);
+              if (!parsed.name || !parsed.command) return { status: 400, data: { error: "name and command required" } };
+              return this.cmdMcpAdd(parsed.name, parsed);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          }
+          if (method === "PUT" && name) {
+            try {
+              const parsed = JSON.parse(body);
+              return this.cmdMcpUpdate(name, parsed);
+            } catch {
+              return { status: 400, data: { error: "Invalid JSON body" } };
+            }
+          }
+          if (method === "DELETE" && name) {
+            return this.cmdMcpDelete(name);
+          }
+          return { status: 405, data: { error: "Method not allowed" } };
+        }
         default:
           return { status: 404, data: { error: `Unknown endpoint: ${command2}` } };
       }
@@ -5323,12 +5985,12 @@ var Daemon = class _Daemon {
     if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
     const scripts = [];
     try {
-      const entries = (0, import_node_fs13.readdirSync)(sessionPath);
+      const entries = (0, import_node_fs15.readdirSync)(sessionPath);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          const full = (0, import_node_path7.join)(sessionPath, f);
+          const full = (0, import_node_path8.join)(sessionPath, f);
           try {
-            if ((0, import_node_fs13.statSync)(full).isFile()) {
+            if ((0, import_node_fs15.statSync)(full).isFile()) {
               scripts.push({ name: f, path: full, source: "root" });
             }
           } catch {
@@ -5338,18 +6000,18 @@ var Daemon = class _Daemon {
     } catch {
     }
     try {
-      const scriptsDir = (0, import_node_path7.join)(sessionPath, "scripts");
-      const entries = (0, import_node_fs13.readdirSync)(scriptsDir);
+      const scriptsDir = (0, import_node_path8.join)(sessionPath, "scripts");
+      const entries = (0, import_node_fs15.readdirSync)(scriptsDir);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          scripts.push({ name: f, path: (0, import_node_path7.join)(scriptsDir, f), source: "scripts" });
+          scripts.push({ name: f, path: (0, import_node_path8.join)(scriptsDir, f), source: "scripts" });
         }
       }
     } catch {
     }
     try {
-      const pkgPath = (0, import_node_path7.join)(sessionPath, "package.json");
-      const pkg = JSON.parse((0, import_node_fs13.readFileSync)(pkgPath, "utf-8"));
+      const pkgPath = (0, import_node_path8.join)(sessionPath, "package.json");
+      const pkg = JSON.parse((0, import_node_fs15.readFileSync)(pkgPath, "utf-8"));
       if (pkg.scripts) {
         for (const [scriptName, cmd] of Object.entries(pkg.scripts)) {
           scripts.push({ name: scriptName, path: "", source: "package.json", command: cmd });
@@ -5358,11 +6020,11 @@ var Daemon = class _Daemon {
     } catch {
     }
     try {
-      const savedDir = (0, import_node_path7.join)(sessionPath, ".tmx-scripts");
-      const entries = (0, import_node_fs13.readdirSync)(savedDir);
+      const savedDir = (0, import_node_path8.join)(sessionPath, ".tmx-scripts");
+      const entries = (0, import_node_fs15.readdirSync)(savedDir);
       for (const f of entries) {
         if (f.endsWith(".sh")) {
-          scripts.push({ name: f, path: (0, import_node_path7.join)(savedDir, f), source: "saved" });
+          scripts.push({ name: f, path: (0, import_node_path8.join)(savedDir, f), source: "saved" });
         }
       }
     } catch {
@@ -5377,8 +6039,8 @@ var Daemon = class _Daemon {
     if (!sessionPath) return { status: 400, data: { error: `Session '${sessionName}' has no path` } };
     const prefix = process.env.PREFIX ?? "/data/data/com.termux/files/usr";
     if (opts.command) {
-      const tempScript = (0, import_node_path7.join)(prefix, "tmp", `tmx-cmd-${resolved}.sh`);
-      (0, import_node_fs13.writeFileSync)(tempScript, `#!/data/data/com.termux/files/usr/bin/bash
+      const tempScript = (0, import_node_path8.join)(prefix, "tmp", `tmx-cmd-${resolved}.sh`);
+      (0, import_node_fs15.writeFileSync)(tempScript, `#!/data/data/com.termux/files/usr/bin/bash
 ${opts.command}
 `, { mode: 493 });
       if (runScriptInTab(tempScript, sessionPath, resolved, this.log)) {
@@ -5390,14 +6052,14 @@ ${opts.command}
       let scriptPath;
       switch (opts.source) {
         case "root":
-          scriptPath = (0, import_node_path7.join)(sessionPath, opts.script);
+          scriptPath = (0, import_node_path8.join)(sessionPath, opts.script);
           break;
         case "scripts":
-          scriptPath = (0, import_node_path7.join)(sessionPath, "scripts", opts.script);
+          scriptPath = (0, import_node_path8.join)(sessionPath, "scripts", opts.script);
           break;
         case "package.json": {
-          const tempScript = (0, import_node_path7.join)(prefix, "tmp", `tmx-npm-${resolved}.sh`);
-          (0, import_node_fs13.writeFileSync)(
+          const tempScript = (0, import_node_path8.join)(prefix, "tmp", `tmx-npm-${resolved}.sh`);
+          (0, import_node_fs15.writeFileSync)(
             tempScript,
             `#!/data/data/com.termux/files/usr/bin/bash
 cd "${sessionPath}" || exit 1
@@ -5411,12 +6073,12 @@ bun run ${opts.script}
           return { status: 500, data: { error: "Failed to launch npm script" } };
         }
         case "saved":
-          scriptPath = (0, import_node_path7.join)(sessionPath, ".tmx-scripts", opts.script);
+          scriptPath = (0, import_node_path8.join)(sessionPath, ".tmx-scripts", opts.script);
           break;
         default:
           return { status: 400, data: { error: `Unknown script source: ${opts.source}` } };
       }
-      if (!(0, import_node_fs13.existsSync)(scriptPath)) {
+      if (!(0, import_node_fs15.existsSync)(scriptPath)) {
         return { status: 404, data: { error: `Script not found: ${scriptPath}` } };
       }
       if (runScriptInTab(scriptPath, sessionPath, resolved, this.log)) {
@@ -5436,11 +6098,11 @@ bun run ${opts.script}
     if (!opts.command?.trim()) {
       return { status: 400, data: { error: "Command cannot be empty" } };
     }
-    const savedDir = (0, import_node_path7.join)(sessionPath, ".tmx-scripts");
-    (0, import_node_fs13.mkdirSync)(savedDir, { recursive: true });
+    const savedDir = (0, import_node_path8.join)(sessionPath, ".tmx-scripts");
+    (0, import_node_fs15.mkdirSync)(savedDir, { recursive: true });
     const fileName = opts.name.endsWith(".sh") ? opts.name : `${opts.name}.sh`;
-    const filePath = (0, import_node_path7.join)(savedDir, fileName);
-    (0, import_node_fs13.writeFileSync)(
+    const filePath = (0, import_node_path8.join)(savedDir, fileName);
+    (0, import_node_fs15.writeFileSync)(
       filePath,
       `#!/data/data/com.termux/files/usr/bin/bash
 ${opts.command}
@@ -5637,7 +6299,7 @@ ${opts.command}
   }
   /** Initiate ADB wireless connection using the adbc script */
   adbWirelessConnect() {
-    const script = (0, import_node_path7.join)(
+    const script = (0, import_node_path8.join)(
       process.env.HOME ?? "/data/data/com.termux/files/home",
       "git/termux-tools/tools/adb-wireless-connect.sh"
     );
@@ -5814,7 +6476,7 @@ ${opts.command}
             ...s,
             type: cfg?.type ?? "daemon",
             path: cfg?.path ?? null,
-            has_build_script: cfg?.path ? (0, import_node_fs13.existsSync)((0, import_node_path7.join)(cfg.path, "build-on-termux.sh")) : false,
+            has_build_script: cfg?.path ? (0, import_node_fs15.existsSync)((0, import_node_path8.join)(cfg.path, "build-on-termux.sh")) : false,
             uptime: s.uptime_start ? formatUptime(new Date(s.uptime_start)) : null
           };
         })
@@ -5957,12 +6619,12 @@ function formatUptime(start) {
 }
 
 // src/migrate.ts
-var import_node_fs14 = require("node:fs");
+var import_node_fs16 = require("node:fs");
 function parseReposConf(filePath) {
-  if (!(0, import_node_fs14.existsSync)(filePath)) {
+  if (!(0, import_node_fs16.existsSync)(filePath)) {
     throw new Error(`repos.conf not found at: ${filePath}`);
   }
-  const content = (0, import_node_fs14.readFileSync)(filePath, "utf-8");
+  const content = (0, import_node_fs16.readFileSync)(filePath, "utf-8");
   const entries = [];
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -6055,7 +6717,7 @@ function findReposConf() {
     `${process.env.HOME}/.config/termux-boot/repos.conf`,
     `${process.env.HOME}/.termux/boot/repos.conf`
   ];
-  return candidates.find(import_node_fs14.existsSync) ?? null;
+  return candidates.find(import_node_fs16.existsSync) ?? null;
 }
 
 // src/tmx.ts
@@ -6084,11 +6746,11 @@ function resolveBunPath() {
   }
   const home = process.env.HOME ?? "/data/data/com.termux/files/home";
   const candidates = [
-    (0, import_node_path8.join)(home, ".bun", "bin", "bun"),
-    (0, import_node_path8.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
+    (0, import_node_path9.join)(home, ".bun", "bin", "bun"),
+    (0, import_node_path9.join)(process.env.PREFIX ?? "/data/data/com.termux/files/usr", "bin", "bun")
   ];
   for (const p of candidates) {
-    if ((0, import_node_fs15.existsSync)(p)) return p;
+    if ((0, import_node_fs17.existsSync)(p)) return p;
   }
   return process.argv[0];
 }
@@ -6165,9 +6827,9 @@ async function runBoot() {
     } catch {
       logDir = `${process.env.HOME}/.local/share/tmx/logs`;
     }
-    (0, import_node_fs15.mkdirSync)(logDir, { recursive: true });
+    (0, import_node_fs17.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
-    const stderrFd = (0, import_node_fs15.openSync)(stderrPath, "a");
+    const stderrFd = (0, import_node_fs17.openSync)(stderrPath, "a");
     const daemonEnv = { ...process.env };
     delete daemonEnv.CLAUDECODE;
     for (const key of Object.keys(daemonEnv)) {
@@ -6182,7 +6844,7 @@ async function runBoot() {
       env: daemonEnv
     });
     child.unref();
-    (0, import_node_fs15.closeSync)(stderrFd);
+    (0, import_node_fs17.closeSync)(stderrFd);
     for (let i = 0; i < 20; i++) {
       await sleep3(500);
       if (await client.isRunning()) break;
@@ -6204,7 +6866,7 @@ async function runBoot() {
   }
   if (subArgs.includes("--attach")) {
     await sleep3(1e3);
-    const tmuxBin = (0, import_node_path8.join)(
+    const tmuxBin = (0, import_node_path9.join)(
       process.env.PREFIX ?? "/data/data/com.termux/files/usr",
       "bin",
       "tmux"
@@ -6243,7 +6905,7 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
   }
   console.log(`${CYAN}Building...${RESET2}`);
   const buildResult = (0, import_node_child_process8.spawnSync)("bun", ["run", "build"], {
-    cwd: (0, import_node_path8.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+    cwd: (0, import_node_path9.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
     encoding: "utf-8",
     timeout: 3e4,
     stdio: ["ignore", "pipe", "pipe"]
@@ -6303,8 +6965,8 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
 function printStartupDiagnostics(logDir, stderrPath) {
   console.error();
   try {
-    if ((0, import_node_fs15.existsSync)(stderrPath)) {
-      const stderr = (0, import_node_fs15.readFileSync)(stderrPath, "utf-8").trim();
+    if ((0, import_node_fs17.existsSync)(stderrPath)) {
+      const stderr = (0, import_node_fs17.readFileSync)(stderrPath, "utf-8").trim();
       if (stderr) {
         const lines = stderr.split("\n").slice(-20);
         console.error(`${YELLOW}Daemon stderr (last ${lines.length} lines):${RESET2}`);
@@ -6318,8 +6980,8 @@ function printStartupDiagnostics(logDir, stderrPath) {
   }
   try {
     const logFile = `${logDir}/tmx.jsonl`;
-    if ((0, import_node_fs15.existsSync)(logFile)) {
-      const content = (0, import_node_fs15.readFileSync)(logFile, "utf-8").trim();
+    if ((0, import_node_fs17.existsSync)(logFile)) {
+      const content = (0, import_node_fs17.readFileSync)(logFile, "utf-8").trim();
       if (content) {
         const entries = content.split("\n").slice(-10);
         console.error(`${YELLOW}Recent log entries:${RESET2}`);
@@ -6412,15 +7074,15 @@ function runMigrate() {
   const toml = generateToml(entries);
   const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
-  if (!(0, import_node_fs15.existsSync)(outDir)) {
-    (0, import_node_fs15.mkdirSync)(outDir, { recursive: true });
+  if (!(0, import_node_fs17.existsSync)(outDir)) {
+    (0, import_node_fs17.mkdirSync)(outDir, { recursive: true });
   }
-  if ((0, import_node_fs15.existsSync)(outPath)) {
+  if ((0, import_node_fs17.existsSync)(outPath)) {
     console.log(`${YELLOW}${outPath} already exists \u2014 writing to ${outPath}.new${RESET2}`);
-    (0, import_node_fs15.writeFileSync)(`${outPath}.new`, toml);
+    (0, import_node_fs17.writeFileSync)(`${outPath}.new`, toml);
     console.log(`${GREEN}Written to ${outPath}.new${RESET2}`);
   } else {
-    (0, import_node_fs15.writeFileSync)(outPath, toml);
+    (0, import_node_fs17.writeFileSync)(outPath, toml);
     console.log(`${GREEN}Written to ${outPath}${RESET2}`);
   }
   console.log();
@@ -6465,7 +7127,7 @@ async function runRecentOrIpc() {
     }
   }
   const home = process.env.HOME ?? "";
-  const historyPath = (0, import_node_path8.join)(home, ".claude", "history.jsonl");
+  const historyPath = (0, import_node_path9.join)(home, ".claude", "history.jsonl");
   const projects = parseRecentProjects(historyPath, 1e3);
   if (projects.length === 0) {
     console.log(`${DIM2}No recent projects found${RESET2}`);
@@ -6487,7 +7149,7 @@ async function runIpcCommand() {
     process.exit(1);
   }
   const socketPath = client.socketPath;
-  if (!(0, import_node_fs15.existsSync)(socketPath)) {
+  if (!(0, import_node_fs17.existsSync)(socketPath)) {
     console.log(`${DIM2}Socket missing (Termux crash?) \u2014 requesting daemon re-create it...${RESET2}`);
     try {
       await fetch("http://127.0.0.1:18970/api/fix-socket", { method: "POST" });
@@ -6495,9 +7157,9 @@ async function runIpcCommand() {
     }
     for (let i = 0; i < 5; i++) {
       await sleep3(500);
-      if ((0, import_node_fs15.existsSync)(socketPath)) break;
+      if ((0, import_node_fs17.existsSync)(socketPath)) break;
     }
-    if (!(0, import_node_fs15.existsSync)(socketPath)) {
+    if (!(0, import_node_fs17.existsSync)(socketPath)) {
       console.error(`${RED}Socket not re-created. Try: tmx shutdown && tmx boot${RESET2}`);
       process.exit(1);
     }
@@ -6865,7 +7527,7 @@ ${BOLD}EXAMPLES${RESET2}
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
-    const pkg = JSON.parse((0, import_node_fs15.readFileSync)(pkgPath, "utf-8"));
+    const pkg = JSON.parse((0, import_node_fs17.readFileSync)(pkgPath, "utf-8"));
     console.log(`tmx v${pkg.version}`);
   } catch {
     console.log("tmx v0.1.0");

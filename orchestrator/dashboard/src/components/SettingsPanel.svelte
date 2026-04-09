@@ -5,6 +5,7 @@
     CustomizationResponse, McpServerInfo, PluginInfo, SkillInfo,
     ClaudeMdInfo, HookInfo, MarketplacePlugin, RecentProject,
   } from "../lib/types";
+  import McpManager from "./McpManager.svelte";
 
   // -- Constants --------------------------------------------------------------
 
@@ -499,70 +500,7 @@ Example usage or output
       </button>
       {#if sections.mcp}
         <div class="section-body">
-          {#if data.mcpServers.length === 0}
-            <p class="muted">No MCP servers configured</p>
-          {:else}
-            <div class="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Scope</th>
-                    <th>Command</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each data.mcpServers as srv (srv.name + srv.source)}
-                    <tr class:disabled-row={srv.disabled} onclick={() => toggleExpand(`mcp:${srv.name}`)}>
-                      <td class="name-cell">{srv.name}</td>
-                      <td>
-                        <span class="badge" class:badge-blue={srv.scope === "user"} class:badge-dim={srv.scope === "project"}>
-                          {srv.scope}
-                        </span>
-                      </td>
-                      <td class="cmd-cell" title="{shortenPath(srv.command)} {srv.args.map(a => shortenPath(a)).join(' ')}">
-                        {shortenPath(srv.command)}
-                      </td>
-                      <td>
-                        {#if srv.disabled}
-                          <span class="badge badge-dim">disabled</span>
-                        {:else}
-                          <span class="badge badge-green">active</span>
-                        {/if}
-                      </td>
-                    </tr>
-                    {#if expandedItem === `mcp:${srv.name}`}
-                      <tr class="detail-row">
-                        <td colspan="4">
-                          <div class="detail-content">
-                            <div class="detail-grid">
-                              <span class="detail-label">Source</span>
-                              <span>{srv.source}</span>
-                              <span class="detail-label">Command</span>
-                              <span class="mono">{shortenPath(srv.command)}</span>
-                              {#if srv.args.length > 0}
-                                <span class="detail-label">Args</span>
-                                <span class="mono">{srv.args.map(a => shortenPath(a)).join(" ")}</span>
-                              {/if}
-                              {#if srv.env}
-                                <span class="detail-label">Env</span>
-                                <span class="mono">
-                                  {#each Object.entries(srv.env) as [k, v]}
-                                    <div>{k}={v}</div>
-                                  {/each}
-                                </span>
-                              {/if}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    {/if}
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {/if}
+          <McpManager servers={data.mcpServers} onrefresh={loadData} />
         </div>
       {/if}
     </div>

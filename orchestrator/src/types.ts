@@ -287,6 +287,88 @@ export interface HealthResult {
   duration_ms: number;
 }
 
+// -- Token tracking -----------------------------------------------------------
+
+/** Token usage for a single Claude session JSONL file */
+export interface SessionTokenUsage {
+  session_id: string;
+  jsonl_path: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  turns: number;
+  cost_usd: number;
+  file_size_bytes: number;
+  last_modified: string;
+}
+
+/** Aggregated token usage for a project (all JSONL files) */
+export interface ProjectTokenUsage {
+  name: string;
+  path: string;
+  sessions: SessionTokenUsage[];
+  total: {
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_creation_tokens: number;
+    turns: number;
+    cost_usd: number;
+  };
+}
+
+// -- Conversation viewer ------------------------------------------------------
+
+/** A single structured block within an assistant message */
+export interface ConversationBlock {
+  type: "text" | "thinking" | "tool_use" | "tool_result";
+  /** Text content (text/thinking blocks — thinking truncated to 500 chars) */
+  text?: string;
+  /** Tool name (tool_use blocks) */
+  tool_name?: string;
+  /** Truncated tool input JSON (tool_use — max 200 chars) */
+  tool_input?: string;
+  /** Truncated tool result (tool_result — max 1000 chars) */
+  tool_result?: string;
+}
+
+/** A single conversation entry (user prompt, assistant response, or tool result) */
+export interface ConversationEntry {
+  uuid: string;
+  type: "user" | "assistant" | "tool_result";
+  timestamp: string;
+  /** User prompt text or concatenated assistant text */
+  content: string;
+  /** Structured content blocks (assistant messages only) */
+  blocks?: ConversationBlock[];
+  /** Token usage for this turn */
+  usage?: { input: number; output: number; cache_read: number; cache_create: number };
+  /** Model used for this response */
+  model?: string;
+}
+
+/** Paginated conversation response */
+export interface ConversationPage {
+  entries: ConversationEntry[];
+  /** Cursor for pagination — UUID of oldest entry in this page */
+  oldest_uuid: string | null;
+  has_more: boolean;
+  session_id: string;
+  /** Available JSONL sessions for the session picker */
+  session_list: Array<{ id: string; last_modified: string }>;
+}
+
+// -- Session timeline ---------------------------------------------------------
+
+/** A single event in the session timeline */
+export interface TimelineEvent {
+  timestamp: string;
+  source: "trace" | "conversation" | "state";
+  event: string;
+  detail?: string;
+}
+
 // -- Dependency graph ---------------------------------------------------------
 
 /** Batch of sessions that can start in parallel */

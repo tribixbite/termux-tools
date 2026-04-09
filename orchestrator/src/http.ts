@@ -135,7 +135,7 @@ export class DashboardServer {
 
     // CORS headers for local development
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
     if (req.method === "OPTIONS") {
@@ -151,9 +151,10 @@ export class DashboardServer {
         return;
       }
 
-      // API routes
+      // API routes — pass full URL (path + search params) to handler
       if (path.startsWith("/api/")) {
-        await this.handleApi(req, res, path);
+        const fullPath = path + url.search;
+        await this.handleApi(req, res, fullPath);
         return;
       }
 
@@ -197,9 +198,9 @@ export class DashboardServer {
     res: http.ServerResponse,
     path: string,
   ): Promise<void> {
-    // Read request body for POST (with timeout + size limit)
+    // Read request body for POST/PUT/DELETE (with timeout + size limit)
     let body = "";
-    if (req.method === "POST") {
+    if (req.method === "POST" || req.method === "PUT" || req.method === "DELETE") {
       try {
         body = await new Promise<string>((resolve, reject) => {
           const chunks: Buffer[] = [];
