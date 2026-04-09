@@ -945,7 +945,13 @@ function broadcastState() {
 chrome.tabs.onRemoved.addListener((tabId) => {
   mcpTabGroup.delete(tabId);
   networkRequests.delete(tabId);
-  // contentPorts cleanup is handled by port.onDisconnect, but guard here too
+  tabQueues.delete(tabId);
+  // Force-disconnect port to flush pending requests (onDisconnect may not
+  // fire if renderer was killed abruptly via CDP /json/close)
+  const port = contentPorts.get(tabId);
+  if (port) {
+    try { port.disconnect(); } catch {}
+  }
   contentPorts.delete(tabId);
 });
 

@@ -73,7 +73,10 @@ done
 
 # Check for apksigner
 APKSIGNER=""
-for bt_dir in "$HOME/android-sdk/build-tools/35.0.0" \
+for bt_dir in "$HOME/android-tools/android-sdk/build-tools/35.0.0" \
+              "$HOME/android-tools/android-sdk/build-tools/34.0.0" \
+              "$HOME/android-tools/android-sdk/build-tools/34.0.0-arm64" \
+              "$HOME/android-sdk/build-tools/35.0.0" \
               "$HOME/android-sdk/build-tools/34.0.0" \
               "$HOME/android-sdk/build-tools/34.0.0-arm64"; do
     if [ -f "$bt_dir/apksigner" ]; then
@@ -299,6 +302,58 @@ done
 # the ART verifier to reject the entire DEX file. DEX files that can't survive
 # baksmali/smali round-trip (interfaces with static methods) are left unpatched.
 # URLs in those files (classes4.dex) are documented in replace-urls.list.
+
+# ─── 3c. Patch Chromium CommandLine to read flags on release builds ───
+# BuildInfo.isDebugAndroid() gates command-line flag file reading. We patch it
+# to return true so flags in /data/local/tmp/<pkg>-command-line are read without
+# requiring android:debuggable=true (which would expose the app to JDWP attacks).
+# The class may be in any DEX — scan all decompiled dirs, or decompile additional
+# DEX files if needed.
+echo "  Patching Chromium BuildInfo.isDebugAndroid()..."
+CMDLINE_PATCHED=0
+
+# First check already-decompiled DEX directories
+if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK" 2>/dev/null; then
+    CMDLINE_PATCHED=1
+fi
+
+# If not found, scan remaining DEX files
+if [ "$CMDLINE_PATCHED" -eq 0 ]; then
+    for extra_dex in "$BASE_APK_DIR"/*.dex "$WORK_DIR"/base-apk/*.dex; do
+        [ -f "$extra_dex" ] || continue
+        extra_name=$(basename "$extra_dex")
+        # Skip already-processed DEXes
+        [ -f "$DEX_WORK/$extra_name" ] && continue
+
+        echo "    Scanning $extra_name for BuildInfo..."
+        cp "$extra_dex" "$DEX_WORK/" 2>/dev/null || \
+            unzip -o "$BASE_APK" "$extra_name" -d "$DEX_WORK" > /dev/null 2>&1 || continue
+
+        case "$extra_name" in
+            classes.dex) extra_smali="smali" ;;
+            classes*.dex) extra_smali="smali_${extra_name%.dex}" ;;
+            *) continue ;;
+        esac
+
+        java -jar "$BAKSMALI_JAR" d "$DEX_WORK/$extra_name" -o "$DEX_WORK/$extra_smali" 2>&1
+
+        if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK" 2>/dev/null; then
+            # Recompile the patched DEX
+            java -jar "$SMALI_JAR" a "$DEX_WORK/$extra_smali" -o "$DEX_WORK/${extra_name%.dex}-patched.dex" 2>&1
+            echo "    $extra_name: patched for command-line flags"
+            CMDLINE_PATCHED=1
+            break
+        fi
+
+        # Clean up if not the target
+        rm -rf "$DEX_WORK/$extra_smali" "$DEX_WORK/$extra_name"
+    done
+fi
+
+if [ "$CMDLINE_PATCHED" -eq 0 ]; then
+    warn "Could not find BuildInfo.isDebugAndroid() — command-line flags may not work"
+    warn "Fallback: set android:debuggable=true in manifest (less secure)"
+fi
 echo ""
 
 # ─── 4. Assemble output APK ───

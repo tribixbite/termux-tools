@@ -1,6 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/bash
 # push-flags.sh — Push Chromium command-line flags to device
-# Requires android:debuggable=true in the APK manifest
+# Requires BuildInfo.isDebugAndroid() smali patch (or android:debuggable=true)
 #
 # Usage: ./push-flags.sh [adb-serial]
 
