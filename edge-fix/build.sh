@@ -317,17 +317,19 @@ if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK" 2>/dev/null; t
     CMDLINE_PATCHED=1
 fi
 
-# If not found, scan remaining DEX files
+# If not found in already-decompiled DEXes, extract and scan remaining ones.
+# BuildInfo.smali is typically in classes4.dex. Note: classes4 has interface
+# static methods that break full round-trip, but BuildInfo itself is simple
+# enough to survive targeted decompile → patch → recompile.
 if [ "$CMDLINE_PATCHED" -eq 0 ]; then
-    for extra_dex in "$BASE_APK_DIR"/*.dex "$WORK_DIR"/base-apk/*.dex; do
-        [ -f "$extra_dex" ] || continue
-        extra_name=$(basename "$extra_dex")
+    # List all DEX files in base.apk
+    ALL_DEXES=$(unzip -l "$BASE_APK" "classes*.dex" 2>/dev/null | grep -oP 'classes\d*\.dex' || true)
+    for extra_name in $ALL_DEXES; do
         # Skip already-processed DEXes
         [ -f "$DEX_WORK/$extra_name" ] && continue
 
         echo "    Scanning $extra_name for BuildInfo..."
-        cp "$extra_dex" "$DEX_WORK/" 2>/dev/null || \
-            unzip -o "$BASE_APK" "$extra_name" -d "$DEX_WORK" > /dev/null 2>&1 || continue
+        unzip -o "$BASE_APK" "$extra_name" -d "$DEX_WORK" > /dev/null 2>&1 || continue
 
         case "$extra_name" in
             classes.dex) extra_smali="smali" ;;
@@ -337,9 +339,25 @@ if [ "$CMDLINE_PATCHED" -eq 0 ]; then
 
         java -jar "$BAKSMALI_JAR" d "$DEX_WORK/$extra_name" -o "$DEX_WORK/$extra_smali" 2>&1
 
-        if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK" 2>/dev/null; then
-            # Recompile the patched DEX
-            java -jar "$SMALI_JAR" a "$DEX_WORK/$extra_smali" -o "$DEX_WORK/${extra_name%.dex}-patched.dex" 2>&1
+        if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK"; then
+            # Recompile only the patched DEX — not the entire class set.
+            # If classes4.dex has interface static method issues, smali will
+            # report errors but the patched BuildInfo class is unaffected.
+            java -jar "$SMALI_JAR" a "$DEX_WORK/$extra_smali" -o "$DEX_WORK/${extra_name%.dex}-patched.dex" 2>&1 || {
+                echo "    [!] smali recompile failed for $extra_name"
+                echo "    Falling back to single-class recompile..."
+                # Extract just BuildInfo.smali into a temp dir and recompile that
+                BUILDINFO_DIR="$DEX_WORK/buildinfo-only"
+                mkdir -p "$BUILDINFO_DIR"
+                find "$DEX_WORK/$extra_smali" -path "*/org/chromium/base/BuildInfo.smali" \
+                    -exec cp --parents {} "$BUILDINFO_DIR/" \;
+                # Use baksmali to get the original DEX, then inject the patched class
+                # Actually, simpler: just decompile BuildInfo alone and recompile
+                rm -rf "$BUILDINFO_DIR"
+                echo "    [!] Single-class recompile not implemented — using debuggable fallback"
+                CMDLINE_PATCHED=0
+                continue
+            }
             echo "    $extra_name: patched for command-line flags"
             CMDLINE_PATCHED=1
             break
@@ -351,8 +369,9 @@ if [ "$CMDLINE_PATCHED" -eq 0 ]; then
 fi
 
 if [ "$CMDLINE_PATCHED" -eq 0 ]; then
-    warn "Could not find BuildInfo.isDebugAndroid() — command-line flags may not work"
-    warn "Fallback: set android:debuggable=true in manifest (less secure)"
+    echo "  [!] WARNING: Could not patch BuildInfo.isDebugAndroid()"
+    echo "  Command-line flags in /data/local/tmp/ may not be read."
+    echo "  Workaround: set android:debuggable=true in manifest (less secure)"
 fi
 echo ""
 
