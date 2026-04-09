@@ -1,0 +1,19 @@
+# Chromium command-line flags for Edge Canary on Android
+# Applied via /data/local/tmp/com.microsoft.emmx.canary-command-line
+# Requires android:debuggable=true in manifest
+#
+# Process model — reduce renderer count on RAM-constrained devices:
+#   --process-per-site: share renderer across same-site tabs (vs per-tab)
+#   --renderer-process-limit=4: hard cap on renderer processes
+#   --extension-process-limit=1: share one process across all extensions
+#
+# Site isolation — relax strict isolation for memory savings:
+#   ProcessSharingWithStrictSiteInstances: share renderers for same-site tabs
+#   disable SitePerProcess: don't enforce per-site process isolation
+#   disable IsolateOrigins: don't force origin-level isolation
+#
+--process-per-site
+--renderer-process-limit=4
+--extension-process-limit=1
+--disable-features=IsolateOrigins,SitePerProcess
+--enable-features=ProcessSharingWithStrictSiteInstances

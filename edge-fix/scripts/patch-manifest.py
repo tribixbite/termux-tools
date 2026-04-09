@@ -140,6 +140,14 @@ def main():
     print("\n=== Stripping tracker meta-data ===")
     n_meta = strip_metadata(root, config_dir)
 
+    # Enable debuggable so Chromium reads /data/local/tmp/<pkg>-command-line
+    # for runtime flags (process-per-site, renderer-process-limit, etc.)
+    app_elem = root.find("application")
+    if app_elem is not None:
+        app_elem.set(android_attr("debuggable"), "true")
+        print("\n=== Enabling debuggable for command-line flags ===")
+        print("  [x] Set android:debuggable=true on <application>")
+
     # Remove @null meta-data entries to avoid apktool compilation issues
     # (apktool compiles @null to @0x00000000 which GMS rejects as invalid)
     # Removing the entries entirely is safer than replacing with "0"
