@@ -14,24 +14,29 @@ smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali
 smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali
 
 # -- OneAuth (cross-app token sharing, enterprise SSO) --
-# TODO: locate exact smali path during next build — grep for loadLibrary("OneAuth")
-# Typically in smali_classes2/com/microsoft/aad/adal/ or com/microsoft/identity/
-# These are enterprise-only code paths — strip risk is minimal
-#smali_classes2/com/microsoft/identity/common/internal/nativeauth/NativeAuthBridge.smali
+# In classes4.dex — can't round-trip safely (interface static method bugs).
+# Enterprise-only code path, unlikely to fire on consumer device. Accepted risk.
+# smali_classes4/org/chromium/chrome/authentication/oneauth/OneAuthAPI.smali
+
+# -- Citrix CoreSdkCrypto + fullsslsdk (enterprise VPN/SSL proxy) --
+smali/com/citrix/sdk/crypto/helper/CryptoHelper.smali
+smali/com/citrix/mvpn/MAM/Android/AuthSSO/proxy/Helper.smali
+smali/mj60.smali
 
 # -- Microsoft Information Protection (MIP) SDK --
-# TODO: locate exact smali paths — grep for loadLibrary("mip_core")
-# Enterprise DLP/classification — consumer Edge doesn't trigger these
-#smali_classes3/com/microsoft/informationprotection/internal/NativeLibraryLoader.smali
+# Enterprise DLP/classification — loads mip_core, mip_protection_sdk, mip_upe_sdk
+smali_classes3/com/microsoft/informationprotection/MipLibrary.smali
+# MIP v2 — loads mip_core_gn
+smali_classes3/com/microsoft/informationprotection/v2/MipLibrary.smali
 
-# -- Bing Opus (voice/AI search) --
-# TODO: locate exact smali path — grep for loadLibrary("bingopus")
-#smali_classes2/com/microsoft/bing/opus/NativeOpusCodec.smali
+# -- Bing Opus (voice/AI audio codec) --
+smali_classes2/com/microsoft/bing/speechlib/OpusEncoder.smali
 
-# -- MSAOAID (advertising ID, device fingerprinting) --
-# TODO: locate exact smali path — grep for loadLibrary("msaoaidsec")
-#smali_classes2/com/huawei/hms/ads/identifier/NativeOaid.smali
+# -- MSAOAID (Adjust SDK advertising ID, device fingerprinting) --
+smali/com/adjust/sdk/oaid/AdjustOaid.smali
+smali_classes3/k1p.smali
+smali/com/bun/miitmdid/core/CertChecker.smali
 
 # -- ARCore (augmented reality, WebXR) --
-# TODO: locate exact smali path — grep for loadLibrary("arcore_sdk_c")
-#smali_classes3/com/google/ar/core/NativeApi.smali
+# No loadLibrary call found in DEX — loaded from native side only.
+# Safe to strip .so without smali stub.
