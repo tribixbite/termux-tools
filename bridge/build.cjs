@@ -32,7 +32,7 @@ build({
   console.log("Built dist/cli.js");
 
   // Copy latest CRX into dist/ for npm package inclusion
-  const { existsSync, copyFileSync } = require("fs");
+  const { existsSync, copyFileSync, mkdirSync } = require("fs");
   const latestCrx = resolve(__dirname, "../dist/claude-code-bridge-latest.crx");
   const destCrx = resolve(__dirname, "dist/claude-code-bridge.crx");
   if (existsSync(latestCrx)) {
@@ -40,6 +40,28 @@ build({
     console.log("Copied CRX → dist/claude-code-bridge.crx");
   } else {
     console.warn("Warning: dist/claude-code-bridge-latest.crx not found, CRX not bundled");
+  }
+
+  // Copy extension source files into dist/edge-claude-ext/ for --load-extension install
+  const extSrcDir = resolve(__dirname, "../edge-claude-ext");
+  const extDestDir = resolve(__dirname, "dist/edge-claude-ext");
+  const extFiles = [
+    "manifest.json", "background.js", "content.js",
+    "popup.html", "popup.js", "launcher.html", "launcher.js",
+    "icon16.png", "icon48.png", "icon128.png",
+  ];
+
+  if (existsSync(extSrcDir)) {
+    mkdirSync(extDestDir, { recursive: true });
+    let copied = 0;
+    for (const f of extFiles) {
+      const src = resolve(extSrcDir, f);
+      if (existsSync(src)) {
+        copyFileSync(src, resolve(extDestDir, f));
+        copied++;
+      }
+    }
+    console.log(`Copied ${copied} extension files → dist/edge-claude-ext/`);
   }
 }).catch((err) => {
   console.error("Build failed:", err);

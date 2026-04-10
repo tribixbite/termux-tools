@@ -1,6 +1,6 @@
 {
   "name": "claude-chrome-android",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Claude Code Browser Bridge for Android — connects Claude Code CLI to Chrome/Edge via WebSocket",
   "author": "willstone",
   "license": "MIT",

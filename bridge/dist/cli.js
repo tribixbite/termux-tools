@@ -6226,120 +6226,123 @@ esac
   (0, import_fs.chmodSync)(urlOpenerPath, 493);
   console.log(`${urlOpenerExists ? "Updated" : "Created"} ${urlOpenerPath}`);
   const dir = typeof __dirname !== "undefined" ? __dirname : (0, import_path2.dirname)(new URL(import_meta_url).pathname);
-  const extVersion = (() => {
-    const manifestCandidates = [
-      (0, import_path2.resolve)(dir, "../../edge-claude-ext/manifest.json")
-      // source repo
-    ];
-    for (const p of manifestCandidates) {
-      try {
-        return JSON.parse((0, import_fs.readFileSync)(p, "utf-8")).version;
-      } catch {
-      }
-    }
-    return PKG_VERSION;
-  })();
-  const crxCandidates = [
-    (0, import_path2.resolve)(dir, "claude-code-bridge.crx"),
-    // npm package (bridge/dist/)
-    (0, import_path2.resolve)(dir, `../../dist/claude-code-bridge-v${extVersion}.crx`),
+  const EXT_DEST = "/data/local/tmp/cfc-ext";
+  const FLAGS_FILE = "/data/local/tmp/chrome-command-line";
+  const LOAD_EXT_FLAG = `--load-extension=${EXT_DEST}`;
+  const extDirCandidates = [
+    (0, import_path2.resolve)(dir, "../../edge-claude-ext"),
     // source repo
-    (0, import_path2.resolve)(dir, "../../dist/claude-code-bridge-latest.crx")
-    // source repo -latest
+    (0, import_path2.resolve)(dir, "edge-claude-ext")
+    // npm package (dist/edge-claude-ext/)
   ];
-  let crxPath = crxCandidates.find((p) => (0, import_fs.existsSync)(p));
-  if (!crxPath) {
-    const buildScript = (0, import_path2.resolve)(dir, "../../scripts/build-crx.js");
-    if ((0, import_fs.existsSync)(buildScript)) {
-      console.log("\nBuilding CRX extension...");
-      spawnSync2("node", [buildScript], { stdio: "inherit" });
-      crxPath = crxCandidates.find((p) => (0, import_fs.existsSync)(p));
-    }
-  }
-  if (!crxPath) {
-    console.log("\nCRX not found. To install the extension manually:");
-    console.log("  1. Start the bridge: npx claude-chrome-android");
-    console.log("  2. Open http://127.0.0.1:18963/ext/crx in Edge");
+  const extDir = extDirCandidates.find((d) => (0, import_fs.existsSync)((0, import_path2.resolve)(d, "manifest.json")));
+  const EXT_FILES = [
+    "manifest.json",
+    "background.js",
+    "content.js",
+    "popup.html",
+    "popup.js",
+    "launcher.html",
+    "launcher.js",
+    "icon16.png",
+    "icon48.png",
+    "icon128.png"
+  ];
+  const adbCheck = spawnSync2("adb", ["devices"], { stdio: "pipe", encoding: "utf-8" });
+  const hasAdb = adbCheck.status === 0 && adbCheck.stdout.includes("	device");
+  if (!extDir) {
+    console.log("\nExtension source not found. Skipping extension install.");
+    console.log("To install manually, clone the repo and run push-extension.sh.");
+  } else if (!hasAdb) {
+    console.log("\nADB not available. Extension install requires ADB connection.");
+    console.log("Connect via: adb tcpip 5555 && adb connect <device-ip>");
   } else {
-    const adbCheck = spawnSync2("adb", ["devices"], { stdio: "pipe", encoding: "utf-8" });
-    const hasAdb = adbCheck.status === 0 && adbCheck.stdout.includes("	device");
-    if (!hasAdb) {
-      console.log(`
-CRX found at ${crxPath}`);
-      console.log("ADB not available. To install the extension:");
-      console.log("  1. Start the bridge: npx claude-chrome-android");
-      console.log("  2. Open http://127.0.0.1:18963/ext/crx in Edge");
-    } else {
-      const http2 = await import("http");
-      const crxBuf = (0, import_fs.readFileSync)(crxPath);
-      const INSTALL_PORT = 18964;
-      const crxServer = http2.createServer((_req, res) => {
-        res.writeHead(200, {
-          "Content-Type": "application/x-chrome-extension",
-          "Content-Disposition": 'attachment; filename="claude-code-bridge.crx"',
-          "Content-Length": String(crxBuf.length)
+    const extVersion = (() => {
+      try {
+        return JSON.parse((0, import_fs.readFileSync)((0, import_path2.resolve)(extDir, "manifest.json"), "utf-8")).version;
+      } catch {
+        return PKG_VERSION;
+      }
+    })();
+    console.log(`
+Installing CFC extension v${extVersion} via --load-extension...`);
+    spawnSync2("adb", ["shell", "mkdir", "-p", EXT_DEST], { stdio: "pipe" });
+    let pushed = 0;
+    for (const f of EXT_FILES) {
+      const src = (0, import_path2.resolve)(extDir, f);
+      if ((0, import_fs.existsSync)(src)) {
+        const result = spawnSync2("adb", ["push", src, `${EXT_DEST}/${f}`], {
+          stdio: "pipe",
+          encoding: "utf-8"
         });
-        res.end(crxBuf);
-      });
-      await new Promise((resolve3) => {
-        crxServer.listen(INSTALL_PORT, "127.0.0.1", resolve3);
-      });
-      console.log(`
-Serving CRX at http://127.0.0.1:${INSTALL_PORT}/ext.crx`);
-      const edgePackages = [
-        "com.microsoft.emmx.canary",
-        "com.microsoft.emmx.dev",
-        "com.microsoft.emmx.beta",
-        "com.microsoft.emmx"
-      ];
-      let opened = false;
-      for (const pkg of edgePackages) {
-        const result = spawnSync2("adb", [
-          "shell",
-          "am",
-          "start",
-          "-a",
-          "android.intent.action.VIEW",
-          "-d",
-          `http://127.0.0.1:${INSTALL_PORT}/ext.crx`,
-          "-n",
-          `${pkg}/com.microsoft.ruby.Main`
-        ], { stdio: "pipe", encoding: "utf-8" });
-        if (result.status === 0 && !result.stderr.includes("Error")) {
-          console.log(`Opened CRX download in ${pkg}`);
-          opened = true;
-          break;
-        }
+        if (result.status === 0) pushed++;
       }
-      if (!opened) {
-        console.log("Could not open Edge automatically.");
-        console.log(`Open this URL in Edge: http://127.0.0.1:${INSTALL_PORT}/ext.crx`);
-      }
-      console.log("Waiting 15s for download...");
-      await new Promise((r) => setTimeout(r, 15e3));
-      crxServer.close();
-      spawnSync2("adb", [
-        "shell",
-        "am",
-        "start",
-        "-a",
-        "android.intent.action.VIEW",
-        "-d",
-        "edge://extensions",
-        "-n",
-        "com.microsoft.emmx.canary/com.google.android.apps.chrome.IntentDispatcher"
-      ], { stdio: "ignore" });
-      console.log("Opened edge://extensions \u2014 verify the extension is listed.");
-      console.log("Note: if prompted, tap 'Add extension' in the download notification.");
     }
+    console.log(`  Pushed ${pushed}/${EXT_FILES.length} files to ${EXT_DEST}`);
+    const flagsResult = spawnSync2("adb", ["shell", "cat", FLAGS_FILE], {
+      stdio: "pipe",
+      encoding: "utf-8"
+    });
+    let currentFlags = flagsResult.stdout?.trim() || "";
+    if (!currentFlags.includes("--load-extension=")) {
+      if (!currentFlags) {
+        currentFlags = `_ ${LOAD_EXT_FLAG}`;
+      } else {
+        currentFlags = `${currentFlags} ${LOAD_EXT_FLAG}`;
+      }
+      spawnSync2("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], {
+        stdio: "pipe"
+      });
+      console.log("  Added --load-extension flag to chrome-command-line");
+    } else if (!currentFlags.includes(EXT_DEST)) {
+      currentFlags = currentFlags.replace(/--load-extension=\S+/, LOAD_EXT_FLAG);
+      spawnSync2("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], {
+        stdio: "pipe"
+      });
+      console.log("  Updated --load-extension path in chrome-command-line");
+    } else {
+      console.log("  --load-extension flag already set");
+    }
+    const edgePackages = [
+      "com.microsoft.emmx.canary",
+      "com.microsoft.emmx.dev",
+      "com.microsoft.emmx.beta",
+      "com.microsoft.emmx"
+    ];
+    let edgePkg = "";
+    for (const pkg of edgePackages) {
+      const check = spawnSync2("adb", ["shell", "pm", "list", "packages", pkg], {
+        stdio: "pipe",
+        encoding: "utf-8"
+      });
+      if (check.stdout?.includes(pkg)) {
+        edgePkg = pkg;
+        break;
+      }
+    }
+    if (edgePkg) {
+      spawnSync2("adb", ["shell", "settings", "put", "global", "debug_app", edgePkg], {
+        stdio: "pipe"
+      });
+      console.log(`  Set debug_app=${edgePkg} for flag reading`);
+      spawnSync2("adb", ["shell", "am", "force-stop", edgePkg], { stdio: "pipe" });
+      console.log(`  Restarted ${edgePkg} to apply changes`);
+    } else {
+      console.log("  WARNING: No Edge browser found. Install Edge Canary from the Play Store.");
+    }
+    console.log("  Extension will load automatically when Edge starts.");
   }
   console.log(`
 Setup complete!
 
 Next steps:
   1. Start the bridge:  npx claude-chrome-android
-  2. Open a new Claude Code session \u2014 browser tools (mcp__cfc-bridge__*) will be available
-  3. Use ToolSearch to find and load cfc-bridge tools
+  2. Open Edge \u2014 the extension loads automatically via --load-extension
+  3. Open a new Claude Code session \u2014 browser tools (mcp__cfc-bridge__*) will be available
+  4. Use ToolSearch to find and load cfc-bridge tools
+
+To update the extension later:
+  npx claude-chrome-android --setup   (re-pushes latest files)
 `);
 }
 async function cmdStart() {
