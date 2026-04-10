@@ -16,7 +16,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "node build.cjs"
+    "build": "node build.cjs",
+    "pub": "bash publish.sh"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",
