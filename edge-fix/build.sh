@@ -425,9 +425,12 @@ if [ -f "$CONFIG_DIR/strip-libs.list" ]; then
     echo "  Stripped $STRIP_COUNT libraries (~$((STRIP_BYTES / 1048576))MB)"
 fi
 
-# Strip unused assets (HMS certs, LaTeX math — PDF viewer kept)
+# Strip unused assets (HMS certs + GRS route configs, LaTeX math — PDF viewer kept)
 echo "  Stripping unused assets..."
 zip -d "$OUTPUT_APK" "assets/hmsrootcas.bks" "assets/hmsincas.bks" > /dev/null 2>&1 || true
+zip -d "$OUTPUT_APK" "assets/grs_sdk_global_route_config_opendevicesdk.json" \
+    "assets/grs_sdk_global_route_config_opensdkService.json" \
+    "assets/grs_sdk_server_config.json" > /dev/null 2>&1 || true
 zip -d "$OUTPUT_APK" "assets/org/scilab/forge/jlatexmath/*" > /dev/null 2>&1 || true
 
 # Replace patched manifest

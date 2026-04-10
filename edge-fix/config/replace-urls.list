@@ -44,6 +44,26 @@ https://edge-mobile-static.azureedge.net/android/oaid/
 # -- Token share configuration --
 https://oneclient.sfx.ms/mobile/ts_configuration.jwt
 
+# -- Google Ads tracking beacon (GMS ad identifier ping) --
+https://pagead2.googlesyndication.com/pagead/gen_204?id=gmob-apps
+
+# -- Microsoft AFD A/B experimentation (server-to-server) --
+http://test-exp-s2s.msedge.net/ab
+
+# -- Xiaomi MiPush SDK registration + resolver + XMPP --
+https://cn.register.xmpush.xiaomi.com
+https://resolver.msg.xiaomi.net/psc/?t=a
+resolver.msg.xiaomi.net
+cn.app.chat.xiaomi.net
+app.chat.xiaomi.net
+sandbox.xmpush.xiaomi.com
+
+# -- Microsoft product key redemption event reporting --
+https://res.getmicrosoftkey.com/api/redemptionevents?api-version=1.0&client-request-id=
+
+# -- Edge Copilot prompt hub (contextual chat templates) --
+https://edge.microsoft.com/edgecontextualchat/api/v1/prompthub
+
 # -- NOTE: The following URLs exist in classes4.dex which cannot be safely
 # patched (baksmali/smali round-trip causes IncompatibleClassChangeError,
 # and binary string replacement breaks DEX string table sort order).
@@ -51,3 +71,4 @@ https://oneclient.sfx.ms/mobile/ts_configuration.jwt
 #   - https://clientservices.googleapis.com/chrome-variations/seed (A/B testing)
 #   - https://permanently-removed.invalid/cr/report (already invalid domain)
 #   - https://prod.rewardsplatform.microsoft.com/dapi/me/activities/ (rewards API)
+#   - https://api.webxtsvc.microsoft.com (web extensions telemetry)
