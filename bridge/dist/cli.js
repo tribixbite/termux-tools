@@ -5361,6 +5361,42 @@ var init_claude_chrome_bridge = __esm({
           targets: this.cachedTargets.filter((t) => t.type === "page").length
         };
       }
+      /**
+       * Send Memory.simulatePressureNotification to all page renderers to force GC
+       * and release cached resources. Called after tab close or on demand via /memory-pressure.
+       * Uses "moderate" level to trigger GC without killing renderers.
+       */
+      async simulateMemoryPressure() {
+        if (!this.isAvailable()) return { targeted: 0, errors: 0 };
+        await this.refreshTargets();
+        const pages = this.cachedTargets.filter((t) => t.type === "page");
+        let targeted = 0;
+        let errors = 0;
+        for (const page of pages) {
+          try {
+            let sessionId = this.sessionMap.get(page.targetId);
+            if (!sessionId) {
+              const attach = await this.sendCommand("Target.attachToTarget", {
+                targetId: page.targetId,
+                flatten: true
+              });
+              sessionId = attach.sessionId;
+              this.sessionMap.set(page.targetId, sessionId);
+            }
+            await this.sendCommand("Memory.simulatePressureNotification", {
+              level: "moderate"
+            }, sessionId);
+            targeted++;
+          } catch (err) {
+            log("debug", `CDP: memory pressure failed for ${page.url} \u2014 ${err.message}`);
+            errors++;
+          }
+        }
+        if (targeted > 0) {
+          log("info", `CDP: sent memory pressure to ${targeted} page renderer(s)`);
+        }
+        return { targeted, errors };
+      }
       /** Schedule exponential backoff reconnect: 2s, 4s, 8s, 16s, max 30s */
       scheduleExpBackoff() {
         if (this.backoffTimer) return;
@@ -5527,6 +5563,13 @@ var init_claude_chrome_bridge = __esm({
           setTimeout(() => shutdown(), 200);
           return new Response(
             JSON.stringify({ status: "shutting_down" }),
+            { headers: { "Content-Type": "application/json" } }
+          );
+        }
+        if (url.pathname === "/memory-pressure" && req.method === "POST") {
+          const result = await cdpManager.simulateMemoryPressure();
+          return new Response(
+            JSON.stringify(result),
             { headers: { "Content-Type": "application/json" } }
           );
         }
@@ -5757,6 +5800,10 @@ var init_claude_chrome_bridge = __esm({
             if (parsed.type === "ping") {
               ws.send(JSON.stringify({ type: "pong" }));
               return;
+            }
+            if (parsed.type === "tab_removed") {
+              log("info", `Tab ${parsed.tabId} removed (mcp=${parsed.wasMcpTab}), scheduling memory pressure`);
+              setTimeout(() => cdpManager.simulateMemoryPressure(), 2e3);
             }
             if (parsed.type === "tool_response" && parsed.result?.result?.tabs) {
               const tabs = parsed.result.result.tabs;
