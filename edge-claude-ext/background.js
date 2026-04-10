@@ -862,9 +862,11 @@ async function injectContentScriptIntoAllTabs() {
       if (!tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("edge://")) continue;
       if (contentPorts.has(tab.id)) continue; // already connected
       try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          files: ["content.js"],
+        await new Promise((resolve, reject) => {
+          chrome.tabs.executeScript(tab.id, { file: "content.js" }, () => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve();
+          });
         });
       } catch {
         // Permission denied or tab not scriptable — skip
@@ -880,9 +882,11 @@ async function injectContentScriptIntoAllTabs() {
 async function ensureContentScript(tabId) {
   if (contentPorts.has(tabId)) return; // already connected
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"],
+    await new Promise((resolve, reject) => {
+      chrome.tabs.executeScript(tabId, { file: "content.js" }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
     });
     // Wait briefly for content script to connect its port
     await new Promise((r) => setTimeout(r, 300));
@@ -953,9 +957,11 @@ function executeViaSendMessage(tabId, action, params) {
 
 async function injectAndRetry(tabId, action, params) {
   await Promise.race([
-    chrome.scripting.executeScript({
-      target: { tabId },
-      files: ["content.js"],
+    new Promise((resolve, reject) => {
+      chrome.tabs.executeScript(tabId, { file: "content.js" }, () => {
+        if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+        else resolve();
+      });
     }),
     new Promise((_, reject) =>
       setTimeout(() => reject(new Error("Content script injection timeout")), SCRIPTING_TIMEOUT_MS)
@@ -1466,5 +1472,20 @@ async function pollForBridgeStartup() {
 
 // --- Startup -----------------------------------------------------------------
 
-addLog("info", "Service worker starting");
-connect();
+addLog("info", "Background page starting");
+// Delay initial connect slightly — MV2 background page may not have
+// WebSocket ready synchronously on first load (observed on Edge Android).
+// Also handles race when bridge starts after Edge.
+setTimeout(connect, 1000);
+
+// Retry on chrome.runtime.onStartup (cold start / browser restart)
+chrome.runtime.onStartup.addListener(() => {
+  addLog("info", "onStartup fired — ensuring WS connection");
+  setTimeout(connect, 2000);
+});
+
+// Retry on install/update
+chrome.runtime.onInstalled.addListener((details) => {
+  addLog("info", `onInstalled: ${details.reason}`);
+  setTimeout(connect, 1000);
+});

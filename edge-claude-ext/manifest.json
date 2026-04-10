@@ -1,20 +1,19 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "Claude Code Browser Bridge",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "description": "Bridges Claude Code CLI to Edge Android via WebSocket",
   "permissions": [
     "activeTab",
-    "scripting",
     "tabs",
     "webRequest",
-    "cookies"
-  ],
-  "host_permissions": [
+    "cookies",
+    "storage",
     "<all_urls>"
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"],
+    "persistent": true
   },
   "content_scripts": [
     {
@@ -24,7 +23,7 @@
       "all_frames": false
     }
   ],
-  "action": {
+  "browser_action": {
     "default_popup": "popup.html",
     "default_title": "Claude Code Bridge"
   },

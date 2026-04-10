@@ -23,6 +23,11 @@
 --disable-site-isolation-trials
 --disable-features=IsolateOrigins,SitePerProcess,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
 --js-flags=--max-old-space-size=256
+--load-extension=/data/local/tmp/cfc-ext
+#
+# Extension sideloading:
+#   --load-extension: load unpacked CFC extension from device storage
+#   Requires extension files pushed to /data/local/tmp/cfc-ext/
 #
 # AI/Copilot removal:
 #   MobileCopilot/Button/Chat: toolbar Copilot button + chat sidebar
