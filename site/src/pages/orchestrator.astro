@@ -5,8 +5,8 @@ import Footer from "../components/Footer.astro";
 ---
 
 <Layout
-  title="TMX Orchestrator — termux-tools"
-  description="TypeScript daemon for tmux session lifecycle management on Android. Health checks, memory monitoring, auto-restart, and a real-time dashboard."
+  title="operad — tmux session orchestrator"
+  description="Cross-platform tmux session orchestrator. Health checks, memory monitoring, auto-restart, and a real-time dashboard. Supports Android/Termux, Linux, macOS."
   path="orchestrator"
 >
   <Nav current="/orchestrator" />
@@ -23,11 +23,11 @@ import Footer from "../components/Footer.astro";
         </div>
 
         <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
-          TMX<span class="text-terminal-green"> Orchestrator</span>
+          operad<span class="text-terminal-green"> orchestrator</span>
         </h1>
 
         <p class="mx-auto mb-2 max-w-2xl text-xl text-terminal-text sm:text-2xl">
-          Tmux session lifecycle daemon for Android
+          Cross-platform tmux session orchestrator
         </p>
 
         <p class="mb-8 text-sm text-terminal-dim">
@@ -35,8 +35,13 @@ import Footer from "../components/Footer.astro";
         </p>
 
         <div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <a href="https://github.com/tribixbite/termux-tools/tree/main/orchestrator"
+          <a href="https://operad.stream"
             class="inline-flex items-center gap-2 rounded-lg border border-terminal-green bg-terminal-green/10 px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green transition-colors hover:bg-terminal-green/20"
+            target="_blank" rel="noopener">
+            operad.stream
+          </a>
+          <a href="https://github.com/tribixbite/operad"
+            class="inline-flex items-center gap-2 rounded-lg border border-terminal-border px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-text transition-colors hover:border-terminal-dim hover:text-terminal-bright"
             target="_blank" rel="noopener">
             Source
           </a>
@@ -130,12 +135,12 @@ import Footer from "../components/Footer.astro";
         </h2>
 
         <p class="mb-4 text-sm text-terminal-dim">
-          Config lives at <code class="text-terminal-green">~/.config/tmx/tmx.toml</code>.
+          Config lives at <code class="text-terminal-green">~/.config/operad/operad.toml</code>.
           Supports <code class="text-terminal-amber">$ENV_VAR</code> expansion and schema validation.
         </p>
 
         <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
-          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">~/.config/tmx/tmx.toml</div>
+          <div class="border-b border-terminal-border px-4 py-2 text-xs text-terminal-dim">~/.config/operad/operad.toml</div>
           <div class="p-4 font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm">
             <div class="text-terminal-dim"># Global settings</div>
             <div><span class="text-terminal-cyan">boot_timeout_s</span> = <span class="text-terminal-amber">120</span></div>
@@ -479,13 +484,13 @@ import Footer from "../components/Footer.astro";
             {
               step: "1",
               title: "Clone and install dependencies",
-              code: "git clone https://github.com/tribixbite/termux-tools\ncd termux-tools/orchestrator\nbun install",
+              code: "git clone https://github.com/tribixbite/operad\ncd operad\nbun install",
             },
             {
               step: "2",
               title: "Build the bundle",
               code: "bun run build",
-              note: "Produces dist/tmx.js (~113KB CJS bundle via esbuild).",
+              note: "Produces dist/tmx.js (~361KB CJS bundle via esbuild).",
             },
             {
               step: "3",
@@ -533,12 +538,10 @@ import Footer from "../components/Footer.astro";
 
         <div class="flex flex-wrap gap-3">
           {[
-            { name: "Android device", required: true },
-            { name: "Termux", required: true },
             { name: "tmux", required: true },
-            { name: "Bun runtime", required: true },
-            { name: "Node.js 18+", required: true, note: "for esbuild" },
-            { name: "ADB", required: false, note: "for dashboard process manager" },
+            { name: "Node.js 18+ or Bun 1.0+", required: true },
+            { name: "Android/Termux or Linux or macOS", required: true },
+            { name: "ADB", required: false, note: "Android: phantom process fix" },
           ].map((r) => (
             <span class={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 font-[family-name:var(--font-mono)] text-xs
               ${r.required
