@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'orchestrator/src/**'
+      - 'orchestrator/dashboard/src/**'
+      - 'orchestrator/build.cjs'
+      - 'orchestrator/package.json'
+      - 'bridge/src/**'
+      - 'bridge/package.json'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'orchestrator/**'
+      - 'bridge/**'
+
+jobs:
+  build-orchestrator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build orchestrator
+        run: bun run build
+
+      - name: Build dashboard
+        run: |
+          cd dashboard
+          bun install
+          bun run build
+
+      - name: Report bundle size
+        run: |
+          SIZE=$(wc -c < dist/tmx.js)
+          DASH_SIZE=$(du -sb dashboard/dist/ | cut -f1)
+          echo "### Bundle sizes" >> $GITHUB_STEP_SUMMARY
+          echo "- \`dist/tmx.js\`: $(numfmt --to=iec $SIZE)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`dashboard/dist/\`: $(numfmt --to=iec $DASH_SIZE)" >> $GITHUB_STEP_SUMMARY
+
+  build-bridge:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bridge
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build bridge
+        run: npm run build
