@@ -271,20 +271,38 @@ async function runUpgrade(): Promise<void> {
     }
   }
 
-  // Step 1: Build
-  console.log(`${CYAN}Building...${RESET}`);
+  // Step 1a: Build orchestrator bundle
+  const orcDir = join(process.env.HOME ?? "", "git/termux-tools/orchestrator");
+  console.log(`${CYAN}Building orchestrator...${RESET}`);
   const buildResult = spawnSync("bun", ["run", "build"], {
-    cwd: join(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+    cwd: orcDir,
     encoding: "utf-8",
     timeout: 30_000,
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (buildResult.status !== 0) {
-    console.error(`${RED}Build failed:${RESET}`);
+    console.error(`${RED}Orchestrator build failed:${RESET}`);
     console.error(buildResult.stderr?.trim() || buildResult.stdout?.trim());
     process.exit(1);
   }
-  console.log(`${GREEN}Build OK${RESET}`);
+  console.log(`${GREEN}Orchestrator OK${RESET}`);
+
+  // Step 1b: Build dashboard (static site)
+  const dashDir = join(orcDir, "dashboard");
+  console.log(`${CYAN}Building dashboard...${RESET}`);
+  const dashResult = spawnSync("bun", ["run", "build"], {
+    cwd: dashDir,
+    encoding: "utf-8",
+    timeout: 120_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (dashResult.status !== 0) {
+    console.error(`${YELLOW}Dashboard build failed (non-fatal):${RESET}`);
+    console.error(dashResult.stderr?.trim() || dashResult.stdout?.trim());
+    // Non-fatal — old dashboard dist/ still works
+  } else {
+    console.log(`${GREEN}Dashboard OK${RESET}`);
+  }
 
   // Step 2: Check if daemon is running
   const running = await client.isRunning();
