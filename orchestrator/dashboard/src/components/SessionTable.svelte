@@ -21,7 +21,21 @@
   const status = $derived<DaemonStatus | null>(store.daemon);
   const error = $derived<string | null>(store.error);
   /** Non-service sessions only — services go to ServiceStatus card */
-  const sessions = $derived(status?.sessions.filter((s) => s.type !== "service") ?? []);
+  const allSessions = $derived(status?.sessions.filter((s) => s.type !== "service") ?? []);
+
+  /** Active = running/degraded/starting/waiting/stopping */
+  const ACTIVE_STATUSES = new Set(["running", "degraded", "starting", "waiting", "stopping"]);
+
+  /** Sorted: active sessions first (by name), then inactive (by name) */
+  const activeSessions = $derived(
+    allSessions.filter((s) => ACTIVE_STATUSES.has(s.status)).sort((a, b) => a.name.localeCompare(b.name))
+  );
+  const inactiveSessions = $derived(
+    allSessions.filter((s) => !ACTIVE_STATUSES.has(s.status)).sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+  /** Whether the inactive group is expanded */
+  let showInactive: boolean = $state(false);
 
   /** Status dot color class */
   function dotCls(st: string, suspended: boolean): string {
@@ -103,6 +117,67 @@
   }
 </script>
 
+{#snippet sessionRow(session: SessionState)}
+  <tr class="session-row" onclick={() => toggleExpand(session.name)}>
+    <td class="td-name">
+      <span class="dot {dotCls(session.status, session.suspended)}"></span>
+      <button
+        class="session-name"
+        onclick={(e) => handleOpenTab(e, session.name)}
+        title="Open in Termux tab"
+      >{session.name}</button>
+      {#if session.claude_status === "waiting"}
+        <span class="claude-badge waiting" title="Waiting for input">idle</span>
+      {:else if session.claude_status === "working"}
+        <span class="claude-badge working" title="Actively working">busy</span>
+      {/if}
+    </td>
+    <td class="td-rss">
+      {#if session.rss_mb != null}
+        {session.rss_mb}<span class="unit">MB</span>
+      {/if}
+    </td>
+    <td class="td-actions" onclick={(e) => e.stopPropagation()}>
+      {#if session.type === "claude"}
+        <button class="btn-icon chat" onclick={(e) => openDrawer(e, session.name)} title="Conversation">&#x2709;</button>
+      {/if}
+      {#if session.status === "running" || session.status === "degraded"}
+        <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
+        <button class="btn-icon" onclick={(e) => handleAction(e, "restart", session.name)} title="Restart">&#x21BB;</button>
+        {#if session.suspended}
+          <button class="btn-icon success" onclick={(e) => handleResume(e, session.name)} title="Resume">&#x25B6;</button>
+        {:else}
+          <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
+          <button class="btn-icon muted" onclick={(e) => handleSuspend(e, session.name)} title="Pause">&#x23F8;</button>
+        {/if}
+      {:else if session.status === "starting" || session.status === "waiting" || session.status === "stopping"}
+        <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
+      {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
+        <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
+        <button class="btn-icon danger" onclick={(e) => handleClose(e, session.name)} title="Remove">&#x2715;</button>
+      {/if}
+    </td>
+  </tr>
+  {#if expandedSession === session.name}
+    <tr><td colspan="3" class="td-expand">
+      {#if session.last_output}
+        <pre class="pane-output">{session.last_output}</pre>
+      {/if}
+      {#if session.path}
+        <ScriptRunner sessionName={session.name} sessionPath={session.path} />
+      {/if}
+      <SessionCard {session} />
+      {#if session.type === "claude"}
+        <SessionTimeline sessionName={session.name} />
+      {/if}
+      {#if session.path}
+        <GitPanel sessionName={session.name} />
+        <FileExplorer sessionName={session.name} />
+      {/if}
+    </td></tr>
+  {/if}
+{/snippet}
+
 {#if error}
   <div class="card border-[var(--accent-red)]">
     <p class="text-[var(--accent-red)] text-sm">Failed to connect: {error}</p>
@@ -125,66 +200,25 @@
       </tr>
     </thead>
     <tbody>
-      {#each sessions as session (session.name)}
-        <tr class="session-row" onclick={() => toggleExpand(session.name)}>
-          <td class="td-name">
-            <span class="dot {dotCls(session.status, session.suspended)}"></span>
-            <button
-              class="session-name"
-              onclick={(e) => handleOpenTab(e, session.name)}
-              title="Open in Termux tab"
-            >{session.name}</button>
-            {#if session.claude_status === "waiting"}
-              <span class="claude-badge waiting" title="Waiting for input">idle</span>
-            {:else if session.claude_status === "working"}
-              <span class="claude-badge working" title="Actively working">busy</span>
-            {/if}
-          </td>
-          <td class="td-rss">
-            {#if session.rss_mb != null}
-              {session.rss_mb}<span class="unit">MB</span>
-            {/if}
-          </td>
-          <td class="td-actions" onclick={(e) => e.stopPropagation()}>
-            {#if session.type === "claude"}
-              <button class="btn-icon chat" onclick={(e) => openDrawer(e, session.name)} title="Conversation">&#x2709;</button>
-            {/if}
-            {#if session.status === "running" || session.status === "degraded"}
-              <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
-              <button class="btn-icon" onclick={(e) => handleAction(e, "restart", session.name)} title="Restart">&#x21BB;</button>
-              {#if session.suspended}
-                <button class="btn-icon success" onclick={(e) => handleResume(e, session.name)} title="Resume">&#x25B6;</button>
-              {:else}
-                <button class="btn-icon success" onclick={(e) => handleAction(e, "go", session.name)} title="Go">&#x25B6;</button>
-                <button class="btn-icon muted" onclick={(e) => handleSuspend(e, session.name)} title="Pause">&#x23F8;</button>
-              {/if}
-            {:else if session.status === "starting" || session.status === "waiting" || session.status === "stopping"}
-              <button class="btn-icon danger" onclick={(e) => handleAction(e, "stop", session.name)} title="Stop">&#x25A0;</button>
-            {:else if session.status === "stopped" || session.status === "failed" || session.status === "pending"}
-              <button class="btn-icon primary" onclick={(e) => handleAction(e, "start", session.name)} title="Start">&#x25B6;</button>
-              <button class="btn-icon danger" onclick={(e) => handleClose(e, session.name)} title="Remove">&#x2715;</button>
-            {/if}
+      {#each activeSessions as session (session.name)}
+        {@render sessionRow(session)}
+      {/each}
+
+      <!-- Collapsed inactive group -->
+      {#if inactiveSessions.length > 0}
+        <tr class="inactive-divider" onclick={() => (showInactive = !showInactive)}>
+          <td colspan="3">
+            <span class="inactive-toggle">{showInactive ? "\u25BC" : "\u25B6"}</span>
+            <span class="inactive-label">Inactive</span>
+            <span class="inactive-count">{inactiveSessions.length}</span>
           </td>
         </tr>
-        {#if expandedSession === session.name}
-          <tr><td colspan="3" class="td-expand">
-            {#if session.last_output}
-              <pre class="pane-output">{session.last_output}</pre>
-            {/if}
-            {#if session.path}
-              <ScriptRunner sessionName={session.name} sessionPath={session.path} />
-            {/if}
-            <SessionCard {session} />
-            {#if session.type === "claude"}
-              <SessionTimeline sessionName={session.name} />
-            {/if}
-            {#if session.path}
-              <GitPanel sessionName={session.name} />
-              <FileExplorer sessionName={session.name} />
-            {/if}
-          </td></tr>
+        {#if showInactive}
+          {#each inactiveSessions as session (session.name)}
+            {@render sessionRow(session)}
+          {/each}
         {/if}
-      {/each}
+      {/if}
     </tbody>
   </table>
 {:else if !error}
@@ -220,6 +254,36 @@
     transition: background 0.15s;
   }
   .session-row:hover { background: var(--bg-tertiary); }
+
+  .inactive-divider {
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .inactive-divider:hover { background: var(--bg-tertiary); }
+  .inactive-divider td {
+    padding: 0.375rem 0.375rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
+  .inactive-toggle {
+    display: inline-block;
+    width: 1rem;
+    text-align: center;
+    font-size: 0.6rem;
+  }
+  .inactive-label {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+  }
+  .inactive-count {
+    margin-left: 0.25rem;
+    background: var(--bg-tertiary);
+    border-radius: 9999px;
+    padding: 0.0625rem 0.375rem;
+    font-size: 0.625rem;
+  }
   .session-row td {
     padding: 0.5rem 0.375rem;
     border-top: 1px solid var(--border);
