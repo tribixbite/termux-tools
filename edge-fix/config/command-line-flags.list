@@ -3,25 +3,26 @@
 # Requires CommandLine file reading enabled (debuggable or smali patch)
 #
 # Memory optimization for mobile:
-#   --enable-low-end-device-mode: master switch — restricts renderer count,
-#     disables background tab caching, reduces graphics memory limits
 #   --process-per-site: share renderer across same-site tabs (vs per-tab)
 #   --renderer-process-limit=4: hard cap on concurrent renderer processes
 #   --js-flags: cap V8 old-space per renderer to prevent heap bloat
 #
-# Site isolation — relax strict isolation for memory savings:
-#   --disable-site-isolation-trials: native mobile flag to disable overhead
-#   disable SitePerProcess + IsolateOrigins: don't enforce per-site isolation
+# REMOVED (caused content removal on pages + insecure):
+#   --enable-low-end-device-mode: triggers aggressive OOM intervention that
+#     strips page content ("To save memory, Edge removed some content")
+#   --disable-site-isolation-trials: security warning + Spectre-vulnerable
+#   IsolateOrigins,SitePerProcess: feature-flag equivalents of above
+#
+# OomIntervention: disables the in-page "removed some content" bar that
+#   strips iframes/heavy elements when renderer memory gets high
 #
 # NOTE: --extension-process-limit=1 is intentionally excluded — sharing one
 # renderer across uBlock, Dark Reader, Keepa, and CFC causes OOM crashes
 # when combined V8 heaps exceed limits, killing all extensions at once.
 #
---enable-low-end-device-mode
 --process-per-site
 --renderer-process-limit=4
---disable-site-isolation-trials
---disable-features=IsolateOrigins,SitePerProcess,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
+--disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
 --js-flags=--max-old-space-size=256
 --load-extension=/data/local/tmp/cfc-ext
 #
