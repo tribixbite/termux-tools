@@ -397,7 +397,7 @@ export class Daemon {
     // Start telemetry sink if enabled
     await this.startTelemetrySink();
 
-    notify("drey", "Orchestrator started");
+    notify("operad", "Orchestrator started");
 
     // Keep process alive until shutdown() resolves the promise
     await new Promise<void>((resolve) => {
@@ -457,10 +457,10 @@ export class Daemon {
 
     if (timedOut) {
       this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
-      notify("drey boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "drey-boot");
+      notify("operad boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "operad-boot");
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-      notify("drey boot", `${runningCount}/${sessionCount} sessions running`, "drey-boot");
+      notify("operad boot", `${runningCount}/${sessionCount} sessions running`, "operad-boot");
       appendNotification({ type: "daemon_start", title: "Daemon started", content: `${runningCount}/${sessionCount} sessions running` });
     }
 
@@ -471,7 +471,7 @@ export class Daemon {
   /**
    * Graceful shutdown — detach from sessions, release resources, exit.
    * By default, tmux sessions are LEFT RUNNING so the next daemon can adopt them.
-   * Pass killSessions=true only for explicit `drey shutdown --kill`.
+   * Pass killSessions=true only for explicit `operad shutdown --kill`.
    */
   private shutdownInProgress = false;
   async shutdown(killSessions = false): Promise<void> {
@@ -513,7 +513,7 @@ export class Daemon {
     this.restartTimers.clear();
 
     if (killSessions) {
-      // Only kill tmux sessions when explicitly requested (drey shutdown --kill)
+      // Only kill tmux sessions when explicitly requested (operad shutdown --kill)
       this.log.info("Killing all tmux sessions (--kill requested)");
       const shutdownOrder = computeShutdownOrder(this.config.sessions);
       for (const batch of shutdownOrder) {
@@ -552,19 +552,19 @@ export class Daemon {
     this.ipc.stop();
 
     // Remove persistent notifications
-    removeNotification("drey-status");
-    removeNotification("drey-boot");
-    removeNotification("drey-memory");
+    removeNotification("operad-status");
+    removeNotification("operad-boot");
+    removeNotification("operad-memory");
     // Clean up per-session and failure notifications
     for (const session of this.config.sessions) {
-      removeNotification(`drey-fail-${session.name}`);
-      removeNotification(`drey-${session.name}`);
+      removeNotification(`operad-fail-${session.name}`);
+      removeNotification(`operad-${session.name}`);
     }
 
     this.running = false;
     this.shutdownResolve?.();
     this.log.info("Shutdown complete");
-    notify("drey", "Orchestrator stopped");
+    notify("operad", "Orchestrator stopped");
     appendNotification({ type: "daemon_stop", title: "Daemon stopped", content: "Graceful shutdown" });
   }
 
@@ -985,7 +985,7 @@ export class Daemon {
       if (result.status !== 0) {
         this.log.warn("ADB connection failed", { stderr: result.stderr?.trim() });
         this.state.setAdbFixed(false);
-        notify("drey boot", "ADB fix failed — processes may be killed", "drey-boot");
+        notify("operad boot", "ADB fix failed — processes may be killed", "operad-boot");
 
         // Set up retry timer
         this.startAdbRetryTimer();
@@ -1263,7 +1263,7 @@ export class Daemon {
       if (s.restart_count >= session.max_restarts) {
         this.state.transition(session.name, "failed",
           `Exceeded max restarts (${session.max_restarts})`);
-        notify("drey", `Session '${session.name}' failed — max restarts exceeded`, `drey-fail-${session.name}`);
+        notify("operad", `Session '${session.name}' failed — max restarts exceeded`, `operad-fail-${session.name}`);
         appendNotification({ type: "session_error", title: `Session '${session.name}' failed`, content: `Exceeded max restarts (${session.max_restarts})`, session: session.name });
         continue;
       }
@@ -1427,7 +1427,7 @@ export class Daemon {
             this.state.setSuspended(target.name, true, true); // auto=true
           }
         }
-        notify("drey", `Paused ${names.join(", ")} — memory ${pressure}`, `drey-autosuspend`);
+        notify("operad", `Paused ${names.join(", ")} — memory ${pressure}`, `operad-autosuspend`);
         appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
         // Nudge Edge renderers to GC via CFC bridge CDP (non-blocking, best-effort)
         fetch("http://127.0.0.1:18963/memory-pressure", {
@@ -1490,7 +1490,7 @@ export class Daemon {
 
   /**
    * Update the persistent Android notification with active/total session counts.
-   * Shows "drey ▶ 3/7" title with active/idle session names in the body.
+   * Shows "operad ▶ 3/7" title with active/idle session names in the body.
    * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
    */
   /**
@@ -1501,7 +1501,7 @@ export class Daemon {
    * - Button 2: "Stop All" — emergency stop for all sessions
    * - Button 3: "Dashboard" — opens browser to localhost dashboard
    *
-   * Actions use curl to hit the daemon's HTTP API — avoids needing drey on PATH.
+   * Actions use curl to hit the daemon's HTTP API — avoids needing operad on PATH.
    */
   /**
    * Emit per-session notifications (one per active non-service session)
@@ -1561,8 +1561,8 @@ export class Daemon {
       notifyWithArgs([
         "--ongoing",
         "--alert-once",
-        "--id", `drey-${name}`,
-        "--group", "drey-sessions",
+        "--id", `operad-${name}`,
+        "--group", "operad-sessions",
         "--priority", "low",
         "--title", `${name}`,
         "--content", `${statusTag}${rss}`,
@@ -1580,7 +1580,7 @@ export class Daemon {
     // Remove notifications for sessions that are no longer running
     for (const name of this._prevNotifiedSessions) {
       if (!allRunning.includes(name)) {
-        removeNotification(`drey-${name}`);
+        removeNotification(`operad-${name}`);
         this._prevNotifContent.delete(name);
       }
     }
@@ -1588,7 +1588,7 @@ export class Daemon {
     if (!this._serviceNotifsCleared) {
       this._serviceNotifsCleared = true;
       for (const svcName of serviceNames) {
-        removeNotification(`drey-${svcName}`);
+        removeNotification(`operad-${svcName}`);
       }
     }
     this._prevNotifiedSessions = allRunning;
@@ -1597,8 +1597,8 @@ export class Daemon {
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
     const title = suspendedCount > 0
-      ? `drey ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
-      : `drey ▶ ${activeCount}/${totalRunning}`;
+      ? `operad ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
+      : `operad ▶ ${activeCount}/${totalRunning}`;
 
     const MAX_NAMES = 8;
     const parts: string[] = [];
@@ -1637,8 +1637,8 @@ export class Daemon {
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
-      "--id", "drey-status",
-      "--group", "drey-sessions",
+      "--id", "operad-status",
+      "--group", "operad-sessions",
       "--priority", "low",
       "--title", title,
       "--content", content,
@@ -1803,7 +1803,7 @@ export class Daemon {
   }
 
   /**
-   * Fuzzy-match a name/fragment to a project path for `drey open`.
+   * Fuzzy-match a name/fragment to a project path for `operad open`.
    * Checks config sessions, registry, and recent history (in that order).
    * Supports exact, prefix, and substring matching.
    */
@@ -2980,7 +2980,7 @@ export class Daemon {
 
             writeFileSync(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
-              `# CFC Bridge startup script (generated by drey daemon)`,
+              `# CFC Bridge startup script (generated by operad daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`,
             ].join("\n") + "\n");

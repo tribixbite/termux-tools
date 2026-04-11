@@ -1,8 +1,8 @@
 {
-  "name": "drey",
+  "name": "operad",
   "version": "0.1.0",
   "type": "commonjs",
-  "description": "Session orchestrator for Claude Code — manages tmux sessions, health checks, auto-restart, and a web dashboard. A drey is a squirrel's nest — home base for your AI workforce.",
+  "description": "operad — tmux session orchestrator for Claude Code on Termux. Manages sessions, health checks, auto-restart, and a web dashboard.",
   "author": "tribixbite",
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
     "directory": "orchestrator"
   },
   "bin": {
-    "drey": "dist/tmx.js"
+    "operad": "dist/tmx.js"
   },
   "files": [
     "dist/",

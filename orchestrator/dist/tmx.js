@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/env bun
+#!/usr/bin/env node
 "use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
@@ -234,6 +234,8 @@ var import_node_path12 = require("node:path");
 // src/config.ts
 var import_node_fs2 = require("node:fs");
 var CONFIG_PATHS = [
+  "$HOME/.config/operad/operad.toml",
+  "$HOME/.config/drey/drey.toml",
   "$HOME/.config/tmx/tmx.toml",
   "$HOME/.termux/tmx.toml"
 ];
@@ -549,7 +551,7 @@ function loadConfig(configPath) {
     throw new Error(
       `Config file not found. Searched:
   ${CONFIG_PATHS.map(expandEnvVars).join("\n  ")}
-Copy tmx.toml.example to ~/.config/tmx/tmx.toml to get started.`
+Copy operad.toml.example to ~/.config/operad/operad.toml to get started.`
     );
   }
   const content = (0, import_node_fs2.readFileSync)(path, "utf-8");
@@ -4165,7 +4167,7 @@ var Daemon = class _Daemon {
     }, 5 * 60 * 1e3);
     await this.startDashboard();
     await this.startTelemetrySink();
-    notify("tmx daemon", "Orchestrator started");
+    notify("operad", "Orchestrator started");
     await new Promise((resolve6) => {
       this.shutdownResolve = resolve6;
     });
@@ -4204,10 +4206,10 @@ var Daemon = class _Daemon {
     const runningCount = Object.values(this.state.getState().sessions).filter((s) => s.status === "running").length;
     if (timedOut) {
       this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "tmx-boot");
+      notify("operad boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "operad-boot");
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
+      notify("operad boot", `${runningCount}/${sessionCount} sessions running`, "operad-boot");
       appendNotification({ type: "daemon_start", title: "Daemon started", content: `${runningCount}/${sessionCount} sessions running` });
     }
     this.updateStatusNotification();
@@ -4215,7 +4217,7 @@ var Daemon = class _Daemon {
   /**
    * Graceful shutdown — detach from sessions, release resources, exit.
    * By default, tmux sessions are LEFT RUNNING so the next daemon can adopt them.
-   * Pass killSessions=true only for explicit `tmx shutdown --kill`.
+   * Pass killSessions=true only for explicit `operad shutdown --kill`.
    */
   shutdownInProgress = false;
   async shutdown(killSessions = false) {
@@ -4277,17 +4279,17 @@ var Daemon = class _Daemon {
       this.dashboard = null;
     }
     this.ipc.stop();
-    removeNotification("tmx-status");
-    removeNotification("tmx-boot");
-    removeNotification("tmx-memory");
+    removeNotification("operad-status");
+    removeNotification("operad-boot");
+    removeNotification("operad-memory");
     for (const session of this.config.sessions) {
-      removeNotification(`tmx-fail-${session.name}`);
-      removeNotification(`tmx-${session.name}`);
+      removeNotification(`operad-fail-${session.name}`);
+      removeNotification(`operad-${session.name}`);
     }
     this.running = false;
     this.shutdownResolve?.();
     this.log.info("Shutdown complete");
-    notify("tmx", "Orchestrator stopped");
+    notify("operad", "Orchestrator stopped");
     appendNotification({ type: "daemon_stop", title: "Daemon stopped", content: "Graceful shutdown" });
   }
   // -- Session management -----------------------------------------------------
@@ -4605,7 +4607,7 @@ var Daemon = class _Daemon {
       if (result.status !== 0) {
         this.log.warn("ADB connection failed", { stderr: result.stderr?.trim() });
         this.state.setAdbFixed(false);
-        notify("tmx boot", "ADB fix failed \u2014 processes may be killed", "tmx-boot");
+        notify("operad boot", "ADB fix failed \u2014 processes may be killed", "operad-boot");
         this.startAdbRetryTimer();
         return false;
       }
@@ -4822,7 +4824,7 @@ var Daemon = class _Daemon {
           "failed",
           `Exceeded max restarts (${session.max_restarts})`
         );
-        notify("tmx", `Session '${session.name}' failed \u2014 max restarts exceeded`, `tmx-fail-${session.name}`);
+        notify("operad", `Session '${session.name}' failed \u2014 max restarts exceeded`, `operad-fail-${session.name}`);
         appendNotification({ type: "session_error", title: `Session '${session.name}' failed`, content: `Exceeded max restarts (${session.max_restarts})`, session: session.name });
         continue;
       }
@@ -4940,7 +4942,7 @@ var Daemon = class _Daemon {
             this.state.setSuspended(target.name, true, true);
           }
         }
-        notify("tmx", `Paused ${names.join(", ")} \u2014 memory ${pressure}`, `tmx-autosuspend`);
+        notify("operad", `Paused ${names.join(", ")} \u2014 memory ${pressure}`, `operad-autosuspend`);
         appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
         fetch("http://127.0.0.1:18963/memory-pressure", {
           method: "POST",
@@ -4991,7 +4993,7 @@ var Daemon = class _Daemon {
   }
   /**
    * Update the persistent Android notification with active/total session counts.
-   * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
+   * Shows "operad ▶ 3/7" title with active/idle session names in the body.
    * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
    */
   /**
@@ -5002,7 +5004,7 @@ var Daemon = class _Daemon {
    * - Button 2: "Stop All" — emergency stop for all sessions
    * - Button 3: "Dashboard" — opens browser to localhost dashboard
    *
-   * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
+   * Actions use curl to hit the daemon's HTTP API — avoids needing operad on PATH.
    */
   /**
    * Emit per-session notifications (one per active non-service session)
@@ -5048,9 +5050,9 @@ var Daemon = class _Daemon {
         "--ongoing",
         "--alert-once",
         "--id",
-        `tmx-${name}`,
+        `operad-${name}`,
         "--group",
-        "tmx-sessions",
+        "operad-sessions",
         "--priority",
         "low",
         "--title",
@@ -5077,20 +5079,20 @@ var Daemon = class _Daemon {
     }
     for (const name of this._prevNotifiedSessions) {
       if (!allRunning.includes(name)) {
-        removeNotification(`tmx-${name}`);
+        removeNotification(`operad-${name}`);
         this._prevNotifContent.delete(name);
       }
     }
     if (!this._serviceNotifsCleared) {
       this._serviceNotifsCleared = true;
       for (const svcName of serviceNames) {
-        removeNotification(`tmx-${svcName}`);
+        removeNotification(`operad-${svcName}`);
       }
     }
     this._prevNotifiedSessions = allRunning;
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
-    const title = suspendedCount > 0 ? `tmx \u25B6 ${activeCount}/${totalRunning} (${suspendedCount} paused)` : `tmx \u25B6 ${activeCount}/${totalRunning}`;
+    const title = suspendedCount > 0 ? `operad \u25B6 ${activeCount}/${totalRunning} (${suspendedCount} paused)` : `operad \u25B6 ${activeCount}/${totalRunning}`;
     const MAX_NAMES = 8;
     const parts = [];
     if (activeNames.length > 0) {
@@ -5122,9 +5124,9 @@ var Daemon = class _Daemon {
       "--ongoing",
       "--alert-once",
       "--id",
-      "tmx-status",
+      "operad-status",
       "--group",
-      "tmx-sessions",
+      "operad-sessions",
       "--priority",
       "low",
       "--title",
@@ -5286,7 +5288,7 @@ var Daemon = class _Daemon {
     this.log.info(`Boot recency: auto-start=[${[...autoStartNames].join(",")}] visible=[${[...visibleNames].join(",")}]`);
   }
   /**
-   * Fuzzy-match a name/fragment to a project path for `tmx open`.
+   * Fuzzy-match a name/fragment to a project path for `operad open`.
    * Checks config sessions, registry, and recent history (in that order).
    * Supports exact, prefix, and substring matching.
    */
@@ -6236,7 +6238,7 @@ var Daemon = class _Daemon {
             const bridgeDir = (0, import_node_path12.dirname)(bridgeScript);
             (0, import_node_fs19.writeFileSync)(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
-              `# CFC Bridge startup script (generated by tmx daemon)`,
+              `# CFC Bridge startup script (generated by operad daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`
             ].join("\n") + "\n");
@@ -7670,7 +7672,7 @@ async function runBoot() {
       const config = loadConfig(configPath);
       logDir = config.orchestrator.log_dir;
     } catch {
-      logDir = `${process.env.HOME}/.local/share/tmx/logs`;
+      logDir = `${process.env.HOME}/.local/share/operad/logs`;
     }
     (0, import_node_fs21.mkdirSync)(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
@@ -7740,7 +7742,7 @@ async function runUpgrade() {
         if (sessions.some((s) => s.name === callerSession)) {
           console.error(
             `${RED}Cannot upgrade from inside managed session '${callerSession}'.${RESET2}
-${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'tmx upgrade'${RESET2}`
+${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'operad upgrade'${RESET2}`
           );
           process.exit(1);
         }
@@ -7748,19 +7750,34 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
     } catch {
     }
   }
-  console.log(`${CYAN}Building...${RESET2}`);
+  const orcDir = (0, import_node_path13.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator");
+  console.log(`${CYAN}Building orchestrator...${RESET2}`);
   const buildResult = (0, import_node_child_process9.spawnSync)("bun", ["run", "build"], {
-    cwd: (0, import_node_path13.join)(process.env.HOME ?? "", "git/termux-tools/orchestrator"),
+    cwd: orcDir,
     encoding: "utf-8",
     timeout: 3e4,
     stdio: ["ignore", "pipe", "pipe"]
   });
   if (buildResult.status !== 0) {
-    console.error(`${RED}Build failed:${RESET2}`);
+    console.error(`${RED}Orchestrator build failed:${RESET2}`);
     console.error(buildResult.stderr?.trim() || buildResult.stdout?.trim());
     process.exit(1);
   }
-  console.log(`${GREEN}Build OK${RESET2}`);
+  console.log(`${GREEN}Orchestrator OK${RESET2}`);
+  const dashDir = (0, import_node_path13.join)(orcDir, "dashboard");
+  console.log(`${CYAN}Building dashboard...${RESET2}`);
+  const dashResult = (0, import_node_child_process9.spawnSync)("bun", ["run", "build"], {
+    cwd: dashDir,
+    encoding: "utf-8",
+    timeout: 12e4,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (dashResult.status !== 0) {
+    console.error(`${YELLOW}Dashboard build failed (non-fatal):${RESET2}`);
+    console.error(dashResult.stderr?.trim() || dashResult.stdout?.trim());
+  } else {
+    console.log(`${GREEN}Dashboard OK${RESET2}`);
+  }
   const running = await client.isRunning();
   if (!running) {
     console.log(`${DIM2}Daemon not running \u2014 nothing to restart${RESET2}`);
@@ -7793,7 +7810,7 @@ ${DIM2}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrad
         return;
       }
     }
-    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s \u2014 try 'tmx boot'${RESET2}`);
+    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s \u2014 try 'operad boot'${RESET2}`);
     return;
   }
   console.log(`${CYAN}No watchdog \u2014 restarting daemon directly...${RESET2}`);
@@ -7846,9 +7863,9 @@ function printStartupDiagnostics(logDir, stderrPath) {
   } catch {
   }
   console.error(`${CYAN}Suggestions:${RESET2}`);
-  console.error(`  ${DIM2}1.${RESET2} Check logs:    ${BOLD}tmx logs${RESET2}`);
-  console.error(`  ${DIM2}2.${RESET2} Validate config: ${BOLD}tmx config${RESET2}`);
-  console.error(`  ${DIM2}3.${RESET2} Run foreground: ${BOLD}tmx daemon${RESET2}`);
+  console.error(`  ${DIM2}1.${RESET2} Check logs:    ${BOLD}operad logs${RESET2}`);
+  console.error(`  ${DIM2}2.${RESET2} Validate config: ${BOLD}operad config${RESET2}`);
+  console.error(`  ${DIM2}3.${RESET2} Run foreground: ${BOLD}operad daemon${RESET2}`);
   console.error(`  ${DIM2}4.${RESET2} Check stderr:   ${BOLD}cat ${stderrPath}${RESET2}`);
 }
 function runConfig() {
@@ -7856,7 +7873,7 @@ function runConfig() {
   const found = findConfigPath(configPath);
   if (!found) {
     console.error(`${RED}No config file found${RESET2}`);
-    console.error(`Copy tmx.toml.example to ~/.config/tmx/tmx.toml`);
+    console.error(`Copy operad.toml.example to ~/.config/operad/operad.toml (or ~/.config/tmx/tmx.toml)`);
     process.exit(1);
   }
   console.log(`${DIM2}Config: ${found}${RESET2}`);
@@ -7910,14 +7927,14 @@ function runMigrate() {
   const confPath = subArgs[0] ?? findReposConf();
   if (!confPath) {
     console.error(`${RED}repos.conf not found${RESET2}`);
-    console.error("Usage: tmx migrate [path/to/repos.conf]");
+    console.error("Usage: operad migrate [path/to/repos.conf]");
     process.exit(1);
   }
   console.log(`${DIM2}Parsing: ${confPath}${RESET2}`);
   const entries = parseReposConf(confPath);
   console.log(`Found ${entries.length} entries`);
   const toml = generateToml(entries);
-  const outPath = subArgs[1] ?? `${process.env.HOME}/.config/tmx/tmx.toml`;
+  const outPath = subArgs[1] ?? `${process.env.HOME}/.config/operad/operad.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
   if (!(0, import_node_fs21.existsSync)(outDir)) {
     (0, import_node_fs21.mkdirSync)(outDir, { recursive: true });
@@ -7990,7 +8007,7 @@ async function runIpcCommand() {
   const client = getClient(configPath);
   const running = await client.isRunning();
   if (!running) {
-    console.error(`${RED}Daemon not running. Start with: tmx boot${RESET2}`);
+    console.error(`${RED}Daemon not running. Start with: operad boot${RESET2}`);
     process.exit(1);
   }
   const socketPath = client.socketPath;
@@ -8005,7 +8022,7 @@ async function runIpcCommand() {
       if ((0, import_node_fs21.existsSync)(socketPath)) break;
     }
     if (!(0, import_node_fs21.existsSync)(socketPath)) {
-      console.error(`${RED}Socket not re-created. Try: tmx shutdown && tmx boot${RESET2}`);
+      console.error(`${RED}Socket not re-created. Try: operad shutdown && operad boot${RESET2}`);
       process.exit(1);
     }
     console.log(`${GREEN}Socket re-created${RESET2}`);
@@ -8035,14 +8052,14 @@ async function runIpcCommand() {
       break;
     case "go":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx go <session-name>`);
+        console.error(`Usage: operad go <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "go", name: subArgs[0] };
       break;
     case "send":
       if (!subArgs[0] || !subArgs[1]) {
-        console.error(`Usage: tmx send <session-name> <text>`);
+        console.error(`Usage: operad send <session-name> <text>`);
         process.exit(1);
       }
       cmd = { cmd: "send", name: subArgs[0], text: subArgs.slice(1).join(" ") };
@@ -8052,7 +8069,7 @@ async function runIpcCommand() {
       break;
     case "open":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx open <path> [--name <n>] [--auto-go] [--priority N]`);
+        console.error(`Usage: operad open <path> [--name <n>] [--auto-go] [--priority N]`);
         process.exit(1);
       }
       cmd = {
@@ -8065,7 +8082,7 @@ async function runIpcCommand() {
       break;
     case "close":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx close <name>`);
+        console.error(`Usage: operad close <name>`);
         process.exit(1);
       }
       cmd = { cmd: "close", name: subArgs[0] };
@@ -8075,21 +8092,21 @@ async function runIpcCommand() {
       break;
     case "suspend":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx suspend <session-name>`);
+        console.error(`Usage: operad suspend <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "suspend", name: subArgs[0] };
       break;
     case "resume":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx resume <session-name>`);
+        console.error(`Usage: operad resume <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "resume", name: subArgs[0] };
       break;
     case "suspend-others":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx suspend-others <session-to-keep>`);
+        console.error(`Usage: operad suspend-others <session-to-keep>`);
         process.exit(1);
       }
       cmd = { cmd: "suspend-others", name: subArgs[0] };
@@ -8105,14 +8122,14 @@ async function runIpcCommand() {
       break;
     case "clone":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx clone <url> [--name <n>]`);
+        console.error(`Usage: operad clone <url> [--name <n>]`);
         process.exit(1);
       }
       cmd = { cmd: "clone", url: subArgs[0], name: getFlag(subArgs, "--name") };
       break;
     case "create":
       if (!subArgs[0]) {
-        console.error(`Usage: tmx create <name>`);
+        console.error(`Usage: operad create <name>`);
         process.exit(1);
       }
       cmd = { cmd: "create", name: subArgs[0] };
@@ -8192,7 +8209,7 @@ function formatOutput(cmd, data) {
 function formatDaemonStatus(data) {
   const uptimeMs = Date.now() - new Date(data.daemon_start).getTime();
   const uptime = formatDuration(uptimeMs);
-  console.log(`${BOLD}tmx daemon${RESET2} ${DIM2}uptime ${uptime}${RESET2}`);
+  console.log(`${BOLD}operad daemon${RESET2} ${DIM2}uptime ${uptime}${RESET2}`);
   console.log(`  boot: ${data.boot_complete ? `${GREEN}complete${RESET2}` : `${YELLOW}pending${RESET2}`}`);
   console.log(`  adb:  ${data.adb_fixed ? `${GREEN}fixed${RESET2}` : `${YELLOW}not fixed${RESET2}`}`);
   console.log(`  wake: ${data.wake_lock ? `${GREEN}held${RESET2}` : `${DIM2}released${RESET2}`}`);
@@ -8324,10 +8341,10 @@ function getFlag(args2, flag) {
   return void 0;
 }
 function printHelp() {
-  console.log(`${BOLD}tmx${RESET2} \u2014 Tmux session orchestrator for Termux
+  console.log(`${BOLD}operad${RESET2} \u2014 Tmux session orchestrator for Termux
 
 ${BOLD}USAGE${RESET2}
-  tmx [command] [args...]
+  operad [command] [args...]
 
 ${BOLD}COMMANDS${RESET2}
   ${CYAN}status${RESET2} [name]         Session table with status/uptime/health/restarts
@@ -8340,7 +8357,7 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}logs${RESET2} [name]           Tail structured logs
   ${CYAN}tabs${RESET2} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET2}                Validate and print resolved config
-  ${CYAN}migrate${RESET2} [path]        Convert repos.conf to tmx.toml
+  ${CYAN}migrate${RESET2} [path]        Convert repos.conf to operad.toml
   ${CYAN}open${RESET2} <path> [opts]     Register and start a dynamic Claude session
   ${CYAN}close${RESET2} <name>          Stop and unregister a dynamic session
   ${CYAN}recent${RESET2} [count]        Show recently active Claude projects
@@ -8357,24 +8374,24 @@ ${BOLD}COMMANDS${RESET2}
   ${CYAN}upgrade${RESET2}               Rebuild, shutdown daemon, let watchdog auto-restart
 
 ${BOLD}OPTIONS${RESET2}
-  -c, --config <path>  Config file path (default: ~/.config/tmx/tmx.toml)
+  -c, --config <path>  Config file path (default: ~/.config/operad/operad.toml)
   -h, --help           Show this help
   -v, --version        Show version
 
 ${BOLD}EXAMPLES${RESET2}
-  tmx boot              # Start everything after device boot
-  tmx status clev       # Fuzzy match \u2192 cleverkeys status
-  tmx go clev           # Send "go" to cleverkeys
-  tmx restart play      # Restart playwright
-  tmx tabs              # Restore UI tabs for all non-headless sessions
+  operad boot              # Start everything after device boot
+  operad status clev       # Fuzzy match \u2192 cleverkeys status
+  operad go clev           # Send "go" to cleverkeys
+  operad restart play      # Restart playwright
+  operad tabs              # Restore UI tabs for all non-headless sessions
 `);
 }
 function printVersion() {
   try {
     const pkgPath = new URL("../package.json", import_meta_url).pathname;
     const pkg = JSON.parse((0, import_node_fs21.readFileSync)(pkgPath, "utf-8"));
-    console.log(`tmx v${pkg.version}`);
+    console.log(`operad v${pkg.version}`);
   } catch {
-    console.log("tmx v0.1.0");
+    console.log("operad v0.1.0");
   }
 }

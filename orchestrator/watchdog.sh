@@ -1,7 +1,7 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# watchdog.sh — Keeps drey daemon alive after OOM kills
+# watchdog.sh — Keeps operad daemon alive after OOM kills
 # Install: replace ~/.termux/boot/startup.sh with this script
-# The drey daemon handles everything startup.sh used to do:
+# The operad daemon handles everything startup.sh used to do:
 # ADB fix, session creation, health checks, wake lock management.
 #
 # After a successful boot, this script attaches tmux to the current terminal
@@ -23,7 +23,7 @@ while true; do
   if daemon_alive; then
     echo "[$(date)] Daemon already running, attaching tmux" >> "$LOG_DIR/watchdog.log"
   else
-    echo "[$(date)] Starting drey boot..." >> "$LOG_DIR/watchdog.log"
+    echo "[$(date)] Starting operad boot..." >> "$LOG_DIR/watchdog.log"
 
     # Do NOT delete the socket here — isRunning() handles stale detection.
     # Deleting an active socket causes duplicate daemon spawns.
@@ -32,7 +32,7 @@ while true; do
     EXIT_CODE=$?
 
     if [ $EXIT_CODE -ne 0 ]; then
-      echo "[$(date)] drey boot failed (code=$EXIT_CODE), retrying in 5s..." >> "$LOG_DIR/watchdog.log"
+      echo "[$(date)] operad boot failed (code=$EXIT_CODE), retrying in 5s..." >> "$LOG_DIR/watchdog.log"
       sleep 5
       continue
     fi
