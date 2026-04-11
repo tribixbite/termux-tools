@@ -397,7 +397,7 @@ export class Daemon {
     // Start telemetry sink if enabled
     await this.startTelemetrySink();
 
-    notify("tmx daemon", "Orchestrator started");
+    notify("gaze", "Orchestrator started");
 
     // Keep process alive until shutdown() resolves the promise
     await new Promise<void>((resolve) => {
@@ -457,10 +457,10 @@ export class Daemon {
 
     if (timedOut) {
       this.log.warn(`Boot timed out after ${this.config.orchestrator.boot_timeout_s}s: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "tmx-boot");
+      notify("gaze boot", `Timed out: ${runningCount}/${sessionCount} sessions`, "gaze-boot");
     } else {
       this.log.info(`Boot complete: ${runningCount}/${sessionCount} sessions running`);
-      notify("tmx boot", `${runningCount}/${sessionCount} sessions running`, "tmx-boot");
+      notify("gaze boot", `${runningCount}/${sessionCount} sessions running`, "gaze-boot");
       appendNotification({ type: "daemon_start", title: "Daemon started", content: `${runningCount}/${sessionCount} sessions running` });
     }
 
@@ -471,7 +471,7 @@ export class Daemon {
   /**
    * Graceful shutdown — detach from sessions, release resources, exit.
    * By default, tmux sessions are LEFT RUNNING so the next daemon can adopt them.
-   * Pass killSessions=true only for explicit `tmx shutdown --kill`.
+   * Pass killSessions=true only for explicit `gaze shutdown --kill`.
    */
   private shutdownInProgress = false;
   async shutdown(killSessions = false): Promise<void> {
@@ -513,7 +513,7 @@ export class Daemon {
     this.restartTimers.clear();
 
     if (killSessions) {
-      // Only kill tmux sessions when explicitly requested (tmx shutdown --kill)
+      // Only kill tmux sessions when explicitly requested (gaze shutdown --kill)
       this.log.info("Killing all tmux sessions (--kill requested)");
       const shutdownOrder = computeShutdownOrder(this.config.sessions);
       for (const batch of shutdownOrder) {
@@ -552,19 +552,19 @@ export class Daemon {
     this.ipc.stop();
 
     // Remove persistent notifications
-    removeNotification("tmx-status");
-    removeNotification("tmx-boot");
-    removeNotification("tmx-memory");
+    removeNotification("gaze-status");
+    removeNotification("gaze-boot");
+    removeNotification("gaze-memory");
     // Clean up per-session and failure notifications
     for (const session of this.config.sessions) {
-      removeNotification(`tmx-fail-${session.name}`);
-      removeNotification(`tmx-${session.name}`);
+      removeNotification(`gaze-fail-${session.name}`);
+      removeNotification(`gaze-${session.name}`);
     }
 
     this.running = false;
     this.shutdownResolve?.();
     this.log.info("Shutdown complete");
-    notify("tmx", "Orchestrator stopped");
+    notify("gaze", "Orchestrator stopped");
     appendNotification({ type: "daemon_stop", title: "Daemon stopped", content: "Graceful shutdown" });
   }
 
@@ -985,7 +985,7 @@ export class Daemon {
       if (result.status !== 0) {
         this.log.warn("ADB connection failed", { stderr: result.stderr?.trim() });
         this.state.setAdbFixed(false);
-        notify("tmx boot", "ADB fix failed — processes may be killed", "tmx-boot");
+        notify("gaze boot", "ADB fix failed — processes may be killed", "gaze-boot");
 
         // Set up retry timer
         this.startAdbRetryTimer();
@@ -1263,7 +1263,7 @@ export class Daemon {
       if (s.restart_count >= session.max_restarts) {
         this.state.transition(session.name, "failed",
           `Exceeded max restarts (${session.max_restarts})`);
-        notify("tmx", `Session '${session.name}' failed — max restarts exceeded`, `tmx-fail-${session.name}`);
+        notify("gaze", `Session '${session.name}' failed — max restarts exceeded`, `gaze-fail-${session.name}`);
         appendNotification({ type: "session_error", title: `Session '${session.name}' failed`, content: `Exceeded max restarts (${session.max_restarts})`, session: session.name });
         continue;
       }
@@ -1427,7 +1427,7 @@ export class Daemon {
             this.state.setSuspended(target.name, true, true); // auto=true
           }
         }
-        notify("tmx", `Paused ${names.join(", ")} — memory ${pressure}`, `tmx-autosuspend`);
+        notify("gaze", `Paused ${names.join(", ")} — memory ${pressure}`, `gaze-autosuspend`);
         appendNotification({ type: "memory_pressure", title: `Memory ${pressure}`, content: `Auto-suspended: ${names.join(", ")}` });
         // Nudge Edge renderers to GC via CFC bridge CDP (non-blocking, best-effort)
         fetch("http://127.0.0.1:18963/memory-pressure", {
@@ -1490,7 +1490,7 @@ export class Daemon {
 
   /**
    * Update the persistent Android notification with active/total session counts.
-   * Shows "tmx ▶ 3/7" title with active/idle session names in the body.
+   * Shows "gaze ▶ 3/7" title with active/idle session names in the body.
    * Tapping opens the dashboard. Uses --ongoing + --alert-once for silent updates.
    */
   /**
@@ -1501,7 +1501,7 @@ export class Daemon {
    * - Button 2: "Stop All" — emergency stop for all sessions
    * - Button 3: "Dashboard" — opens browser to localhost dashboard
    *
-   * Actions use curl to hit the daemon's HTTP API — avoids needing tmx on PATH.
+   * Actions use curl to hit the daemon's HTTP API — avoids needing gaze on PATH.
    */
   /**
    * Emit per-session notifications (one per active non-service session)
@@ -1561,8 +1561,8 @@ export class Daemon {
       notifyWithArgs([
         "--ongoing",
         "--alert-once",
-        "--id", `tmx-${name}`,
-        "--group", "tmx-sessions",
+        "--id", `gaze-${name}`,
+        "--group", "gaze-sessions",
         "--priority", "low",
         "--title", `${name}`,
         "--content", `${statusTag}${rss}`,
@@ -1580,7 +1580,7 @@ export class Daemon {
     // Remove notifications for sessions that are no longer running
     for (const name of this._prevNotifiedSessions) {
       if (!allRunning.includes(name)) {
-        removeNotification(`tmx-${name}`);
+        removeNotification(`gaze-${name}`);
         this._prevNotifContent.delete(name);
       }
     }
@@ -1588,7 +1588,7 @@ export class Daemon {
     if (!this._serviceNotifsCleared) {
       this._serviceNotifsCleared = true;
       for (const svcName of serviceNames) {
-        removeNotification(`tmx-${svcName}`);
+        removeNotification(`gaze-${svcName}`);
       }
     }
     this._prevNotifiedSessions = allRunning;
@@ -1597,8 +1597,8 @@ export class Daemon {
     const activeCount = activeNames.length;
     const suspendedCount = suspendedNames.length;
     const title = suspendedCount > 0
-      ? `tmx ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
-      : `tmx ▶ ${activeCount}/${totalRunning}`;
+      ? `gaze ▶ ${activeCount}/${totalRunning} (${suspendedCount} paused)`
+      : `gaze ▶ ${activeCount}/${totalRunning}`;
 
     const MAX_NAMES = 8;
     const parts: string[] = [];
@@ -1637,8 +1637,8 @@ export class Daemon {
     notifyWithArgs([
       "--ongoing",
       "--alert-once",
-      "--id", "tmx-status",
-      "--group", "tmx-sessions",
+      "--id", "gaze-status",
+      "--group", "gaze-sessions",
       "--priority", "low",
       "--title", title,
       "--content", content,
@@ -1803,7 +1803,7 @@ export class Daemon {
   }
 
   /**
-   * Fuzzy-match a name/fragment to a project path for `tmx open`.
+   * Fuzzy-match a name/fragment to a project path for `gaze open`.
    * Checks config sessions, registry, and recent history (in that order).
    * Supports exact, prefix, and substring matching.
    */
@@ -2980,7 +2980,7 @@ export class Daemon {
 
             writeFileSync(scriptPath, [
               `#!/data/data/com.termux/files/usr/bin/bash`,
-              `# CFC Bridge startup script (generated by tmx daemon)`,
+              `# CFC Bridge startup script (generated by gaze daemon)`,
               `cd "${bridgeDir}"`,
               `exec "${bunPath}" "${bridgeScript}" 2>&1 | tee -a "${prefix}/tmp/bridge.log"`,
             ].join("\n") + "\n");

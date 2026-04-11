@@ -6,7 +6,7 @@ interface Props {
   active?: string;
 }
 
-const { title = "tmx dashboard", active = "overview" } = Astro.props;
+const { title = "gaze dashboard", active = "overview" } = Astro.props;
 
 const navItems = [
   { href: "/", label: "Overview", id: "overview" },
@@ -30,7 +30,7 @@ const navItems = [
     <header class="sticky top-0 z-50 border-b border-[var(--border)] bg-[var(--bg-primary)]">
       <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
         <div class="flex items-center gap-2">
-          <span class="text-[var(--accent-blue)] font-bold text-sm">tmx</span>
+          <span class="text-[var(--accent-blue)] font-bold text-sm">gaze</span>
           <span class="text-[var(--text-muted)] text-xs">dashboard</span>
         </div>
         <div class="flex items-center gap-2">

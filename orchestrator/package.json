@@ -1,15 +1,30 @@
 {
-  "name": "@termux-tools/orchestrator",
+  "name": "gazed",
   "version": "0.1.0",
-  "private": true,
-  "description": "Tmux session orchestrator for Termux — dependency-ordered startup, health monitoring, process budget tracking",
-  "author": "willstone",
+  "type": "commonjs",
+  "description": "Session orchestrator for Claude Code — manages tmux sessions, health checks, auto-restart, and a web dashboard. A gaze of raccoons watching over your AI workforce.",
+  "author": "tribixbite",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tribixbite/termux-tools",
+    "directory": "orchestrator"
+  },
   "bin": {
-    "tmx": "./dist/tmx.js"
+    "gaze": "dist/tmx.js"
   },
   "files": [
-    "dist/"
+    "dist/",
+    "dashboard/dist/",
+    "watchdog.sh"
+  ],
+  "keywords": [
+    "claude",
+    "tmux",
+    "orchestrator",
+    "session-manager",
+    "claude-code",
+    "terminal"
   ],
   "scripts": {
     "build": "node build.cjs",
@@ -22,7 +37,11 @@
     "typescript": "^5.7.0",
     "@types/node": "^22.0.0"
   },
+  "optionalDependencies": {
+    "claude-chrome-android": "*"
+  },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18",
+    "bun": ">=1.0"
   }
 }
