@@ -25,6 +25,13 @@
 --disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
 --js-flags=--max-old-space-size=256
 --load-extension=/data/local/tmp/cfc-ext
+--host-resolver-rules="MAP clientservices.googleapis.com 127.0.0.1, MAP prod.rewardsplatform.microsoft.com 127.0.0.1, MAP api.webxtsvc.microsoft.com 127.0.0.1"
+#
+# Telemetry domain interception:
+#   --host-resolver-rules: redirect domains in classes4.dex that can't be smali-patched.
+#   These resolve to 127.0.0.1 — HTTPS requests will fail (no root = no cert), but
+#   the DNS redirect prevents outbound connections. Cannot route to :18971 sink
+#   because these are HTTPS and we can't MITM without root.
 #
 # Extension sideloading:
 #   --load-extension: load unpacked CFC extension from device storage

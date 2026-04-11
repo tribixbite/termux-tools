@@ -346,6 +346,40 @@ export interface FileContentResponse {
   truncated: boolean;
 }
 
+// -- Telemetry sink -----------------------------------------------------------
+
+/** Known telemetry SDK identifiers */
+export type TelemetrySdk =
+  | "aria" | "onecollector" | "adjust" | "appcenter" | "ecs"
+  | "analytics" | "vortex" | "google" | "rewards" | "webxt" | "unknown";
+
+/** A single captured telemetry request */
+export interface TelemetryRecord {
+  ts: string;
+  method: string;
+  path: string;
+  host: string;
+  content_type: string;
+  user_agent: string;
+  body_bytes: number;
+  body_preview: string;
+  sdk: TelemetrySdk;
+}
+
+/** Aggregated telemetry stats */
+export interface TelemetryStats {
+  total: number;
+  per_hour: number;
+  by_sdk: Record<string, number>;
+  started_at: string;
+}
+
+/** Full telemetry API response */
+export interface TelemetryResponse {
+  records: TelemetryRecord[];
+  stats: TelemetryStats;
+}
+
 // -- Customization / Settings types ------------------------------------------
 
 /** Full customization response from /api/customization */

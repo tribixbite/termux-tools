@@ -283,7 +283,7 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
             # Search for the URL in all smali files of this DEX
             matching_files=$(grep -rl "$url" "$SMALI_OUT" 2>/dev/null || true)
             for match_file in $matching_files; do
-                python3 "$SCRIPT_DIR/scripts/replace-strings.py" "$match_file" "$url" "http://127.0.0.1"
+                python3 "$SCRIPT_DIR/scripts/replace-strings.py" "$match_file" "$url" "http://127.0.0.1:18971"
             done
         done < <(read_config "$REPLACE_URLS")
     fi

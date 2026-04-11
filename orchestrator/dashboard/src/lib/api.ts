@@ -10,6 +10,7 @@ import type {
   CustomizationResponse, ScriptEntry, ProjectTokenUsage, ConversationPage,
   TimelineEvent, McpServerInfo, PromptSearchResult, DailyCost,
   NotificationRecord, GitInfo, FileEntry, FileContentResponse,
+  TelemetryResponse, TelemetryRecord,
 } from "./types";
 
 /** Callback type for state updates */
@@ -72,7 +73,7 @@ export class SseClient {
     };
 
     // Listen for known events
-    for (const event of ["state", "memory", "log", "connected", "conversation", "notification"]) {
+    for (const event of ["state", "memory", "log", "connected", "conversation", "notification", "telemetry"]) {
       this.es.addEventListener(event, (e: MessageEvent) => {
         try {
           const data = JSON.parse(e.data);
@@ -541,6 +542,20 @@ export async function branchSession(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),
   });
+  return checkedJson(res);
+}
+
+// -- Telemetry sink -----------------------------------------------------------
+
+/** Fetch telemetry records and stats from the sink */
+export async function fetchTelemetry(opts?: {
+  sdk?: string; limit?: number;
+}): Promise<TelemetryResponse> {
+  const params = new URLSearchParams();
+  if (opts?.sdk) params.set("sdk", opts.sdk);
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  const res = await fetch(`/api/telemetry${qs ? `?${qs}` : ""}`);
   return checkedJson(res);
 }
 

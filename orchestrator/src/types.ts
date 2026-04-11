@@ -120,6 +120,70 @@ export interface BatteryConfig {
   poll_interval_s: number;
 }
 
+// -- Telemetry sink types -----------------------------------------------------
+
+/** Known telemetry SDK identifiers inferred from Host + path */
+export type TelemetrySdk =
+  | "aria"          // Microsoft Aria / OneDS collector
+  | "onecollector"  // OneCollector (self.events.data.microsoft.com)
+  | "adjust"        // Adjust attribution SDK
+  | "appcenter"     // Visual Studio App Center crashes/analytics
+  | "ecs"           // Edge Configuration Service
+  | "analytics"     // Generic analytics (browser_usage_stats, etc.)
+  | "vortex"        // Microsoft Vortex telemetry
+  | "google"        // Google clientservices / play services
+  | "rewards"       // Microsoft Rewards Platform
+  | "webxt"         // Edge WebXT services
+  | "unknown";      // Unrecognized endpoint
+
+/** A single captured telemetry request */
+export interface TelemetryRecord {
+  /** ISO timestamp of capture */
+  ts: string;
+  /** HTTP method */
+  method: string;
+  /** Request path */
+  path: string;
+  /** Original Host header (reveals pre-redirect domain) */
+  host: string;
+  /** Content-Type header */
+  content_type: string;
+  /** User-Agent header */
+  user_agent: string;
+  /** Body size in bytes (before truncation) */
+  body_bytes: number;
+  /** Truncated body preview */
+  body_preview: string;
+  /** Inferred SDK origin */
+  sdk: TelemetrySdk;
+}
+
+/** Aggregated stats for the telemetry sink */
+export interface TelemetryStats {
+  /** Total requests captured since start */
+  total: number;
+  /** Requests per hour (rolling) */
+  per_hour: number;
+  /** Breakdown by SDK */
+  by_sdk: Record<TelemetrySdk, number>;
+  /** ISO timestamp of sink start */
+  started_at: string;
+}
+
+/** Telemetry sink server configuration */
+export interface TelemetrySinkConfig {
+  /** Enable the telemetry sink (default false) */
+  enabled: boolean;
+  /** Port to listen on (default 18971) */
+  port: number;
+  /** Max body bytes to read per request (default 4096) */
+  max_body_bytes: number;
+  /** In-memory ring buffer size for recent records (default 500) */
+  ring_buffer_size: number;
+  /** Rotate JSONL log at this size in bytes (default 10MB) */
+  rotate_at_bytes: number;
+}
+
 /** Top-level orchestrator config */
 export interface OrchestratorConfig {
   socket: string;
@@ -153,6 +217,7 @@ export interface TmxConfig {
   adb: AdbConfig;
   battery: BatteryConfig;
   boot: BootConfig;
+  telemetry_sink: TelemetrySinkConfig;
   sessions: SessionConfig[];
   health_defaults: HealthDefaults;
 }

@@ -12,6 +12,7 @@ import type {
   AdbConfig,
   BatteryConfig,
   BootConfig,
+  TelemetrySinkConfig,
   SessionConfig,
   HealthCheckConfig,
   HealthDefaults,
@@ -222,6 +223,16 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     poll_interval_s: asNumber(batRaw.poll_interval_s, "battery.poll_interval_s", 60),
   };
 
+  // Telemetry sink section
+  const tsRaw = (raw.telemetry_sink ?? {}) as Record<string, unknown>;
+  const telemetry_sink: TelemetrySinkConfig = {
+    enabled: asBool(tsRaw.enabled, "telemetry_sink.enabled", false),
+    port: asNumber(tsRaw.port, "telemetry_sink.port", 18971),
+    max_body_bytes: asNumber(tsRaw.max_body_bytes, "telemetry_sink.max_body_bytes", 4096),
+    ring_buffer_size: asNumber(tsRaw.ring_buffer_size, "telemetry_sink.ring_buffer_size", 500),
+    rotate_at_bytes: asNumber(tsRaw.rotate_at_bytes, "telemetry_sink.rotate_at_bytes", 10 * 1024 * 1024),
+  };
+
   // Boot recency config
   const bootRaw = (raw.boot ?? {}) as Record<string, unknown>;
   const boot: BootConfig = {
@@ -337,7 +348,7 @@ function validateConfig(raw: Record<string, unknown>): TmxConfig {
     throw new Error(`Config validation failed:\n  ${errors.join("\n  ")}`);
   }
 
-  return { orchestrator, adb, battery, boot, sessions, health_defaults };
+  return { orchestrator, adb, battery, boot, telemetry_sink, sessions, health_defaults };
 }
 
 // -- Type coercion helpers ----------------------------------------------------

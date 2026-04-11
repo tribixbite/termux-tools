@@ -27,6 +27,7 @@ import { BatteryMonitor } from "./battery.js";
 import { Registry, parseRecentProjects, findNamedSessions, deriveName, isValidName, nextSuffix } from "./registry.js";
 import type { RecentProject } from "./registry.js";
 import { DashboardServer } from "./http.js";
+import { TelemetrySinkServer } from "./telemetry-sink.js";
 import {
   getProjectTokenUsage,
   getConversationPage,
@@ -244,6 +245,7 @@ export class Daemon {
   private battery: BatteryMonitor;
   private registry: Registry;
   private dashboard: DashboardServer | null = null;
+  private telemetrySink: TelemetrySinkServer | null = null;
   private healthTimer: ReturnType<typeof setInterval> | null = null;
   private memoryTimer: ReturnType<typeof setInterval> | null = null;
   private batteryTimer: ReturnType<typeof setInterval> | null = null;
@@ -392,6 +394,9 @@ export class Daemon {
     // Start HTTP dashboard if configured
     await this.startDashboard();
 
+    // Start telemetry sink if enabled
+    await this.startTelemetrySink();
+
     notify("tmx daemon", "Orchestrator started");
 
     // Keep process alive until shutdown() resolves the promise
@@ -530,6 +535,12 @@ export class Daemon {
     this.registry.flush();
 
     // Wake lock intentionally NOT released — Android kills processes without it
+
+    // Stop telemetry sink
+    if (this.telemetrySink) {
+      this.telemetrySink.stop();
+      this.telemetrySink = null;
+    }
 
     // Stop dashboard server
     if (this.dashboard) {
@@ -2283,6 +2294,32 @@ export class Daemon {
     }
   }
 
+  /** Start telemetry sink server if enabled in config */
+  private async startTelemetrySink(): Promise<void> {
+    if (!this.config.telemetry_sink.enabled) {
+      this.log.debug("Telemetry sink disabled");
+      return;
+    }
+
+    this.telemetrySink = new TelemetrySinkServer(
+      this.config.telemetry_sink,
+      this.config.orchestrator.log_dir,
+      this.log,
+    );
+
+    // Wire SSE push through dashboard (if available)
+    this.telemetrySink.onRecordCaptured((record) => {
+      this.dashboard?.pushEvent("telemetry", record);
+    });
+
+    try {
+      await this.telemetrySink.start();
+    } catch (err) {
+      this.log.warn(`Telemetry sink failed to start: ${err}`);
+      this.telemetrySink = null;
+    }
+  }
+
   // -- Customization / Settings API -------------------------------------------
 
   /** Sensitive env var key patterns — values are redacted in API responses */
@@ -2866,6 +2903,20 @@ export class Daemon {
         case "health":
           resp = this.cmdHealth();
           break;
+        case "telemetry": {
+          if (!this.telemetrySink) {
+            return { status: 200, data: { records: [], stats: { total: 0, per_hour: 0, by_sdk: {}, started_at: "" } } };
+          }
+          const sdkFilter = queryParams.get("sdk") as import("./types.js").TelemetrySdk | null;
+          const limit = queryParams.has("limit") ? Number(queryParams.get("limit")) : 100;
+          return {
+            status: 200,
+            data: {
+              records: this.telemetrySink.getRecent(limit, sdkFilter ?? undefined),
+              stats: this.telemetrySink.getStats(),
+            },
+          };
+        }
         case "start":
           if (method !== "POST") return { status: 405, data: { error: "Method not allowed" } };
           resp = await this.cmdStart(name);
