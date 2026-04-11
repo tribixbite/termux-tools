@@ -43,7 +43,7 @@ export interface HistoryEntry {
   sessionId: string;
 }
 
-/** Recent project info returned by `tmx recent` */
+/** Recent project info returned by `operad recent` */
 export interface RecentProject {
   /** Derived name (basename of path) */
   name: string;
@@ -53,7 +53,7 @@ export interface RecentProject {
   last_active: string;
   /** Claude session ID from history */
   session_id: string;
-  /** Status: running in tmx, registered in registry, in config, or untracked */
+  /** Status: running in operad, registered in registry, in config, or untracked */
   status: "running" | "registered" | "config" | "untracked";
 }
 

@@ -301,7 +301,7 @@ export class DashboardServer {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>tmx dashboard</title>
+  <title>operad dashboard</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -319,7 +319,7 @@ export class DashboardServer {
   </style>
 </head>
 <body>
-  <h1>tmx dashboard</h1>
+  <h1>operad dashboard</h1>
   <p class="dim">Dashboard not built. Run: <code>cd orchestrator/dashboard && bun install && bun run build</code></p>
   <div class="status">
     <h2>Live Status</h2>

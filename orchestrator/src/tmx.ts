@@ -1,5 +1,5 @@
 /**
- * tmx.ts — CLI entry point and command router
+ * tmx.ts — CLI entry point and command router for operad
  *
  * Usage: operad [command] [args...]
  * See `operad --help` for available commands.
@@ -355,7 +355,7 @@ async function runUpgrade(): Promise<void> {
   const bootArgs = ["boot"];
   if (configPath) bootArgs.push("--config", configPath);
 
-  // Re-use runBoot logic by running tmx boot as a subprocess
+  // Re-use runBoot logic by running operad boot as a subprocess
   const bunPath = resolveBunPath();
   const bootResult = spawnSync(bunPath, [process.argv[1], ...bootArgs], {
     encoding: "utf-8",

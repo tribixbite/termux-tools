@@ -137,7 +137,7 @@ export class Logger {
     }
   }
 
-  /** Read the last N lines from the log file (for `tmx logs`) */
+  /** Read the last N lines from the log file (for `operad logs`) */
   readTail(lines: number, sessionFilter?: string): LogEntry[] {
     try {
       if (!existsSync(this.logFile)) return [];

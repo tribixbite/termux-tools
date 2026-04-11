@@ -218,7 +218,7 @@
     </div>
   {:else}
     <p class="text-[var(--text-muted)] text-center py-4">
-      No telemetry records captured yet. Enable <code>[telemetry_sink]</code> in tmx.toml and rebuild Edge APK.
+      No telemetry records captured yet. Enable <code>[telemetry_sink]</code> in operad.toml and rebuild Edge APK.
     </p>
   {/each}
 </div>

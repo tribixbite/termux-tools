@@ -1,7 +1,7 @@
 /**
  * config.ts — TOML config loader with validation and env var expansion
  *
- * Loads tmx.toml, expands $ENV_VAR references, validates schema,
+ * Loads operad.toml (or tmx.toml fallback), expands $ENV_VAR references, validates schema,
  * and returns a fully typed TmxConfig.
  */
 

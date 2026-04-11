@@ -39,7 +39,7 @@ export interface SessionDetailData {
   config: SessionConfig | undefined;
 }
 
-/** Config session summary used by `tmx config` */
+/** Config session summary used by `operad config` */
 export interface ConfigSessionRow {
   name: string;
   type: SessionType;

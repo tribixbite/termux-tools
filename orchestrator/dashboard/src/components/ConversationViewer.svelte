@@ -4,7 +4,7 @@
   import type { ConversationPage, ConversationEntry, ConversationBlock } from "../lib/types";
   import PromptLibrary from "./PromptLibrary.svelte";
 
-  /** Session name (tmx) to load conversation for */
+  /** Session name (operad) to load conversation for */
   interface Props {
     sessionName: string;
   }

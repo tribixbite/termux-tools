@@ -687,7 +687,7 @@ var Logger = class {
     } catch {
     }
   }
-  /** Read the last N lines from the log file (for `tmx logs`) */
+  /** Read the last N lines from the log file (for `operad logs`) */
   readTail(lines, sessionFilter) {
     try {
       if (!(0, import_node_fs3.existsSync)(this.logFile)) return [];
@@ -2865,7 +2865,7 @@ data: ${JSON.stringify({ id: clientId })}
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>tmx dashboard</title>
+  <title>operad dashboard</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -2883,7 +2883,7 @@ data: ${JSON.stringify({ id: clientId })}
   </style>
 </head>
 <body>
-  <h1>tmx dashboard</h1>
+  <h1>operad dashboard</h1>
   <p class="dim">Dashboard not built. Run: <code>cd orchestrator/dashboard && bun install && bun run build</code></p>
   <div class="status">
     <h2>Live Status</h2>
@@ -5226,7 +5226,7 @@ var Daemon = class _Daemon {
     }
     const registeredIds = /* @__PURE__ */ new Set();
     for (const s of this.config.sessions) {
-      if (s.session_id) registeredIds.set(s.session_id);
+      if (s.session_id) registeredIds.add(s.session_id);
     }
     for (const named of namedSessions) {
       if (rank >= visible) break;
@@ -7494,7 +7494,7 @@ function parseReposConf(filePath) {
 }
 function generateToml(entries) {
   const lines = [
-    "# tmx.toml \u2014 Generated from repos.conf by `tmx migrate`",
+    "# operad.toml \u2014 Generated from repos.conf by `operad migrate`",
     `# Generated at ${(/* @__PURE__ */ new Date()).toISOString()}`,
     "",
     "[orchestrator]",

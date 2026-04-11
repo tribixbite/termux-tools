@@ -1736,7 +1736,7 @@ export class Daemon {
     const registeredIds = new Set<string>();
     // Check existing config/registry for already-registered named sessions
     for (const s of this.config.sessions) {
-      if (s.session_id) registeredIds.set(s.session_id);
+      if (s.session_id) registeredIds.add(s.session_id);
     }
 
     for (const named of namedSessions) {

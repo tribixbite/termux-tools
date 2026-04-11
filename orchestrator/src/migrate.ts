@@ -1,8 +1,8 @@
 /**
- * migrate.ts — Convert repos.conf (bash associative array) to tmx.toml
+ * migrate.ts — Convert repos.conf (bash associative array) to operad.toml
  *
  * Parses the old-format repos.conf and generates a valid TOML config
- * for the tmx orchestrator.
+ * for the operad orchestrator.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -61,7 +61,7 @@ export function parseReposConf(filePath: string): RepoEntry[] {
 /** Generate TOML content from parsed repos.conf entries */
 export function generateToml(entries: RepoEntry[]): string {
   const lines: string[] = [
-    "# tmx.toml — Generated from repos.conf by `tmx migrate`",
+    "# operad.toml — Generated from repos.conf by `operad migrate`",
     `# Generated at ${new Date().toISOString()}`,
     "",
     "[orchestrator]",

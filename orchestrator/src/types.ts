@@ -1,5 +1,5 @@
 /**
- * types.ts — All shared interfaces for the tmx orchestrator
+ * types.ts — All shared interfaces for the operad orchestrator
  */
 
 // -- Session state machine ----------------------------------------------------

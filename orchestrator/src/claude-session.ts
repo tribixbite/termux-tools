@@ -2,7 +2,7 @@
  * claude-session.ts — Claude Code JSONL resolution, token tracking,
  * conversation parsing, and timeline merging.
  *
- * Maps tmx session names → JSONL files and extracts structured data
+ * Maps operad session names → JSONL files and extracts structured data
  * from Claude Code's conversation logs.
  */
 
