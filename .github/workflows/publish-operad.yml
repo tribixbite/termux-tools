@@ -1,4 +1,4 @@
-name: Publish operad
+name: Publish operadic
 
 on:
   push:

@@ -1,5 +1,5 @@
 {
-  "name": "operad",
+  "name": "operadic",
   "version": "0.1.0",
   "type": "commonjs",
   "description": "operad — tmux session orchestrator for Claude Code on Termux. Manages sessions, health checks, auto-restart, and a web dashboard.",
