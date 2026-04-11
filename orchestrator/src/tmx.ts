@@ -1,8 +1,8 @@
 /**
  * tmx.ts — CLI entry point and command router
  *
- * Usage: gaze [command] [args...]
- * See `gaze --help` for available commands.
+ * Usage: drey [command] [args...]
+ * See `drey --help` for available commands.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync } from "node:fs";
@@ -162,7 +162,7 @@ async function runBoot(): Promise<void> {
       const config = loadConfig(configPath);
       logDir = config.orchestrator.log_dir;
     } catch {
-      logDir = `${process.env.HOME}/.local/share/gaze/logs`;
+      logDir = `${process.env.HOME}/.local/share/drey/logs`;
     }
     mkdirSync(logDir, { recursive: true });
     const stderrPath = `${logDir}/daemon-stderr.log`;
@@ -261,7 +261,7 @@ async function runUpgrade(): Promise<void> {
         if (sessions.some((s: { name: string }) => s.name === callerSession)) {
           console.error(
             `${RED}Cannot upgrade from inside managed session '${callerSession}'.${RESET}\n` +
-            `${DIM}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'gaze upgrade'${RESET}`
+            `${DIM}Run from an unmanaged terminal tab or use: tmux new-session -d -s _upgrade 'drey upgrade'${RESET}`
           );
           process.exit(1);
         }
@@ -346,7 +346,7 @@ async function runUpgrade(): Promise<void> {
         return;
       }
     }
-    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s — try 'gaze boot'${RESET}`);
+    console.error(`${YELLOW}Watchdog didn't restart daemon within 20s — try 'drey boot'${RESET}`);
     return;
   }
 
@@ -408,9 +408,9 @@ function printStartupDiagnostics(logDir: string, stderrPath: string): void {
   } catch { /* ignore */ }
 
   console.error(`${CYAN}Suggestions:${RESET}`);
-  console.error(`  ${DIM}1.${RESET} Check logs:    ${BOLD}gaze logs${RESET}`);
-  console.error(`  ${DIM}2.${RESET} Validate config: ${BOLD}gaze config${RESET}`);
-  console.error(`  ${DIM}3.${RESET} Run foreground: ${BOLD}gaze daemon${RESET}`);
+  console.error(`  ${DIM}1.${RESET} Check logs:    ${BOLD}drey logs${RESET}`);
+  console.error(`  ${DIM}2.${RESET} Validate config: ${BOLD}drey config${RESET}`);
+  console.error(`  ${DIM}3.${RESET} Run foreground: ${BOLD}drey daemon${RESET}`);
   console.error(`  ${DIM}4.${RESET} Check stderr:   ${BOLD}cat ${stderrPath}${RESET}`);
 }
 
@@ -420,7 +420,7 @@ function runConfig(): void {
   const found = findConfigPath(configPath);
   if (!found) {
     console.error(`${RED}No config file found${RESET}`);
-    console.error(`Copy gaze.toml.example to ~/.config/gaze/gaze.toml (or ~/.config/tmx/tmx.toml)`);
+    console.error(`Copy drey.toml.example to ~/.config/drey/drey.toml (or ~/.config/tmx/tmx.toml)`);
     process.exit(1);
   }
 
@@ -479,12 +479,12 @@ function runConfig(): void {
   })));
 }
 
-/** Migrate repos.conf to gaze.toml */
+/** Migrate repos.conf to drey.toml */
 function runMigrate(): void {
   const confPath = subArgs[0] ?? findReposConf();
   if (!confPath) {
     console.error(`${RED}repos.conf not found${RESET}`);
-    console.error("Usage: gaze migrate [path/to/repos.conf]");
+    console.error("Usage: drey migrate [path/to/repos.conf]");
     process.exit(1);
   }
 
@@ -494,7 +494,7 @@ function runMigrate(): void {
 
   const toml = generateToml(entries);
 
-  const outPath = subArgs[1] ?? `${process.env.HOME}/.config/gaze/gaze.toml`;
+  const outPath = subArgs[1] ?? `${process.env.HOME}/.config/drey/drey.toml`;
   const outDir = outPath.substring(0, outPath.lastIndexOf("/"));
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true });
@@ -589,7 +589,7 @@ async function runIpcCommand(): Promise<void> {
   // Check daemon is running
   const running = await client.isRunning();
   if (!running) {
-    console.error(`${RED}Daemon not running. Start with: gaze boot${RESET}`);
+    console.error(`${RED}Daemon not running. Start with: drey boot${RESET}`);
     process.exit(1);
   }
 
@@ -607,7 +607,7 @@ async function runIpcCommand(): Promise<void> {
       if (existsSync(socketPath)) break;
     }
     if (!existsSync(socketPath)) {
-      console.error(`${RED}Socket not re-created. Try: gaze shutdown && gaze boot${RESET}`);
+      console.error(`${RED}Socket not re-created. Try: drey shutdown && drey boot${RESET}`);
       process.exit(1);
     }
     console.log(`${GREEN}Socket re-created${RESET}`);
@@ -639,14 +639,14 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "go":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze go <session-name>`);
+        console.error(`Usage: drey go <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "go", name: subArgs[0] };
       break;
     case "send":
       if (!subArgs[0] || !subArgs[1]) {
-        console.error(`Usage: gaze send <session-name> <text>`);
+        console.error(`Usage: drey send <session-name> <text>`);
         process.exit(1);
       }
       cmd = { cmd: "send", name: subArgs[0], text: subArgs.slice(1).join(" ") };
@@ -656,7 +656,7 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "open":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze open <path> [--name <n>] [--auto-go] [--priority N]`);
+        console.error(`Usage: drey open <path> [--name <n>] [--auto-go] [--priority N]`);
         process.exit(1);
       }
       cmd = {
@@ -669,7 +669,7 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "close":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze close <name>`);
+        console.error(`Usage: drey close <name>`);
         process.exit(1);
       }
       cmd = { cmd: "close", name: subArgs[0] };
@@ -679,21 +679,21 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "suspend":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze suspend <session-name>`);
+        console.error(`Usage: drey suspend <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "suspend", name: subArgs[0] };
       break;
     case "resume":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze resume <session-name>`);
+        console.error(`Usage: drey resume <session-name>`);
         process.exit(1);
       }
       cmd = { cmd: "resume", name: subArgs[0] };
       break;
     case "suspend-others":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze suspend-others <session-to-keep>`);
+        console.error(`Usage: drey suspend-others <session-to-keep>`);
         process.exit(1);
       }
       cmd = { cmd: "suspend-others", name: subArgs[0] };
@@ -709,14 +709,14 @@ async function runIpcCommand(): Promise<void> {
       break;
     case "clone":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze clone <url> [--name <n>]`);
+        console.error(`Usage: drey clone <url> [--name <n>]`);
         process.exit(1);
       }
       cmd = { cmd: "clone", url: subArgs[0], name: getFlag(subArgs, "--name") };
       break;
     case "create":
       if (!subArgs[0]) {
-        console.error(`Usage: gaze create <name>`);
+        console.error(`Usage: drey create <name>`);
         process.exit(1);
       }
       cmd = { cmd: "create", name: subArgs[0] };
@@ -817,7 +817,7 @@ function formatDaemonStatus(data: DaemonStatusData): void {
   const uptimeMs = Date.now() - new Date(data.daemon_start).getTime();
   const uptime = formatDuration(uptimeMs);
 
-  console.log(`${BOLD}gaze daemon${RESET} ${DIM}uptime ${uptime}${RESET}`);
+  console.log(`${BOLD}drey daemon${RESET} ${DIM}uptime ${uptime}${RESET}`);
   console.log(`  boot: ${data.boot_complete ? `${GREEN}complete${RESET}` : `${YELLOW}pending${RESET}`}`);
   console.log(`  adb:  ${data.adb_fixed ? `${GREEN}fixed${RESET}` : `${YELLOW}not fixed${RESET}`}`);
   console.log(`  wake: ${data.wake_lock ? `${GREEN}held${RESET}` : `${DIM}released${RESET}`}`);
@@ -997,10 +997,10 @@ function getFlag(args: string[], flag: string): string | undefined {
 }
 
 function printHelp(): void {
-  console.log(`${BOLD}gaze${RESET} — Tmux session orchestrator for Termux
+  console.log(`${BOLD}drey${RESET} — Tmux session orchestrator for Termux
 
 ${BOLD}USAGE${RESET}
-  gaze [command] [args...]
+  drey [command] [args...]
 
 ${BOLD}COMMANDS${RESET}
   ${CYAN}status${RESET} [name]         Session table with status/uptime/health/restarts
@@ -1013,7 +1013,7 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}logs${RESET} [name]           Tail structured logs
   ${CYAN}tabs${RESET} [name...]        Restore Termux UI tabs for running sessions
   ${CYAN}config${RESET}                Validate and print resolved config
-  ${CYAN}migrate${RESET} [path]        Convert repos.conf to gaze.toml
+  ${CYAN}migrate${RESET} [path]        Convert repos.conf to drey.toml
   ${CYAN}open${RESET} <path> [opts]     Register and start a dynamic Claude session
   ${CYAN}close${RESET} <name>          Stop and unregister a dynamic session
   ${CYAN}recent${RESET} [count]        Show recently active Claude projects
@@ -1030,16 +1030,16 @@ ${BOLD}COMMANDS${RESET}
   ${CYAN}upgrade${RESET}               Rebuild, shutdown daemon, let watchdog auto-restart
 
 ${BOLD}OPTIONS${RESET}
-  -c, --config <path>  Config file path (default: ~/.config/gaze/gaze.toml)
+  -c, --config <path>  Config file path (default: ~/.config/drey/drey.toml)
   -h, --help           Show this help
   -v, --version        Show version
 
 ${BOLD}EXAMPLES${RESET}
-  gaze boot              # Start everything after device boot
-  gaze status clev       # Fuzzy match → cleverkeys status
-  gaze go clev           # Send "go" to cleverkeys
-  gaze restart play      # Restart playwright
-  gaze tabs              # Restore UI tabs for all non-headless sessions
+  drey boot              # Start everything after device boot
+  drey status clev       # Fuzzy match → cleverkeys status
+  drey go clev           # Send "go" to cleverkeys
+  drey restart play      # Restart playwright
+  drey tabs              # Restore UI tabs for all non-headless sessions
 `);
 }
 
@@ -1047,8 +1047,8 @@ function printVersion(): void {
   try {
     const pkgPath = new URL("../package.json", import.meta.url).pathname;
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
-    console.log(`gaze v${pkg.version}`);
+    console.log(`drey v${pkg.version}`);
   } catch {
-    console.log("gaze v0.1.0");
+    console.log("drey v0.1.0");
   }
 }

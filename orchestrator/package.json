@@ -1,8 +1,8 @@
 {
-  "name": "gazed",
+  "name": "drey",
   "version": "0.1.0",
   "type": "commonjs",
-  "description": "Session orchestrator for Claude Code — manages tmux sessions, health checks, auto-restart, and a web dashboard. A gaze of raccoons watching over your AI workforce.",
+  "description": "Session orchestrator for Claude Code — manages tmux sessions, health checks, auto-restart, and a web dashboard. A drey is a squirrel's nest — home base for your AI workforce.",
   "author": "tribixbite",
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
     "directory": "orchestrator"
   },
   "bin": {
-    "gaze": "dist/tmx.js"
+    "drey": "dist/tmx.js"
   },
   "files": [
     "dist/",
@@ -32,10 +32,10 @@
     "postinstall": "node scripts/fix-android-binaries.mjs"
   },
   "devDependencies": {
-    "esbuild": "^0.24.0",
     "@esbuild/android-arm64": "^0.24.0",
-    "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.0"
   },
   "optionalDependencies": {
     "claude-chrome-android": "*"

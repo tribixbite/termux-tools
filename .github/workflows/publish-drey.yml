@@ -1,8 +1,8 @@
-name: Publish gazed
+name: Publish drey
 
 on:
   push:
-    tags: ['gazed-v*']
+    tags: ['drey-v*']
   workflow_dispatch:
     inputs:
       dry_run:

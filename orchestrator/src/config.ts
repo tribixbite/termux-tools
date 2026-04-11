@@ -21,9 +21,9 @@ import type {
   HealthCheckType,
 } from "./types.js";
 
-/** Default config search paths in priority order (gaze primary, tmx fallback for compat) */
+/** Default config search paths in priority order (drey primary, tmx fallback for compat) */
 const CONFIG_PATHS = [
-  "$HOME/.config/gaze/gaze.toml",
+  "$HOME/.config/drey/drey.toml",
   "$HOME/.config/tmx/tmx.toml",
   "$HOME/.termux/tmx.toml",
 ];
@@ -410,7 +410,7 @@ export function loadConfig(configPath?: string): TmxConfig {
   if (!path) {
     throw new Error(
       `Config file not found. Searched:\n  ${CONFIG_PATHS.map(expandEnvVars).join("\n  ")}\n` +
-      `Copy gaze.toml.example to ~/.config/gaze/gaze.toml to get started.`
+      `Copy drey.toml.example to ~/.config/drey/drey.toml to get started.`
     );
   }
 
