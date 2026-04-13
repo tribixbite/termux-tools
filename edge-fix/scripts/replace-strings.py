@@ -3,9 +3,10 @@
 replace-strings.py - Replace string values in smali files.
 
 Scans a smali file for string literals containing old_value and replaces
-them with a new value. Handles two smali string contexts:
+them with a new value. Handles three smali string contexts:
   1. const-string instructions: `const-string vN, "old_value"`
   2. Annotation values: `value = "old_value"` (e.g. Retrofit @Url annotations)
+  3. Static field initializers: `.field ... :Ljava/lang/String; = "old_value"`
 
 Used to black-hole telemetry endpoint URLs by pointing them to localhost.
 
@@ -40,6 +41,13 @@ def replace_strings(filepath: str, old_str: str, new_str: str) -> int:
     replacement2 = rf"\g<1>{new_str}\g<2>"
     content, count2 = re.subn(pattern2, replacement2, content)
     total_count += count2
+
+    # Pattern 3: static field initializers with compile-time string values
+    # Matches: .field public static final NAME:Ljava/lang/String; = "https://..."
+    pattern3 = rf'(\.field\s+.*:Ljava/lang/String;\s*=\s*"){escaped}(")'
+    replacement3 = rf"\g<1>{new_str}\g<2>"
+    content, count3 = re.subn(pattern3, replacement3, content)
+    total_count += count3
 
     if total_count > 0:
         with open(filepath, "w") as f:

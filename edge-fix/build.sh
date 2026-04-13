@@ -288,6 +288,23 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
         done < <(read_config "$REPLACE_URLS")
     fi
 
+    # (c2) Downgrade HttpsURLConnection casts to HttpURLConnection in telemetry senders.
+    # Our URL replacement changes HTTPS endpoints to HTTP (127.0.0.1:18971), but the ARIA
+    # SDK casts URL.openConnection() to HttpsURLConnection which throws ClassCastException
+    # for HTTP URLs. Replacing with HttpURLConnection (the parent class) is safe because
+    # no HTTPS-specific methods (setSSLSocketFactory, etc.) are called after the cast.
+    if [ -f "$REPLACE_URLS" ]; then
+        for smali_file in $(grep -rl "check-cast.*HttpsURLConnection" "$SMALI_OUT" 2>/dev/null || true); do
+            # Only patch files in telemetry/experimentation packages — don't touch identity/auth code
+            case "$smali_file" in
+                *telemetry*|*experimentation*)
+                    sed -i 's|check-cast \(.*\), Ljavax/net/ssl/HttpsURLConnection;|check-cast \1, Ljava/net/HttpURLConnection;|g' "$smali_file"
+                    echo "    [x] Downgraded HttpsURLConnection cast in $(basename "$smali_file")"
+                    ;;
+            esac
+        done
+    fi
+
     # (d) Strip tracker class packages (entire directory trees)
     STRIP_CLASSES="$CONFIG_DIR/strip-classes.list"
     if [ -f "$STRIP_CLASSES" ]; then
