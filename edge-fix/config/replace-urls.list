@@ -1,7 +1,8 @@
 # Telemetry endpoint URLs to replace with localhost
 # Format: original_url
-# Each URL found in const-string instructions will be replaced with http://127.0.0.1
-# This black-holes telemetry requests locally without breaking control flow
+# Each URL found in const-string instructions will be replaced with
+# http://127.0.0.1:18971 (operad telemetry sink) during build.sh smali patching.
+# This routes telemetry locally for dashboard visibility without breaking control flow.
 
 # -- Microsoft OneCollector telemetry endpoint --
 https://mobile.events.data.microsoft.com/OneCollector/1.0/
