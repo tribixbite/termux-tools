@@ -25,7 +25,12 @@
 --disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
 --js-flags=--max-old-space-size=256
 --load-extension=/data/local/tmp/cfc-ext
+--enable-features=EdgePasskeyAndroidCredentialProvider,EdgeAndroidPasskeyAuthSupport
 --host-resolver-rules="MAP clientservices.googleapis.com 127.0.0.1, MAP prod.rewardsplatform.microsoft.com 127.0.0.1, MAP api.webxtsvc.microsoft.com 127.0.0.1"
+#
+# Passkey support:
+#   EdgePasskeyAndroidCredentialProvider: enables Android Credential Manager API
+#   EdgeAndroidPasskeyAuthSupport: enables OneAuth passkey authentication
 #
 # Telemetry domain interception:
 #   --host-resolver-rules: redirect domains in classes4.dex that can't be smali-patched.
