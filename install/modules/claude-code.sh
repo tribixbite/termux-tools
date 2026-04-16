@@ -38,6 +38,66 @@ module_claude_code() {
   fi
 
   _ensure_cfc_env
+  patch_claude_cli
+}
+
+# Apply Termux-compatibility patches to cli.js after install/update.
+# Patches are idempotent — safe to re-run after any `bun install -g` update.
+#
+#   Patch 1 — MB null guard:
+#     [...MB,"inherit"] → [...(MB||[]),"inherit"]
+#     MB (minified agent-type list) can be null on Termux, causing TypeError on startup.
+#
+#   Patch 2 — Socket path /tmp/ → os.tmpdir():
+#     `/tmp/claude-mcp-browser-bridge-  →  `${Za9()}/claude-mcp-browser-bridge-
+#     Za9 is the minified alias for os.tmpdir in the bundled cli.js; /tmp/ does not
+#     exist on Termux (correct path is $PREFIX/tmp).
+patch_claude_cli() {
+  local cli="${CLI_JS_GLOBAL}"
+  if [[ ! -f "$cli" ]]; then
+    warn "patch_claude_cli: cli.js not found at ${cli}, skipping"
+    return 1
+  fi
+
+  local needs_patch=0
+
+  # Check if patches are already applied
+  if grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null; then
+    needs_patch=1
+  fi
+  if grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
+    needs_patch=1
+  fi
+
+  if [[ $needs_patch -eq 0 ]]; then
+    ok "cli.js Termux patches already applied"
+    return 0
+  fi
+
+  # Backup before patching
+  local bak="${cli}.bak-prepatch"
+  if [[ ! -f "$bak" ]]; then
+    cp "$cli" "$bak"
+    info "Backup: ${bak}"
+  fi
+
+  # Patch 1: MB null guard
+  sed -i 's/\[\.\.\.MB,"inherit"\]/[...(MB||[]),"inherit"]/g' "$cli"
+
+  # Patch 2: hardcoded /tmp/ → os.tmpdir() via Za9() (minified alias in bundled cli.js)
+  sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${Za9()}/claude-mcp-browser-bridge-|g' "$cli"
+
+  # Verify
+  local applied=0
+  grep -qF '[...(MB||[]),"inherit"]' "$cli" 2>/dev/null && ((applied++))
+  grep -qF '${Za9()}/claude-mcp-browser-bridge-' "$cli" 2>/dev/null && ((applied++))
+
+  if [[ $applied -eq 2 ]]; then
+    ok "cli.js Termux patches applied (${applied}/2)"
+  else
+    warn "cli.js patch verification failed (${applied}/2 applied) — check ${cli} manually"
+    warn "Note: Za9 is the minified os.tmpdir alias and may differ across versions"
+  fi
 }
 
 # Ensure CLAUDE_CODE_ENABLE_CFC=true is in environment
