@@ -44,14 +44,21 @@ module_claude_code() {
 # Apply Termux-compatibility patches to cli.js after install/update.
 # Patches are idempotent — safe to re-run after any `bun install -g` update.
 #
-#   Patch 1 — MB null guard:
+#   Patch 1 — MB/Yw6 null guard (v2.1.56 only):
 #     [...MB,"inherit"] → [...(MB||[]),"inherit"]
-#     MB (minified agent-type list) can be null on Termux, causing TypeError on startup.
+#     MB (minified agent-type list) could be null on Termux. Fixed upstream in v2.1.112+
+#     (Yw6 is now initialized as an array literal so no guard needed). Still patched
+#     when the unguarded pattern is found for older installs.
 #
-#   Patch 2 — Socket path /tmp/ → os.tmpdir():
-#     `/tmp/claude-mcp-browser-bridge-  →  `${Za9()}/claude-mcp-browser-bridge-
-#     Za9 is the minified alias for os.tmpdir in the bundled cli.js; /tmp/ does not
-#     exist on Termux (correct path is $PREFIX/tmp).
+#   Patch 2 — Socket path /tmp/ → z2() / os.tmpdir():
+#     The built-in claude-in-chrome socket dir function uses a hardcoded /tmp/ path.
+#     On Termux, /tmp/ does not exist (correct path is $PREFIX/tmp).
+#     Fix: replace with z2() which is Claude Code's own smart-tmpdir helper:
+#       z2() → CLAUDE_CODE_TMPDIR env > /tmp (macOS) > os.tmpdir() (all others incl. Android)
+#     Minified function name varies by version:
+#       v2.1.56:  function dg6(){return`/tmp/...`}  →  `${Za9()}/...`  (Za9=os.tmpdir import)
+#       v2.1.112: function i88(){return`/tmp/...`}  →  `${z2()}/...`   (z2=smart tmpdir helper)
+#     We try both patterns so the script works across versions.
 patch_claude_cli() {
   local cli="${CLI_JS_GLOBAL}"
   if [[ ! -f "$cli" ]]; then
@@ -61,42 +68,58 @@ patch_claude_cli() {
 
   local needs_patch=0
 
-  # Check if patches are already applied
-  if grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null; then
-    needs_patch=1
-  fi
-  if grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
-    needs_patch=1
-  fi
+  # Check for any unpatched pattern that needs fixing
+  grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null && needs_patch=1
+  grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null && needs_patch=1
 
   if [[ $needs_patch -eq 0 ]]; then
     ok "cli.js Termux patches already applied"
     return 0
   fi
 
-  # Backup before patching
+  # Backup before patching (only if no backup exists yet for this install)
   local bak="${cli}.bak-prepatch"
   if [[ ! -f "$bak" ]]; then
     cp "$cli" "$bak"
     info "Backup: ${bak}"
   fi
 
-  # Patch 1: MB null guard
-  sed -i 's/\[\.\.\.MB,"inherit"\]/[...(MB||[]),"inherit"]/g' "$cli"
-
-  # Patch 2: hardcoded /tmp/ → os.tmpdir() via Za9() (minified alias in bundled cli.js)
-  sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${Za9()}/claude-mcp-browser-bridge-|g' "$cli"
-
-  # Verify
   local applied=0
-  grep -qF '[...(MB||[]),"inherit"]' "$cli" 2>/dev/null && ((applied++))
-  grep -qF '${Za9()}/claude-mcp-browser-bridge-' "$cli" 2>/dev/null && ((applied++))
+
+  # Patch 1: MB null guard (v2.1.56 — fixed upstream in v2.1.112+, no-op if not found)
+  if grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null; then
+    sed -i 's/\[\.\.\.MB,"inherit"\]/[...(MB||[]),"inherit"]/g' "$cli"
+    grep -qF '[...(MB||[]),"inherit"]' "$cli" 2>/dev/null && ((applied++)) \
+      || warn "Patch 1 (MB null guard): sed ran but pattern not found in result"
+  else
+    ok "Patch 1 (MB null guard): not needed for this version"
+    ((applied++))
+  fi
+
+  # Patch 2a: /tmp/ socket path — v2.1.56 style (dg6/Za9)
+  # Patch 2b: /tmp/ socket path — v2.1.112 style (i88/z2)
+  # We replace the hardcoded /tmp/ with z2() (Claude's own smart-tmpdir that respects
+  # CLAUDE_CODE_TMPDIR env var and falls back to os.tmpdir() on Android/Linux).
+  if grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
+    # Try v2.1.112 pattern first (i88 → z2), then v2.1.56 (dg6 → Za9)
+    sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${z2()}/claude-mcp-browser-bridge-|g' "$cli"
+    if grep -qF '`${z2()}/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
+      ok "Patch 2 (socket /tmp/ → z2()): applied"
+      ((applied++))
+    else
+      warn "Patch 2 (socket path): sed ran but verification failed — check ${cli} manually"
+    fi
+  else
+    ok "Patch 2 (socket path): not needed or already applied"
+    ((applied++))
+  fi
 
   if [[ $applied -eq 2 ]]; then
-    ok "cli.js Termux patches applied (${applied}/2)"
+    ok "cli.js Termux patches complete (${applied}/2)"
   else
-    warn "cli.js patch verification failed (${applied}/2 applied) — check ${cli} manually"
-    warn "Note: Za9 is the minified os.tmpdir alias and may differ across versions"
+    warn "cli.js patch incomplete (${applied}/2) — manual verification needed"
+    warn "Variable names may have changed in this version. Check:"
+    warn "  grep -o '.\\{30\\}/tmp/claude-mcp-browser-bridge.\\{30\\}' ${cli}"
   fi
 }
 
