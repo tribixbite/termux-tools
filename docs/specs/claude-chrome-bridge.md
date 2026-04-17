@@ -208,20 +208,40 @@ Full arbitrary JS execution in the MAIN world IS achievable via script tag injec
 
 ```js
 // Content script (ISOLATED world)
+const MAIN_WORLD_TIMEOUT_MS = 5000;
+
 function executeInMainWorld(code) {
   return new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
+    let settled = false;
+    let timeoutHandle;
+
+    function cleanup() {
+      window.removeEventListener('message', handler);
+      clearTimeout(timeoutHandle);
+    }
 
     // Listen for result relayed back via postMessage
-    window.addEventListener('message', function handler(event) {
-      if (event.data?.type === 'cfc-result' && event.data?.id === id) {
-        window.removeEventListener('message', handler);
-        if (event.data.error) reject(new Error(event.data.error));
-        else resolve(event.data.result);
-      }
-    });
+    function handler(event) {
+      if (event.source !== window) return;
+      if (event.data?.type !== 'cfc-result' || event.data?.id !== id) return;
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (event.data.error) reject(new Error(event.data.error));
+      else resolve(event.data.result);
+    }
+    window.addEventListener('message', handler);
 
-    // Inject script tag that runs in MAIN world
+    // Timeout guard — fires if CSP blocks the script tag or postMessage never arrives
+    timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(`executeInMainWorld timed out after ${MAIN_WORLD_TIMEOUT_MS}ms (CSP block?)`));
+    }, MAIN_WORLD_TIMEOUT_MS);
+
+    // Inject script tag — executes synchronously in MAIN world then self-removes
     const script = document.createElement('script');
     script.textContent = `
       try {
@@ -231,15 +251,20 @@ function executeInMainWorld(code) {
         window.postMessage({ type: 'cfc-result', id: '${id}', error: e.message }, '*');
       }
     `;
-    document.head.appendChild(script);
+    (document.head || document.documentElement).appendChild(script);
     script.remove();
   });
 }
 ```
 
-**Limitation**: The page's Content Security Policy (CSP) applies to injected `<script>` tags.
-On pages with strict CSP (`script-src 'self'` or nonce-based), inline script injection will
-be blocked by the browser.
+**Limitations**:
+- **CSP**: The page's Content Security Policy applies to injected `<script>` tags. Pages with
+  strict CSP (`script-src 'self'` or nonce-based) will block inline injection — the timeout
+  will fire after 5s with a descriptive error.
+- **Async code**: The injected script runs synchronously. `await`/promises inside `code` are
+  not supported — only expressions that return a value immediately.
+- **Return value serialization**: The result is sent via `postMessage` so it must be
+  structured-cloneable (no functions, DOM nodes, or circular refs).
 
 ---
 
