@@ -323,9 +323,10 @@ async function handleJavascriptTool(params) {
   const { text, tabId } = params;
   const tid = resolveTabId(tabId);
 
-  // Go straight to content script — chrome.scripting.executeScript hangs
-  // indefinitely on Android Edge, and the content script now uses <script>
-  // tag injection to run code in the MAIN world (bypasses MV3 CSP).
+  // Content script uses <script>-tag injection + window.postMessage to run
+  // code in the page's MAIN world, with a DOM-property fallback for pages
+  // whose CSP blocks inline scripts. chrome.scripting.executeScript(world:MAIN)
+  // hangs indefinitely on Android Edge so we avoid it.
   return await executeViaContentScript(tid, "javascript_exec", { code: text });
 }
 

@@ -120,7 +120,7 @@ Bridge `/tool` endpoint queues concurrent requests from multiple MCP instances (
 | `computer` (click) | Full | `dispatchEvent` MouseEvent at coordinates |
 | `computer` (type) | Full | KeyboardEvent + value append |
 | `computer` (scroll) | Full | `window.scrollBy` / `element.scrollIntoView` |
-| `javascript_tool` | Limited | DOM property reads + safe arithmetic (no eval/MAIN world) |
+| `javascript_tool` | Full | `<script>`-tag MAIN-world injection + `postMessage` bridge; DOM-property fallback when page CSP blocks inline script |
 | `tabs_context_mcp` | Full | `chrome.tabs.query` |
 | `tabs_create_mcp` | Full | `chrome.tabs.create` |
 | `read_console_messages` | Full | Intercepted console log buffer |
@@ -134,11 +134,23 @@ Bridge `/tool` endpoint queues concurrent requests from multiple MCP instances (
 | `switch_browser` | Full | Switch between browser tabs |
 | `update_plan` | Full | Update plan state |
 
-### javascript_tool limitations (Android Edge)
+### javascript_tool execution (Android Edge)
 
-`chrome.scripting.executeScript(world:"MAIN")` hangs indefinitely on Android Edge. The extension uses a DOM property evaluator instead.
+`chrome.scripting.executeScript({world:"MAIN"})` hangs indefinitely on Android Edge.
+Extension v1.11.0+ instead:
 
-**Supported patterns:**
+1. Appends a `<script>` element with inline `textContent` to the page — this runs
+   synchronously in the page's MAIN world and can access page-scoped variables,
+   call page functions, and mutate the DOM.
+2. The injected IIFE posts its return value back via `window.postMessage`
+   (type `cfc-main-result`, content-script listener filters on `event.source === window`
+   and a per-call UUID). Promise return values are awaited before posting.
+3. A 5s timeout converts silent CSP blocks into a descriptive error.
+
+When the page's CSP disallows inline scripts (strict `script-src`), MAIN-world
+injection fails and the content script falls back to a restricted DOM-property
+evaluator that handles these patterns without eval:
+
 - Global properties: `document.title`, `document.URL`, `location.href`
 - Element reads: `document.getElementById('x').textContent`
 - Collection length: `document.querySelectorAll('sel').length`
@@ -147,8 +159,8 @@ Bridge `/tool` endpoint queues concurrent requests from multiple MCP instances (
 - Arithmetic: `1+1`, `(10 - 3) * 2`
 - Literals: `true`, `false`, `null`, `"hello"`
 
-**Not supported:** arbitrary JS, page variables, function calls, DOM mutation.
-Use `read_page`, `find`, `form_input`, or `computer` tools instead.
+Results must be structured-clone-compatible (no functions, DOM nodes, or cyclic
+refs cross the `postMessage` boundary).
 
 ## CRX Build
 

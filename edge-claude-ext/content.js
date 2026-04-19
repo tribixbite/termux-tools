@@ -465,24 +465,131 @@ function formInput(params) {
 // --- javascript_exec ---------------------------------------------------------
 
 /**
- * Execute JavaScript — limited on Android Edge.
+ * Primary execution path: script-tag injection + window.postMessage bridge.
  *
- * Android Edge blocks ALL MAIN-world code execution from extensions:
- * - chrome.scripting.executeScript(world:"MAIN") hangs indefinitely
- * - new Function() / eval() blocked by MV3 extension CSP in isolated world
- * - <script> tag injection from content scripts doesn't execute
- * - blob: URL scripts don't execute either
+ * chrome.tabs.executeScript runs in the ISOLATED world only (MV2), and
+ * chrome.scripting.executeScript(world:"MAIN") hangs indefinitely on Android
+ * Edge. But appending a <script> element with inline textContent executes
+ * synchronously in the page's MAIN world — this is a standard capability of
+ * content scripts that share DOM access with the page.
  *
- * Fallback: handle common DOM property reads directly in the isolated world.
- * Content scripts share the DOM so reads work, but page-level JS variables
- * and functions are NOT accessible.
+ * Subject to the page's own CSP: pages that disallow inline script execution
+ * (strict 'script-src' without 'unsafe-inline') will silently block the
+ * injected script. The timeout below converts that silent block into an error.
  *
- * TODO: full javascript_exec requires chrome.debugger API or X11 Chromium
+ * Return values must be structured-clone-able (primitives, plain objects,
+ * arrays). DOM nodes, functions, and cyclic structures cannot cross the
+ * postMessage boundary.
+ *
+ * Async code is supported: if the IIFE returns a thenable, we await it.
+ */
+const MAIN_WORLD_TIMEOUT_MS = 5000;
+
+function executeInMainWorld(code) {
+  return new Promise((resolve, reject) => {
+    const id = (crypto?.randomUUID && crypto.randomUUID()) ||
+      `cfc-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let settled = false;
+    let timeoutHandle;
+
+    function cleanup() {
+      window.removeEventListener("message", handler);
+      clearTimeout(timeoutHandle);
+    }
+
+    function handler(event) {
+      // Reject cross-origin messages and any message not addressed to us
+      if (event.source !== window) return;
+      const data = event.data;
+      if (!data || data.type !== "cfc-main-result" || data.id !== id) return;
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if ("error" in data) reject(new Error(data.error));
+      else resolve(data.result);
+    }
+
+    window.addEventListener("message", handler);
+
+    timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(new Error(
+        `executeInMainWorld timed out after ${MAIN_WORLD_TIMEOUT_MS}ms ` +
+        `(page CSP blocking inline script injection, or code hung without returning)`
+      ));
+    }, MAIN_WORLD_TIMEOUT_MS);
+
+    // Inject the script tag. textContent runs synchronously in MAIN world.
+    // The IIFE handles both sync and Promise-returning user code.
+    //
+    // Build the injected source via string concatenation (NOT a template
+    // literal): user code may legitimately contain backticks or ${...}
+    // template syntax, which would terminate an outer template literal here
+    // at build time. Concatenation sidesteps that entirely.
+    //
+    // Note: scripts created via document.createElement("script") + textContent
+    // are NOT subject to the </script>-terminator rule that applies to inline
+    // HTML script tags, so user code containing </script> strings is safe.
+    const script = document.createElement("script");
+    script.textContent =
+      "(function() {" +
+      "  var __cfc_id = " + JSON.stringify(id) + ";" +
+      "  var __cfc_post = function(payload) {" +
+      "    try {" +
+      "      window.postMessage(Object.assign(" +
+      "        { type: 'cfc-main-result', id: __cfc_id }, payload), '*');" +
+      "    } catch (e) {" +
+      "      window.postMessage({" +
+      "        type: 'cfc-main-result', id: __cfc_id," +
+      "        error: 'result not structured-clone-able: ' + (e && e.message || e)" +
+      "      }, '*');" +
+      "    }" +
+      "  };" +
+      "  try {" +
+      "    var __cfc_r = (function() { " + code + "\n })();" +
+      "    if (__cfc_r && typeof __cfc_r.then === 'function') {" +
+      "      __cfc_r.then(" +
+      "        function(v) { __cfc_post({ result: v }); }," +
+      "        function(e) { __cfc_post({ error: String(e && e.message || e) }); }" +
+      "      );" +
+      "    } else {" +
+      "      __cfc_post({ result: __cfc_r });" +
+      "    }" +
+      "  } catch (e) {" +
+      "    __cfc_post({ error: String(e && e.message || e) });" +
+      "  }" +
+      "})();";
+    (document.head || document.documentElement).appendChild(script);
+    script.remove(); // remove tag immediately — script already ran
+  });
+}
+
+/**
+ * Execute JavaScript in the page's MAIN world.
+ *
+ * Strategy: try MAIN-world injection first (works on most pages). If that
+ * times out (page CSP blocking, hung code) or throws, fall back to the
+ * restricted DOM-property evaluator so common simple queries still succeed
+ * even on strict-CSP pages.
  */
 async function javascriptExec(params) {
   const { code } = params;
   const trimmed = code.trim();
 
+  // 1. Try MAIN world via script-tag injection (works on most pages)
+  let mainErrMsg = null;
+  try {
+    const result = await executeInMainWorld(code);
+    return { result: JSON.stringify(result) };
+  } catch (mainErr) {
+    // CSP blocked inline script, code threw, or timed out. Fall through to
+    // DOM-property evaluator so common read patterns still work on strict pages.
+    mainErrMsg = mainErr && mainErr.message ? mainErr.message : String(mainErr);
+  }
+
+  // 2. DOM-property fallback — restricted expression set, works under any CSP
   try {
     // Pattern: simple global properties
     // document.title, document.URL, document.readyState, location.href, etc.
@@ -543,11 +650,14 @@ async function javascriptExec(params) {
       if (arithResult !== null) return { result: JSON.stringify(arithResult) };
     }
 
+    // Neither MAIN world nor the fallback patterns matched — surface both.
     return {
-      error: "javascript_exec limited on Android Edge — only DOM property reads and " +
-        "arithmetic are supported (document.title, getElementById('x').textContent, " +
-        "querySelector('sel').value, window.innerWidth, 1+1, etc.). " +
-        "Use read_page, find, or form_input tools instead.",
+      error:
+        "javascript_exec: MAIN world unavailable and expression does not match " +
+        "the fallback DOM-property evaluator. MAIN world error: " + mainErrMsg + ". " +
+        "Fallback supports document.title, getElementById('x').textContent, " +
+        "querySelector('sel').value, window.innerWidth, 1+1, and similar reads. " +
+        "For complex queries on strict-CSP pages, use read_page, find, or form_input.",
     };
   } catch (err) {
     return { error: err.message || String(err) };

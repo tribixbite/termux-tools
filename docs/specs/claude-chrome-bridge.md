@@ -174,16 +174,29 @@ when disconnected (e.g., after page navigation).
 
 ---
 
-## javascript_tool: ISOLATED World Limitation
+## javascript_tool: MAIN-World Execution (Script-Tag Bridge)
 
 In MV2, `chrome.tabs.executeScript()` runs exclusively in the **ISOLATED** world — there is no
-`world` parameter (that is a MV3 `chrome.scripting` API feature). Direct arbitrary JS execution
-in the page's MAIN world via extension APIs is unreliable on Android Edge.
+`world` parameter (that is a MV3 `chrome.scripting` API feature). Calling
+`chrome.scripting.executeScript({world: "MAIN"})` on Android Edge hangs indefinitely.
 
-The current implementation uses a **DOM property evaluator** in the content script (isolated
-world) that handles a safe subset of read-only JS expressions.
+**Implemented as of extension v1.11.0**: The content script injects a `<script>` element with
+inline `textContent` into the page, which executes synchronously in the page's MAIN world, and
+uses `window.postMessage` to relay the return value back across world boundaries. A
+5-second timeout converts silent CSP blocks into an error. If MAIN-world execution fails for
+any reason (CSP, timeout, thrown exception), a DOM-property fallback evaluator handles common
+read patterns so simple queries still work on strict-CSP pages.
 
-### Supported Patterns
+### MAIN-world (primary path)
+
+Supports arbitrary expressions, page-scoped variable reads, function calls, and DOM mutation,
+subject only to the page's CSP. Both synchronous return values and Promise-returning IIFEs
+are supported (the injected wrapper awaits thenables before posting).
+
+### DOM-property fallback
+
+Activated if MAIN world fails. Restricted to the expression set below — no eval, no function
+calls, no mutation. CSP-safe because nothing inline-evaluates.
 
 | Pattern | Example |
 |---------|---------|
@@ -195,16 +208,7 @@ world) that handles a safe subset of read-only JS expressions.
 | Arithmetic | `1+1`, `(10 - 3) * 2` |
 | Literals | `true`, `false`, `null`, `"hello"` |
 
-### Not Supported
-
-Arbitrary JS execution, page-scoped variable reads, function calls, DOM mutation, or any
-expression requiring MAIN world scope. Use `read_page`, `find`, `form_input`, or `computer`
-tools for these tasks.
-
-### Known Workaround: Script Tag Bridge (Not Yet Implemented)
-
-Full arbitrary JS execution in the MAIN world IS achievable via script tag injection and a
-`window.postMessage` bridge. This approach is not yet implemented but is the known path forward:
+### Implementation
 
 ```js
 // Content script (ISOLATED world)
@@ -284,7 +288,7 @@ single tool with multiple action sub-types, not four separate tools.
 | `computer` (type) | Full | KeyboardEvent dispatch + value append |
 | `computer` (scroll) | Full | `window.scrollBy()` / `element.scrollIntoView()` |
 | `computer` (screenshot) | Partial | `captureVisibleTab` — may fail on Android Edge |
-| `javascript_tool` | Limited | DOM property evaluator in isolated world (see above) |
+| `javascript_tool` | Full | `<script>`-tag injection + postMessage bridge, DOM-property fallback on CSP-strict pages |
 | `tabs_context_mcp` | Full | `chrome.tabs.query()` with group tracking |
 | `tabs_create_mcp` | Full | `chrome.tabs.create()` |
 | `read_console_messages` | Full | Intercepted `console.*` method buffer in content script |
@@ -634,11 +638,10 @@ adb shell am force-stop com.microsoft.emmx.canary
 | Limitation | Detail |
 |-----------|--------|
 | No screenshot on Android | `captureVisibleTab` is unavailable in Android Edge. Falls back to text description of visible content. |
-| javascript_tool MAIN world | MV2 `chrome.tabs.executeScript` runs in isolated world only. Arbitrary JS in page scope not supported. Script tag bridge workaround not yet implemented. |
+| javascript_tool on strict-CSP pages | Script-tag injection is blocked by pages with CSP `script-src` that disallows `'unsafe-inline'`. MAIN-world call times out after 5s and falls back to the restricted DOM-property evaluator. |
 | Content script injection blocked | `chrome://`, `edge://`, and extension pages block content script injection entirely. |
 | Background page lifecycle | Edge may suspend the background page after extended idle. WebSocket reconnects automatically on wake via retry logic. |
 | Form input reactivity | The native setter trick works for React and Vue controlled inputs but may miss some framework-specific bindings. |
-| Page CSP and script tags | The script tag injection workaround (when implemented) will be blocked on pages with strict CSP. |
 
 ---
 
