@@ -522,16 +522,26 @@ function executeInMainWorld(code) {
     }, MAIN_WORLD_TIMEOUT_MS);
 
     // Inject the script tag. textContent runs synchronously in MAIN world.
-    // The IIFE handles both sync and Promise-returning user code.
+    //
+    // Execution semantics: we pass user code to eval() so that a bare
+    // expression returns its value (matching the tool's documented contract
+    // of "no return needed"). eval runs in the enclosing IIFE's scope, sees
+    // page globals (window, document, page-defined vars), and its completion
+    // value becomes our result. Promise-returning code is awaited.
     //
     // Build the injected source via string concatenation (NOT a template
     // literal): user code may legitimately contain backticks or ${...}
     // template syntax, which would terminate an outer template literal here
-    // at build time. Concatenation sidesteps that entirely.
+    // at build time. JSON.stringify(code) produces a safely-escaped string
+    // literal we can hand to eval().
     //
-    // Note: scripts created via document.createElement("script") + textContent
+    // Scripts created via document.createElement("script") + textContent
     // are NOT subject to the </script>-terminator rule that applies to inline
     // HTML script tags, so user code containing </script> strings is safe.
+    //
+    // CSP: pages with 'unsafe-inline' disallowed block the <script> injection
+    // entirely (timeout path). Pages with 'unsafe-eval' disallowed block the
+    // eval call specifically and the wrapper's try/catch reports the error.
     const script = document.createElement("script");
     script.textContent =
       "(function() {" +
@@ -548,7 +558,7 @@ function executeInMainWorld(code) {
       "    }" +
       "  };" +
       "  try {" +
-      "    var __cfc_r = (function() { " + code + "\n })();" +
+      "    var __cfc_r = (0, eval)(" + JSON.stringify(code) + ");" +
       "    if (__cfc_r && typeof __cfc_r.then === 'function') {" +
       "      __cfc_r.then(" +
       "        function(v) { __cfc_post({ result: v }); }," +
