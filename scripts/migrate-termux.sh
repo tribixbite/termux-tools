@@ -144,13 +144,22 @@ top_home_dirs() {
       | sort -rh | head -10 )
 }
 
-# Stop daemons that hold open files on $HOME — best-effort, never fatal.
+# Quiesce operad's daemon so its state files (state.json, trace.log,
+# registry.json) don't churn during the backup. Best-effort, never fatal.
+#
+# Notes:
+#  - Plain `tmx shutdown` detaches cleanly and leaves user tmux sessions alive
+#    (per CLAUDE.md). `--kill` would also tear down user sessions, which is
+#    too aggressive for a backup.
+#  - The operad watchdog will respawn the daemon within seconds, so this just
+#    buys a brief quiet window. That's enough for tar to skip stale opens.
+#  - We do NOT kill sshd — if the backup is invoked over ssh, that would sever
+#    the running session, and sshd doesn't hold $HOME files we care about.
 stop_daemons() {
   if command -v tmx >/dev/null 2>&1; then
-    info "stopping operad daemon (tmx shutdown --kill)"
-    tmx shutdown --kill 2>/dev/null || true
+    info "quiescing operad daemon (tmx shutdown)"
+    tmx shutdown 2>/dev/null || true
   fi
-  pkill -f sshd 2>/dev/null || true
 }
 
 # ---------- backup ------------------------------------------------------------
