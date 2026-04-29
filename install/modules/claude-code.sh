@@ -44,6 +44,8 @@ module_claude_code() {
 # Apply Termux-compatibility patches to cli.js after install/update.
 # Patches are idempotent — safe to re-run after any `bun install -g` update.
 #
+# Compatibility-fix patches (always applied):
+#
 #   Patch 1 — MB/Yw6 null guard (v2.1.56 only):
 #     [...MB,"inherit"] → [...(MB||[]),"inherit"]
 #     MB (minified agent-type list) could be null on Termux. Fixed upstream in v2.1.112+
@@ -59,6 +61,28 @@ module_claude_code() {
 #       v2.1.56:  function dg6(){return`/tmp/...`}  →  `${Za9()}/...`  (Za9=os.tmpdir import)
 #       v2.1.112: function i88(){return`/tmp/...`}  →  `${z2()}/...`   (z2=smart tmpdir helper)
 #     We try both patterns so the script works across versions.
+#
+# System-prompt patches (opt-out via env vars; default on for this user):
+#
+#   Patch 3 — Strip "NEVER commit changes unless asked":
+#     Conflicts with our global CLAUDE.md directive ("after every round of
+#     work, make a conventional commit"). Removing the redundant negative
+#     lets the CLAUDE.md positive rule apply cleanly without context noise.
+#     Set CCPATCH_KEEP_NO_COMMIT=1 to skip.
+#
+#   Patch 4 — Strip "Default to writing no comments":
+#     Conflicts with our global CLAUDE.md ("use properly typed DRY production
+#     level code with explanatory comments"). Set CCPATCH_KEEP_NO_COMMENTS=1
+#     to skip.
+#
+#   Patch 5 — Relax inter-tool length cap from 25 → 60 words:
+#     The 25-word cap on between-tool updates is too tight for explaining
+#     non-trivial state. Set CCPATCH_KEEP_TIGHT_LENGTH=1 to skip.
+#
+# Tested against v2.1.112. Patterns are sentinel-string-based (literal phrase
+# matches) so they typically survive minor version bumps. If a patch's
+# verification grep fails after `bun install -g`, the .bak-prepatch backup
+# remains untouched.
 patch_claude_cli() {
   local cli="${CLI_JS_GLOBAL}"
   if [[ ! -f "$cli" ]]; then
@@ -68,9 +92,20 @@ patch_claude_cli() {
 
   local needs_patch=0
 
-  # Check for any unpatched pattern that needs fixing
+  # Compatibility-fix detection
   grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null && needs_patch=1
   grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null && needs_patch=1
+
+  # System-prompt detection (each gated by an opt-out env var)
+  [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" == "1" ]] || \
+    grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null && \
+    [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]] && needs_patch=1
+  [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" == "1" ]] || \
+    grep -qF ' - Default to writing no comments.' "$cli" 2>/dev/null && \
+    [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" != "1" ]] && needs_patch=1
+  [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" == "1" ]] || \
+    grep -qF 'Length limits: keep text between tool calls to ≤25 words.' "$cli" 2>/dev/null && \
+    [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" != "1" ]] && needs_patch=1
 
   if [[ $needs_patch -eq 0 ]]; then
     ok "cli.js Termux patches already applied"
@@ -114,12 +149,72 @@ patch_claude_cli() {
     ((applied++))
   fi
 
-  if [[ $applied -eq 2 ]]; then
-    ok "cli.js Termux patches complete (${applied}/2)"
+  local total=2
+
+  # Patch 3: strip the "NEVER commit changes unless..." bullet from the static
+  # git-workflow section. The phrase lives on its own line inside a backtick
+  # template literal (real newlines), so a line-delete cleanly removes it
+  # without touching the surrounding bullets.
+  if [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]]; then
+    total=$((total+1))
+    if grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
+      sed -i '/^- NEVER commit changes unless the user explicitly asks you to\. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive$/d' "$cli"
+      if ! grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
+        ok "Patch 3 (no-commit prompt strip): applied"
+        ((applied++))
+      else
+        warn "Patch 3: sed ran but phrase still present"
+      fi
+    else
+      ok "Patch 3 (no-commit prompt strip): not needed"
+      ((applied++))
+    fi
+  fi
+
+  # Patch 4: strip the "Default to writing no comments." JS string from the
+  # `D6A()` array. The string is one element of a comma-separated array on a
+  # single physical line, so we substitute the literal `"...",` (string +
+  # trailing comma) out, leaving the array intact.
+  if [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" != "1" ]]; then
+    total=$((total+1))
+    if grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null; then
+      sed -i 's|"Default to writing no comments\. Only add one when the WHY is non-obvious: a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader\. If removing the comment wouldn'"'"'t confuse a future reader, don'"'"'t write it\.",||g' "$cli"
+      if ! grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null; then
+        ok "Patch 4 (no-comments prompt strip): applied"
+        ((applied++))
+      else
+        warn "Patch 4: sed ran but phrase still present"
+      fi
+    else
+      ok "Patch 4 (no-comments prompt strip): not needed"
+      ((applied++))
+    fi
+  fi
+
+  # Patch 5: relax inter-tool word cap 25 → 60. The literal lives inside an
+  # `XT("numeric_length_anchors", () => "...")` arrow on a single line.
+  if [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" != "1" ]]; then
+    total=$((total+1))
+    if grep -qF '"Length limits: keep text between tool calls to ≤25 words.' "$cli" 2>/dev/null; then
+      sed -i 's|"Length limits: keep text between tool calls to ≤25 words\. Keep final responses to ≤100 words unless the task requires more detail\."|"Length limits: keep text between tool calls to ≤60 words. Keep final responses to ≤250 words unless the task requires more detail."|g' "$cli"
+      if grep -qF '"Length limits: keep text between tool calls to ≤60 words.' "$cli" 2>/dev/null; then
+        ok "Patch 5 (length-cap relax 25→60 / 100→250): applied"
+        ((applied++))
+      else
+        warn "Patch 5: sed ran but new phrase not present"
+      fi
+    else
+      ok "Patch 5 (length-cap relax): already applied or phrase not found"
+      ((applied++))
+    fi
+  fi
+
+  if [[ $applied -eq $total ]]; then
+    ok "cli.js patches complete (${applied}/${total})"
   else
-    warn "cli.js patch incomplete (${applied}/2) — manual verification needed"
-    warn "Variable names may have changed in this version. Check:"
-    warn "  grep -o '.\\{30\\}/tmp/claude-mcp-browser-bridge.\\{30\\}' ${cli}"
+    warn "cli.js patch incomplete (${applied}/${total}) — manual verification needed"
+    warn "Variable names or phrases may have changed in this version. Restore:"
+    warn "  cp ${bak} ${cli}"
   fi
 }
 

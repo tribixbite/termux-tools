@@ -50,17 +50,35 @@ CLI=~/.claude/local/lib/node_modules/@anthropic-ai/claude-code/cli.js
 sed -i 's/y8("gate_name",!1)/y8("gate_name",!0)/g' "$CLI"
 ```
 
-### Applied patches (known working)
+### Applied patches (verified against v2.1.112)
+The repo's `install/modules/claude-code.sh` `patch_claude_cli()` now applies five patches automatically after every `bun install -g @anthropic-ai/claude-code` (idempotent). Two are compatibility fixes; three are system-prompt rewrites that align with the user's global CLAUDE.md directives.
+
 ```bash
-# Auto-memory (tengu_oboe)
-sed -i 's/y8("tengu_oboe",!1)/y8("tengu_oboe",!0)/g' "$CLI"
+# Compatibility fixes (always applied; no-op if version already fixed upstream)
+sed -i 's|\[\.\.\.MB,"inherit"\]|[...(MB||[]),"inherit"]|g' "$CLI"   # v2.1.56 only
+sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${z2()}/claude-mcp-browser-bridge-|g' "$CLI"
 
-# Past session context (tengu_coral_fern)
-sed -i 's/y8("tengu_coral_fern",!1)/y8("tengu_coral_fern",!0)/g' "$CLI"
-
-# Extended thinking (tengu_thinkback) — uses isEnabled pattern
-sed -i 's/isEnabled("tengu_thinkback")/true/g' "$CLI"
+# System-prompt rewrites (opt-out via env vars; defaults align with our CLAUDE.md)
+# Patch 3 — strip "NEVER commit changes unless the user explicitly asks"
+#   (CCPATCH_KEEP_NO_COMMIT=1 to skip)
+# Patch 4 — strip "Default to writing no comments." JS string from D6A() array
+#   (CCPATCH_KEEP_NO_COMMENTS=1 to skip)
+# Patch 5 — relax inter-tool length cap 25→60 words / 100→250 words
+#   (CCPATCH_KEEP_TIGHT_LENGTH=1 to skip)
 ```
+
+### Gates not currently patched
+v2.1.37 docs listed several gates that have evolved by v2.1.112:
+
+| Gate | v2.1.37 status | v2.1.112 status |
+|------|----------------|-----------------|
+| `tengu_oboe` | gated `y8(...,!1)` | no longer in `y8` form (lifted upstream — auto-memory now default) |
+| `tengu_coral_fern` | gated `y8(...,!1)` | **still gated** — patchable |
+| `tengu_thinkback` | gated `isEnabled(...)` | no longer in that form |
+| `tengu_vinteuil_phrase` | gated | no longer in `y8` form |
+| `tengu_system_prompt_global_cache` | gated | no longer in `y8` form |
+
+Sentinel-string-based patches survive minor version bumps reliably; gate-name patches don't (variable names are minified afresh on each release).
 
 ### Patchable gates (14)
 | Gate | Function | Description |
