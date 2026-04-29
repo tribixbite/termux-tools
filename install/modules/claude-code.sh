@@ -20,10 +20,18 @@ module_claude_code() {
     return 1
   fi
 
-  # Install globally via bun
-  info "Installing @anthropic-ai/claude-code..."
-  if bun install -g @anthropic-ai/claude-code 2>&1; then
-    ok "Claude Code installed"
+  # Install globally via bun.
+  # Pinned at v2.1.112: starting with v2.1.123 the package layout switched
+  # from a single bundled cli.js to platform-native binaries via
+  # optionalDependencies. The shipped Linux ARM64 binaries link against
+  # /lib/ld-{linux,musl}-aarch64.so.1 (paths that don't exist on Termux
+  # bionic), so they only run via grun + patchelf — and our patch_claude_cli
+  # targets the JS bundle. Override with CCINSTALL_VERSION=latest to opt
+  # in to the new layout (and accept the patcher won't do anything).
+  local target_version="${CCINSTALL_VERSION:-2.1.112}"
+  info "Installing @anthropic-ai/claude-code@${target_version}..."
+  if bun install -g "@anthropic-ai/claude-code@${target_version}" 2>&1; then
+    ok "Claude Code ${target_version} installed"
   else
     fail "Installation failed"
     return 1
