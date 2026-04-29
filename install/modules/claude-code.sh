@@ -98,10 +98,10 @@ patch_claude_cli() {
 
   # System-prompt detection (each gated by an opt-out env var)
   [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" == "1" ]] || \
-    grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null && \
+    grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null && \
     [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]] && needs_patch=1
   [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" == "1" ]] || \
-    grep -qF ' - Default to writing no comments.' "$cli" 2>/dev/null && \
+    grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null && \
     [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" != "1" ]] && needs_patch=1
   [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" == "1" ]] || \
     grep -qF 'Length limits: keep text between tool calls to ≤25 words.' "$cli" 2>/dev/null && \
@@ -157,9 +157,9 @@ patch_claude_cli() {
   # without touching the surrounding bullets.
   if [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]]; then
     total=$((total+1))
-    if grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
+    if grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
       sed -i '/^- NEVER commit changes unless the user explicitly asks you to\. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive$/d' "$cli"
-      if ! grep -qF '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
+      if ! grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
         ok "Patch 3 (no-commit prompt strip): applied"
         ((applied++))
       else
