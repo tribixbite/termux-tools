@@ -8,7 +8,15 @@ android.permission.ACCESS_ADSERVICES_ATTRIBUTION
 com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE
 
 # -- App enumeration (fingerprinting) --
-android.permission.QUERY_ALL_PACKAGES
+# NOTE: Cannot strip — Chromium's ExternalNavigationHandler.safeQueryIntentActivities()
+# returns empty under Android 11+ visibility rules without this permission, breaking
+# every OAuth "return to app" deeplink (intent://...#Intent;package=com.target;end URIs)
+# and any custom-scheme app callback. Wildcard <intent action=VIEW/> in <queries> does
+# NOT cover this — Android requires per-scheme <data> declarations, which doesn't scale
+# for a browser. Keep enabled. Confirmed via logcat silent-failure pattern + Gemini Pro 3
+# code-path review (chromium components/external_intents/.../ExternalNavigationHandler.java
+# + base/.../IntentUtils.java).
+# android.permission.QUERY_ALL_PACKAGES
 
 # -- SMS interception (not needed for browser) --
 android.permission.RECEIVE_SMS
