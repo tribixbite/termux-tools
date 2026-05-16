@@ -3708,7 +3708,8 @@ function runSync(cmd, opts) {
     const result2 = Bun.spawnSync({
       cmd,
       stdout: opts?.stdout ?? "pipe",
-      stderr: opts?.stderr ?? "pipe"
+      stderr: opts?.stderr ?? "pipe",
+      ...opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}
     });
     return {
       success: result2.success,
@@ -3723,7 +3724,8 @@ function runSync(cmd, opts) {
       opts?.stdout ?? "pipe",
       opts?.stderr ?? "pipe"
     ],
-    encoding: "buffer"
+    encoding: "buffer",
+    ...opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" } : {}
   });
   return {
     success: result.status === 0,
@@ -3951,8 +3953,9 @@ function getAdbSerial() {
   const now = Date.now();
   if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
   _adbSerialTs = now;
+  const ADB_CALL_TIMEOUT_MS = 3e3;
   try {
-    const result = runSync([ADB_PATH, "devices"]);
+    const result = runSync([ADB_PATH, "devices"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
     const lines = result.stdout.toString().trim().split("\n").filter((l) => l.endsWith("	device"));
     if (lines.length <= 1) {
       _adbSerial = "";
@@ -3960,7 +3963,7 @@ function getAdbSerial() {
     }
     for (const line of lines) {
       const serial = line.split("	")[0];
-      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
       if (check.exitCode === 0 && check.stdout.toString().trim()) {
         _adbSerial = serial;
         return _adbSerial;
@@ -4331,6 +4334,20 @@ function sendToolRequest(requestId, requestJson) {
   }
   return sent;
 }
+function rejectAllPendingTools(reason) {
+  for (const [requestId, entry] of pendingToolMap) {
+    clearTimeout(entry.timeout);
+    entry.resolve({ type: "tool_response", error: reason, requestId });
+  }
+  pendingToolMap.clear();
+  for (const queue of busyTabs.values()) {
+    for (const entry of queue) {
+      clearTimeout(entry.timeout);
+      entry.resolve({ type: "tool_response", error: reason, requestId: entry.requestId });
+    }
+  }
+  busyTabs.clear();
+}
 function drainTabQueue(tabId) {
   const queue = busyTabs.get(tabId);
   if (!queue || queue.length === 0) {
@@ -4699,7 +4716,7 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, nativeHostKillTimer, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
     init_import_meta_shim();
@@ -5536,6 +5553,7 @@ var init_claude_chrome_bridge = __esm({
     lastToolName = null;
     lastToolTime = null;
     nativeHost = null;
+    nativeHostKillTimer = null;
     stdoutDecoder = new NativeMessageDecoder();
     wsClients = /* @__PURE__ */ new Set();
     server = createBridgeServer({
@@ -5750,7 +5768,12 @@ var init_claude_chrome_bridge = __esm({
                 busyTabs.get(tabId).push({ requestJson: toolRequest, resolve: safeResolve, timeout, requestId, tabId });
               } else {
                 pendingToolMap.set(requestId, { resolve: safeResolve, timeout, tabId });
-                sendToolRequest(requestId, toolRequest);
+                const sent = sendToolRequest(requestId, toolRequest);
+                if (!sent) {
+                  pendingToolMap.delete(requestId);
+                  clearTimeout(timeout);
+                  safeResolve({ type: "tool_response", error: "All bridge clients disconnected before dispatch" });
+                }
               }
             });
             return new Response(
@@ -5781,6 +5804,10 @@ var init_claude_chrome_bridge = __esm({
         open(ws) {
           log("info", `WS client connected (total: ${wsClients.size + 1})`);
           wsClients.add(ws);
+          if (nativeHostKillTimer) {
+            clearTimeout(nativeHostKillTimer);
+            nativeHostKillTimer = null;
+          }
           if (!nativeHost) {
             spawnNativeHost();
           }
@@ -5870,9 +5897,15 @@ var init_claude_chrome_bridge = __esm({
         close(ws) {
           wsClients.delete(ws);
           log("info", `WS client disconnected (remaining: ${wsClients.size})`);
+          if (wsClients.size === 0 && (pendingToolMap.size > 0 || busyTabs.size > 0)) {
+            log("warn", `Rejecting ${pendingToolMap.size} pending + ${busyTabs.size} queued tool request(s) \u2014 extension disconnected`);
+            rejectAllPendingTools("Extension disconnected before tool response");
+          }
           if (wsClients.size === 0 && nativeHost) {
+            if (nativeHostKillTimer) clearTimeout(nativeHostKillTimer);
             log("info", "No clients remaining, stopping native host in 30s");
-            setTimeout(() => {
+            nativeHostKillTimer = setTimeout(() => {
+              nativeHostKillTimer = null;
               if (wsClients.size === 0 && nativeHost) {
                 log("info", "Stopping native host (no clients)");
                 nativeHost.kill();

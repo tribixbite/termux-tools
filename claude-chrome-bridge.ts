@@ -70,15 +70,18 @@ function getAdbSerial(): string {
   const now = Date.now();
   if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
   _adbSerialTs = now;
+  // Cap each adb call at 3s; ADB can wedge during wireless rotation and would
+  // otherwise block the bridge process's event loop on a sync call.
+  const ADB_CALL_TIMEOUT_MS = 3_000;
   try {
-    const result = runSync([ADB_PATH, "devices"]);
+    const result = runSync([ADB_PATH, "devices"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
     const lines = result.stdout.toString().trim().split("\n")
       .filter(l => l.endsWith("\tdevice"));
     if (lines.length <= 1) { _adbSerial = ""; return _adbSerial; }
     // Multiple devices: find the one running Edge Canary
     for (const line of lines) {
       const serial = line.split("\t")[0];
-      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"]);
+      const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
       if (check.exitCode === 0 && check.stdout.toString().trim()) { _adbSerial = serial; return _adbSerial; }
     }
     _adbSerial = lines[0]?.split("\t")[0] ?? "";
@@ -1418,6 +1421,23 @@ function sendToolRequest(requestId: string, requestJson: string): boolean {
   return sent;
 }
 
+/** Reject every in-flight HTTP /tool request with the given reason. Called when
+ *  the last WS client disconnects so callers don't wait the full 30s timeout. */
+function rejectAllPendingTools(reason: string): void {
+  for (const [requestId, entry] of pendingToolMap) {
+    clearTimeout(entry.timeout);
+    entry.resolve({ type: "tool_response", error: reason, requestId });
+  }
+  pendingToolMap.clear();
+  for (const queue of busyTabs.values()) {
+    for (const entry of queue) {
+      clearTimeout(entry.timeout);
+      entry.resolve({ type: "tool_response", error: reason, requestId: entry.requestId });
+    }
+  }
+  busyTabs.clear();
+}
+
 /** Drain the next queued request for a tab after the current one completes */
 function drainTabQueue(tabId: number): void {
   const queue = busyTabs.get(tabId);
@@ -1444,6 +1464,7 @@ function drainTabQueue(tabId: number): void {
 // --- Child Process Management ------------------------------------------------
 
 let nativeHost: SpawnedProcess | null = null;
+let nativeHostKillTimer: ReturnType<typeof setTimeout> | null = null;
 const stdoutDecoder = new NativeMessageDecoder();
 
 // Track connected WebSocket clients
@@ -2011,9 +2032,15 @@ const server: BridgeServer = createBridgeServer({
             if (!busyTabs.has(tabId)) busyTabs.set(tabId, []);
             busyTabs.get(tabId)!.push({ requestJson: toolRequest, resolve: safeResolve, timeout, requestId, tabId });
           } else {
-            // Tab is free — send immediately
+            // Tab is free — send immediately. Mirror drainTabQueue: if every
+            // client just disconnected, fail fast instead of waiting 30s.
             pendingToolMap.set(requestId, { resolve: safeResolve, timeout, tabId });
-            sendToolRequest(requestId, toolRequest);
+            const sent = sendToolRequest(requestId, toolRequest);
+            if (!sent) {
+              pendingToolMap.delete(requestId);
+              clearTimeout(timeout);
+              safeResolve({ type: "tool_response", error: "All bridge clients disconnected before dispatch" });
+            }
           }
         });
 
@@ -2054,6 +2081,12 @@ const server: BridgeServer = createBridgeServer({
     open(ws) {
       log("info", `WS client connected (total: ${wsClients.size + 1})`);
       wsClients.add(ws);
+
+      // Cancel any pending native-host shutdown — a fresh client is here.
+      if (nativeHostKillTimer) {
+        clearTimeout(nativeHostKillTimer);
+        nativeHostKillTimer = null;
+      }
 
       // Spawn native host on first connection
       if (!nativeHost) {
@@ -2172,10 +2205,20 @@ const server: BridgeServer = createBridgeServer({
       wsClients.delete(ws);
       log("info", `WS client disconnected (remaining: ${wsClients.size})`);
 
-      // Shut down native host if no clients
+      // Last client gone — fail any in-flight HTTP /tool requests immediately
+      // instead of letting them block for the full 30s timeout.
+      if (wsClients.size === 0 && (pendingToolMap.size > 0 || busyTabs.size > 0)) {
+        log("warn", `Rejecting ${pendingToolMap.size} pending + ${busyTabs.size} queued tool request(s) — extension disconnected`);
+        rejectAllPendingTools("Extension disconnected before tool response");
+      }
+
+      // Shut down native host if no clients (cancel any prior schedule first to
+      // avoid stacking timers across rapid disconnect/reconnect cycles).
       if (wsClients.size === 0 && nativeHost) {
+        if (nativeHostKillTimer) clearTimeout(nativeHostKillTimer);
         log("info", "No clients remaining, stopping native host in 30s");
-        setTimeout(() => {
+        nativeHostKillTimer = setTimeout(() => {
+          nativeHostKillTimer = null;
           if (wsClients.size === 0 && nativeHost) {
             log("info", "Stopping native host (no clients)");
             nativeHost.kill();

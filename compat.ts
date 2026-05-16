@@ -82,13 +82,14 @@ export interface SpawnedProcess {
 /** Synchronous process spawn (replaces Bun.spawnSync()) */
 export function runSync(
   cmd: string[],
-  opts?: { stdout?: "pipe" | "ignore"; stderr?: "pipe" | "ignore"; stdin?: "pipe" | "ignore" }
+  opts?: { stdout?: "pipe" | "ignore"; stderr?: "pipe" | "ignore"; stdin?: "pipe" | "ignore"; timeoutMs?: number }
 ): SpawnResult {
   if (IS_BUN) {
     const result = Bun.spawnSync({
       cmd,
       stdout: opts?.stdout ?? "pipe",
       stderr: opts?.stderr ?? "pipe",
+      ...(opts?.timeoutMs ? { timeout: opts.timeoutMs } : {}),
     });
     return {
       success: result.success,
@@ -104,6 +105,7 @@ export function runSync(
       opts?.stderr ?? "pipe",
     ],
     encoding: "buffer",
+    ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const } : {}),
   });
   return {
     success: result.status === 0,
