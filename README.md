@@ -72,6 +72,40 @@ tools/fix-after-update.sh         # Apply phantom process killer fix
 
 ADB auto-reconnects every 5 minutes via cron.
 
+### Android Secure Prefs Dumper (`scripts/android-secure-prefs-dump`)
+
+Dumps any Android app's `androidx.security.crypto.EncryptedSharedPreferences`
+file in plaintext (entry name → value). Works on flutter_secure_storage and on
+native-Java EncryptedSharedPreferences callers. **Requires** Magisk/KernelSU
+root on the target device.
+
+```bash
+android-secure-prefs-dump <package>                       # default file = FlutterSecureStorage
+android-secure-prefs-dump <package> <prefs-file-basename> # custom prefs file
+android-secure-prefs-dump --device <serial> <package>     # explicit ADB device
+android-secure-prefs-dump --json <package> | jq .         # JSON for scripting
+android-secure-prefs-dump --raw  <package>                # KEY=VALUE lines
+android-secure-prefs-dump --list-aliases <package>        # just AndroidKeyStore aliases
+```
+
+Mechanism: pushes a bundled DEX to `/data/local/tmp/`, runs it via
+`su -c 'su <pkg-uid> -c "app_process … SecureStorageDumper"'` to extract the
+two Tink keysets (one AES-SIV for entry names, one AES-GCM for values) using
+the HW-backed `_androidx_security_master_key_`, then decrypts every entry on
+the host using `python3-cryptography`. See the source for the full data-flow
+explanation and the format quirks (Tink output prefix layout, AES-SIV vs
+AES-GCM AAD bindings, flutter_secure_storage's 8-byte BE length preamble).
+
+Install:
+```bash
+pkg install python python-cryptography
+ln -sf ~/git/termux-tools/scripts/android-secure-prefs-dump $PREFIX/bin/
+```
+
+The bundled DEX rebuilds from `~/git/x2d/runtime/handy_extract/keystore_dumper/`
+via `./build.sh` (needs `$ANDROID_HOME/platforms/android-34/android.jar` and
+`build-tools/34.0.0*/d8`).
+
 ## Quick Start
 
 ```bash

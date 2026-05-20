@@ -1,0 +1,317 @@
+#!/data/data/com.termux/files/usr/bin/env python3
+"""android-secure-prefs-dump — dump androidx.security.crypto.EncryptedSharedPreferences
+
+Targets any Android app that stores secrets via androidx.security:security-crypto
+(typically backing flutter_secure_storage's preferencesEncryptedSharedPreferences
+or app-native uses). Bypasses the keystore HW gate by re-executing under the
+target app's UID via Magisk + app_process, then decrypts the prefs file's two
+Tink keysets locally and unwraps every entry name (AES-SIV) and value (AES-GCM)
+on the host.
+
+What you need on the device:
+  - Root (Magisk recommended; KernelSU + APatch also fine — anything that
+    gives `su` and per-uid `su <uid>`).
+  - The target app installed and the secure prefs file already populated.
+
+What you need on the host (this machine):
+  - adb on PATH.
+  - python3 with `cryptography` (`pip install cryptography`).
+  - The bundled DEX (android-secure-prefs-dump.dex) next to this script.
+
+Usage:
+    android-secure-prefs-dump <package> [shared-prefs file basename]
+    android-secure-prefs-dump --device 192.168.0.86:41351 com.example.app
+    android-secure-prefs-dump --list-aliases bbl.intl.bambulab.com
+    android-secure-prefs-dump --xml /data/data/<pkg>/shared_prefs/x.xml <package>
+
+  package           Target Android package id (e.g. com.example.app)
+  shared-prefs file Basename of the prefs XML (default: FlutterSecureStorage).
+                    Pass without the .xml suffix; the file must live at
+                    /data/data/<pkg>/shared_prefs/<name>.xml.
+
+  --device <serial> ADB device serial / ip:port. Defaults to ANDROID_SERIAL,
+                    then to the single connected device.
+  --xml <path>      Explicit XML path inside the device. Overrides --prefs.
+  --list-aliases    Just enumerate AndroidKeyStore aliases under the app's UID
+                    and exit (lighter-weight than the full dump; useful for
+                    confirming the right uid/Magisk context).
+  --raw             Print key=value pairs without decoration (machine-friendly).
+  --json            Print as a JSON object.
+  --keep-dex        Don't `rm` the pushed DEX from /data/local/tmp afterwards
+                    (only useful if you're chaining other tools).
+
+Examples:
+  $ android-secure-prefs-dump bbl.intl.bambulab.com
+  # → 7 entries: accessToken, refreshToken, lastLoginEmail, …
+
+  $ android-secure-prefs-dump --json com.something.app | jq .accessToken
+
+  $ android-secure-prefs-dump --list-aliases com.banking.app
+  # → alias=…  type=X.509 key-algo=RSA …
+
+What it does, end-to-end:
+  1. Resolves the app UID via `pm list packages -U`.
+  2. Pushes android-secure-prefs-dump.dex to /data/local/tmp/.
+  3. Runs SecureStorageDumper (bundled in the DEX) as the app UID via
+     `su -c 'su <UID> -c "app_process … SecureStorageDumper <xml>"'`.
+     That gives the dumper access to the HW-backed AndroidKeyStore master
+     key `_androidx_security_master_key_` which is what wraps the
+     EncryptedSharedPreferences keysets.
+  4. Parses the output for AES_SIV and AES_GCM key hexes + prefs filename.
+  5. Pulls the XML over `adb shell cat`.
+  6. Decrypts every entry name (AES-SIV with AAD = prefs filename) and every
+     value (AES-GCM with AAD = encrypted-name-base64) on the host. Strips
+     the `VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIHNlY3VyZSBzdG9yYWdlCg_` prefix
+     the flutter_secure_storage plugin tacks onto every key.
+  7. Prints the resulting name → value map.
+
+Background:
+  androidx.security:security-crypto wraps Google's Tink library to provide a
+  drop-in `EncryptedSharedPreferences` that encrypts both the entry NAMES
+  (deterministically via AES-256-SIV so lookups still work) and the entry
+  VALUES (probabilistically via AES-256-GCM). Both keys live in a Tink
+  EncryptedKeyset which is itself encrypted with an AES key in the Android
+  HW-backed KeyStore under alias `_androidx_security_master_key_`. The HW
+  key never leaves the secure-element/TEE — but it WILL unwrap from inside
+  the owning app's UID. Magisk + `su <uid>` gets us into that UID. From
+  there everything is just bytes.
+
+Source / discussion:
+  See ../../x2d/runtime/handy_extract/keystore_dumper/ for the original work
+  on Bambu Handy.  The bundled DEX is rebuilt from that tree.
+"""
+from __future__ import annotations
+import argparse, base64, json, os, re, shutil, subprocess, sys, tempfile
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+
+DEX_PATH = Path(__file__).resolve().with_suffix('.dex')
+
+# The same prefix flutter_secure_storage uses for every key — strip on display.
+FSS_KEY_PREFIX = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIHNlY3VyZSBzdG9yYWdlCg_"
+# androidx EncryptedSharedPreferences prepends a 5-byte type-tag-and-length
+# preamble to value payloads. type 2 == STRING.
+EBP_TYPE_STRING = 2
+
+# Hard-fail with a clear message if cryptography isn't installed.
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESSIV, AESGCM
+except ImportError:
+    sys.exit("install python `cryptography`: pip install cryptography")
+
+
+def sh(*argv: str, check=True, capture=True, **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(argv, check=check, capture_output=capture, text=True, **kw)
+
+
+def resolve_device(arg: str | None) -> str:
+    """Resolve adb device serial. Order: --device arg → ANDROID_SERIAL → single."""
+    if arg:
+        return arg
+    env = os.environ.get("ANDROID_SERIAL")
+    if env:
+        return env
+    out = sh("adb", "devices").stdout.splitlines()
+    devs = [line.split()[0] for line in out[1:] if line.strip() and line.endswith("device")]
+    if not devs:
+        sys.exit("no adb device connected (and no --device given)")
+    if len(devs) > 1:
+        sys.exit(f"multiple adb devices ({devs}); use --device <serial>")
+    return devs[0]
+
+
+def adb_shell(device: str, cmd: str, check=True) -> str:
+    """`adb -s <dev> shell <cmd>` — returns stdout text. CRLF normalised."""
+    r = sh("adb", "-s", device, "shell", cmd, check=check)
+    return r.stdout.replace("\r\n", "\n")
+
+
+def resolve_uid(device: str, pkg: str) -> int:
+    out = adb_shell(device, f"pm list packages -U {pkg}").strip()
+    # Expected: "package:com.foo.bar uid:10232"
+    m = re.search(r"uid:(\d+)", out)
+    if not m:
+        sys.exit(f"could not resolve UID for package {pkg!r}: pm output was {out!r}")
+    return int(m.group(1))
+
+
+def push_dex(device: str) -> str:
+    if not DEX_PATH.exists():
+        sys.exit(f"missing bundled DEX at {DEX_PATH}")
+    remote = "/data/local/tmp/x2d_dumper.dex"
+    sh("adb", "-s", device, "push", str(DEX_PATH), remote, capture=True)
+    adb_shell(device, f"chmod 644 {remote}")
+    return remote
+
+
+def run_dumper(device: str, uid: int, dex_remote: str, cls: str, *args: str) -> str:
+    """Run a class from the bundled DEX as the target UID via Magisk + app_process."""
+    arg_str = " ".join(f"'{a}'" for a in args)
+    # The nested su escape is gnarly. Magisk's `su -c '<cmd>'` runs <cmd> as root;
+    # `su <uid> -c "..."` inside that switches to <uid>. Use single quotes for
+    # the outer layer, escaped double quotes for the inner.
+    inner = (f'/system/bin/app_process -Djava.class.path={dex_remote} '
+             f'/ {cls} {arg_str}')
+    cmd = f"""su -c 'su {uid} -c "{inner}"'"""
+    out = adb_shell(device, cmd)
+    return out
+
+
+def parse_markers(text: str) -> dict[str, str]:
+    """Pull `>>> key=value` marker lines out of the dumper output."""
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        if line.startswith(">>> "):
+            k, _, v = line[4:].partition("=")
+            if k:
+                out[k.strip()] = v.strip()
+    return out
+
+
+def fetch_xml_entries(device: str, xml_path: str) -> tuple[list[tuple[str, str]], str | None, str | None]:
+    """Pull the XML and split it into (entries, key_keyset_hex, value_keyset_hex)."""
+    KEY_KEYSET = "__androidx_security_crypto_encrypted_prefs_key_keyset__"
+    VAL_KEYSET = "__androidx_security_crypto_encrypted_prefs_value_keyset__"
+    # `cat` needs root since /data/data/<pkg> is 0700.
+    xml = adb_shell(device, f"su -c 'cat {xml_path}'")
+    if "<map" not in xml:
+        sys.exit(f"unexpected XML at {xml_path}:\n{xml[:400]}")
+    # Tiny ad-hoc XML parse — these prefs files have a flat <string name=…>v</string> shape.
+    pattern = re.compile(r'<string name="([^"]+)">([^<]*)</string>', re.DOTALL)
+    entries: list[tuple[str, str]] = []
+    key_hex = val_hex = None
+    for name, value in pattern.findall(xml):
+        if name == KEY_KEYSET:
+            key_hex = value.strip()
+        elif name == VAL_KEYSET:
+            val_hex = value.strip()
+        else:
+            entries.append((name, value.strip()))
+    return entries, key_hex, val_hex
+
+
+def decrypt_name(siv: AESSIV, prefs_name_aad: bytes, encrypted_name_b64: str) -> str:
+    """AES-SIV decrypt with Tink output prefix [0x01][4B key_id][16B SIV][ct]."""
+    raw = base64.b64decode(encrypted_name_b64)
+    body = raw[5:]  # strip Tink prefix
+    pt = siv.decrypt(body, [prefs_name_aad])
+    name = pt.decode("utf-8", errors="replace")
+    # flutter_secure_storage prepends "This is the prefix for a secure storage\n_"
+    # base64'd to every key. Strip if present.
+    if name.startswith(FSS_KEY_PREFIX):
+        name = name[len(FSS_KEY_PREFIX):]
+    return name
+
+
+def decrypt_value(gcm: AESGCM, encrypted_name_b64: str, encrypted_value_b64: str) -> object:
+    """AES-GCM decrypt with Tink output prefix [0x01][4B key_id][12B IV][ct+tag].
+
+    AAD = the encrypted-name base64 string (UTF-8 bytes) — bound that way by
+    androidx EncryptedSharedPreferences to prevent value-swap attacks.
+
+    The decrypted plaintext is then dependent on who's calling EncryptedSharedPreferences:
+      * Java callers using `prefs.putString(k, v)` get androidx's own
+        [1-byte type=2][4-byte length BE][utf-8 data] preamble.
+      * flutter_secure_storage (Dart) writes its own
+        [8-byte length BE][utf-8 data] (no type byte) before handing the
+        blob to androidx, so the "plaintext" we get out of AES-GCM has 8
+        leading length bytes.
+    We try both layouts and use whichever validates against the trailing length.
+    """
+    raw = base64.b64decode(encrypted_value_b64)
+    iv = raw[5:17]
+    body = raw[17:]
+    pt = gcm.decrypt(iv, body, encrypted_name_b64.encode("utf-8"))
+    if not pt:
+        return pt
+    # Try androidx EncryptedSharedPreferences STRING layout (type=2 + 4B BE len)
+    if pt[0] == EBP_TYPE_STRING and len(pt) >= 5:
+        length = int.from_bytes(pt[1:5], "big")
+        if 5 + length == len(pt):
+            return pt[5:5+length].decode("utf-8", errors="replace")
+    # Try flutter_secure_storage layout (8B BE len + data, no type byte)
+    if len(pt) >= 8:
+        length = int.from_bytes(pt[:8], "big")
+        if 8 + length == len(pt):
+            return pt[8:8+length].decode("utf-8", errors="replace")
+    # Unknown layout — best-effort: hand back the raw bytes (typed for clarity).
+    return {"_raw_hex": pt.hex(), "_first_byte": pt[0], "_len": len(pt)}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(prog="android-secure-prefs-dump",
+                                 description=__doc__.splitlines()[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog="See top of source file for the long-form docs.")
+    ap.add_argument("package", help="Android package id (e.g. com.example.app)")
+    ap.add_argument("prefs", nargs="?", default="FlutterSecureStorage",
+                    help="shared_prefs file basename without .xml (default FlutterSecureStorage)")
+    ap.add_argument("--device", help="adb device serial / ip:port (default: ANDROID_SERIAL or single)")
+    ap.add_argument("--xml", help="explicit XML path on the device (overrides --prefs)")
+    ap.add_argument("--list-aliases", action="store_true",
+                    help="just dump AndroidKeyStore aliases under the app's UID and exit")
+    ap.add_argument("--raw",  action="store_true", help="machine-friendly KEY=VALUE output")
+    ap.add_argument("--json", action="store_true", help="JSON output")
+    ap.add_argument("--keep-dex", action="store_true", help="don't rm /data/local/tmp/x2d_dumper.dex on exit")
+    args = ap.parse_args()
+
+    device = resolve_device(args.device)
+    uid = resolve_uid(device, args.package)
+    xml_path = args.xml or f"/data/data/{args.package}/shared_prefs/{args.prefs}.xml"
+
+    if not args.raw and not args.json:
+        print(f"[+] device  = {device}", file=sys.stderr)
+        print(f"[+] package = {args.package} (uid={uid})", file=sys.stderr)
+        print(f"[+] xml     = {xml_path}", file=sys.stderr)
+
+    dex_remote = push_dex(device)
+    try:
+        if args.list_aliases:
+            print(run_dumper(device, uid, dex_remote, "com.x2d.dump.ListAliases"))
+            return 0
+
+        dumper_out = run_dumper(device, uid, dex_remote,
+                                "com.x2d.dump.SecureStorageDumper", xml_path)
+        markers = parse_markers(dumper_out)
+        if "aes_siv_hex" not in markers or "aes_gcm_hex" not in markers:
+            print(dumper_out, file=sys.stderr)
+            sys.exit("dumper output missing >>> aes_siv_hex / aes_gcm_hex markers — see above")
+        siv = AESSIV(bytes.fromhex(markers["aes_siv_hex"]))
+        gcm = AESGCM(bytes.fromhex(markers["aes_gcm_hex"]))
+        prefs_name = markers.get("prefs_name", args.prefs).encode("utf-8")
+
+        entries, _, _ = fetch_xml_entries(device, xml_path)
+        out: dict[str, object] = {}
+        for enc_name, enc_value in entries:
+            try:
+                name = decrypt_name(siv, prefs_name, enc_name)
+            except Exception as e:
+                name = f"<undecodable name: {e!r}>"
+            try:
+                value = decrypt_value(gcm, enc_name, enc_value)
+            except Exception as e:
+                value = f"<undecodable value: {e!r}>"
+            out[name] = value
+
+        if args.json:
+            print(json.dumps(out, indent=2, ensure_ascii=False))
+        elif args.raw:
+            for k, v in out.items():
+                print(f"{k}={v}")
+        else:
+            print()
+            for k, v in out.items():
+                # Truncate runaway values to keep terminal output readable.
+                s = v if isinstance(v, str) else repr(v)
+                if len(s) > 400:
+                    s = s[:400] + f"…[+{len(s)-400}]"
+                print(f"  {k:<40s} = {s}")
+        return 0
+    finally:
+        if not args.keep_dex:
+            adb_shell(device, f"rm -f {dex_remote}", check=False)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
