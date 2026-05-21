@@ -25,7 +25,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 ships npm >= 11.5.1, required for OIDC trusted-publisher
+          # CLI support. Node 22 (npm 10.x) silently falls back to token auth
+          # and fails with ENEEDAUTH when no NPM_TOKEN secret is set.
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
@@ -40,8 +43,11 @@ jobs:
           echo "### Package contents" >> $GITHUB_STEP_SUMMARY
           cat /tmp/pack-output.txt >> $GITHUB_STEP_SUMMARY
 
-      - name: Publish to npm
+      - name: Publish to npm (trusted publisher / OIDC)
         if: ${{ !inputs.dry_run }}
+        # No NODE_AUTH_TOKEN env on purpose — npm 11.5.1+ uses the GitHub OIDC
+        # ID token (id-token: write perm above) against the trusted publisher
+        # configured for this package on npmjs.com. Setting NODE_AUTH_TOKEN to
+        # an empty string would make setup-node write _authToken= into .npmrc
+        # and npm would short-circuit to token auth (ENEEDAUTH).
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
