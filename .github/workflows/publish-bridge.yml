@@ -11,15 +11,12 @@ on:
         default: true
 
 permissions:
-  contents: read
-  id-token: write
+  contents: write   # needed to create the GitHub release on bridge-v* tags
+  id-token: write   # OIDC trusted publisher (npm)
 
 jobs:
   publish:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: bridge
     steps:
       - uses: actions/checkout@v4
 
@@ -31,13 +28,39 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - name: Install dependencies
+      # ----- Build CRX from edge-claude-ext/ (signed with repo secret) ---------
+      # Produces dist/claude-code-bridge-v<extver>.crx + dist/claude-code-bridge-latest.crx.
+      # bridge/build.cjs then copies the "latest" alias into bridge/dist/ for npm bundling.
+
+      - name: Install root deps (crx3)
+        run: npm ci
+
+      - name: Build CRX
+        env:
+          CRX_PEM: ${{ secrets.CRX_SIGNING_KEY }}
+        run: npm run build:crx
+
+      - name: Read CRX version
+        id: crx
+        run: |
+          V=$(node -p "require('./edge-claude-ext/manifest.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          F="dist/claude-code-bridge-v${V}.crx"
+          echo "file=$F" >> "$GITHUB_OUTPUT"
+          ls -la "$F"
+
+      # ----- Build + publish the npm package (bundles the CRX above) -----------
+
+      - name: Install bridge deps
+        working-directory: bridge
         run: npm install
 
-      - name: Build
+      - name: Build bridge (bundles CRX + extension)
+        working-directory: bridge
         run: npm run build
 
-      - name: Verify package
+      - name: Verify bridge package
+        working-directory: bridge
         run: |
           npm pack --dry-run 2>&1 | tee /tmp/pack-output.txt
           echo "### Package contents" >> $GITHUB_STEP_SUMMARY
@@ -45,9 +68,22 @@ jobs:
 
       - name: Publish to npm (trusted publisher / OIDC)
         if: ${{ !inputs.dry_run }}
+        working-directory: bridge
         # No NODE_AUTH_TOKEN env on purpose — npm 11.5.1+ uses the GitHub OIDC
         # ID token (id-token: write perm above) against the trusted publisher
         # configured for this package on npmjs.com. Setting NODE_AUTH_TOKEN to
         # an empty string would make setup-node write _authToken= into .npmrc
         # and npm would short-circuit to token auth (ENEEDAUTH).
         run: npm publish --provenance --access public
+
+      # ----- GitHub release with the CRX attached -----------------------------
+      # Auto-creates a release for the bridge-v* tag and uploads the freshly
+      # built CRX so non-npm users can download + sideload it directly.
+
+      - name: Create GitHub release with CRX
+        if: ${{ !inputs.dry_run && startsWith(github.ref, 'refs/tags/bridge-v') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.crx.outputs.file }}
+          name: claude-chrome-android ${{ github.ref_name }} (extension v${{ steps.crx.outputs.version }})
+          generate_release_notes: true
