@@ -21,14 +21,25 @@ module_claude_code() {
   fi
 
   # Install globally via bun.
-  # Pinned at v2.1.112: starting with v2.1.123 the package layout switched
-  # from a single bundled cli.js to platform-native binaries via
-  # optionalDependencies. The shipped Linux ARM64 binaries link against
-  # /lib/ld-{linux,musl}-aarch64.so.1 (paths that don't exist on Termux
-  # bionic), so they only run via grun + patchelf — and our patch_claude_cli
-  # targets the JS bundle. Override with CCINSTALL_VERSION=latest to opt
-  # in to the new layout (and accept the patcher won't do anything).
+  # Pin reasoning:
+  #   - v2.1.112 ships a single bundled cli.js (~14 MB) at the package root —
+  #     sed-patchable by patch_claude_cli below.
+  #   - v2.1.123+ ships a bun-compiled glibc ELF binary (~240 MB) in an
+  #     optionalDependency, with hardcoded interpreter /lib/ld-linux-aarch64.so.1.
+  #     Direct exec fails on Termux bionic; in-place sed against the binary
+  #     corrupts bun-vfs offsets (substitutions shift downstream bytes).
+  #
+  # We support BOTH paths:
+  #   CCINSTALL_VERSION=2.1.112 (default) → cli.js install + 5-patch sed.
+  #   CCINSTALL_VERSION=2.1.158 (or "next") → manual binary fetch + launcher
+  #     wrapper at $HOME/.local/bin/claude-next that uses bun-on-termux's
+  #     bun-termux userland-exec (no grun, no patchelf). 4.7→4.8 model access.
   local target_version="${CCINSTALL_VERSION:-2.1.112}"
+  if [[ "$target_version" == "next" ]] || [[ "$target_version" == 2.1.1[2-9][3-9] ]] || [[ "$target_version" == 2.1.1[5-9][0-9] ]]; then
+    _install_claude_binary "$target_version"
+    return $?
+  fi
+
   info "Installing @anthropic-ai/claude-code@${target_version}..."
   if bun install -g "@anthropic-ai/claude-code@${target_version}" 2>&1; then
     ok "Claude Code ${target_version} installed"
@@ -47,6 +58,67 @@ module_claude_code() {
 
   _ensure_cfc_env
   patch_claude_cli
+}
+
+# Install the bun-compiled glibc binary (v2.1.123+) via bun-on-termux's
+# userland-exec wrapper. Requires:
+#   - $HOME/.bun/bin/bun-termux (from ~/git/bun-on-termux make install)
+#   - $HOME/.bun/lib/bun-shim.so (ditto)
+#   - $PREFIX/glibc/lib/ld-linux-aarch64.so.1 (pacman: glibc, glibc-runner)
+_install_claude_binary() {
+  local version="$1"
+  [[ "$version" == "next" ]] && version="2.1.158"
+
+  if [[ ! -x "$HOME/.bun/bin/bun-termux" ]]; then
+    fail "bun-on-termux's bun-termux wrapper is required for the binary install path."
+    info "  cd ~/git/bun-on-termux && make install"
+    return 1
+  fi
+
+  local target_dir="$HOME/.claude/binaries/claude-${version}"
+  mkdir -p "$target_dir"
+
+  # Fetch the linux-arm64 tarball directly from npm (the wrapper package's
+  # postinstall doesn't run by default under bun's blocked-postinstall policy).
+  info "Fetching @anthropic-ai/claude-code-linux-arm64@${version} (~75 MB)..."
+  local tarball_url
+  tarball_url=$(curl -sS --max-time 10 \
+    "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/${version}" \
+    | python3 -c "import sys, json; print(json.load(sys.stdin)['dist']['tarball'])" 2>/dev/null) || {
+    fail "Could not resolve npm tarball URL for version ${version}"
+    return 1
+  }
+
+  local tmp
+  tmp=$(mktemp -d)
+  if ! curl -sSL --max-time 120 "$tarball_url" -o "$tmp/pkg.tgz"; then
+    fail "Download failed: $tarball_url"
+    rm -rf "$tmp"
+    return 1
+  fi
+  tar -xzf "$tmp/pkg.tgz" -C "$tmp"
+  cp "$tmp/package/claude" "$target_dir/claude-binary"
+  chmod +x "$target_dir/claude-binary"
+  rm -rf "$tmp"
+
+  # Drop the launcher
+  mkdir -p "$HOME/.local/bin"
+  cat > "$HOME/.local/bin/claude-next" <<EOF
+#!/data/data/com.termux/files/usr/bin/bash
+# Launch claude-code ${version} via bun-on-termux userland-exec wrapper.
+# CLAUDE_CODE_TMPDIR avoids the one remaining hardcoded /tmp/claude-mcp-browser-
+# bridge- socket path falling outside \$PREFIX.
+export CLAUDE_CODE_TMPDIR="\${CLAUDE_CODE_TMPDIR:-\$PREFIX/tmp}"
+BUN_BINARY_PATH="${target_dir}/claude-binary" \\
+  exec "\$HOME/.bun/bin/bun-termux" "\$@"
+EOF
+  chmod +x "$HOME/.local/bin/claude-next"
+
+  ok "Installed claude-${version} binary + launcher (\$HOME/.local/bin/claude-next)"
+  info "Verify: claude-next --version"
+  info "Use 4.8: claude-next --model claude-opus-4-8"
+  _ensure_cfc_env
+  return 0
 }
 
 # Apply Termux-compatibility patches to cli.js after install/update.
