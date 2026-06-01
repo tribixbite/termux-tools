@@ -4,10 +4,29 @@ import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 
 const removals = [
-  { count: "56", label: "manifest removals", desc: "Tracking permissions (AD_ID, ADSERVICES, RECEIVE_SMS), device-ID vendor queries, Adjust/HMS/Xiaomi/Firebase components, KOOM, Citrix MITM", color: "terminal-green" },
-  { count: "23", label: "DEX method stubs", desc: "OneAuth token sharing, Intune MAM handlers, OneDS telemetry, Microsoft LogManager, Adjust SDK, Tencent Matrix — across 3 DEX files", color: "terminal-amber" },
-  { count: "5", label: "native libs neutered", desc: "Citrix ctxlog/log4cpp, KOOM heap dump, Tencent trace-canary — System.loadLibrary() calls replaced with nop", color: "terminal-cyan" },
-  { count: "30+", label: "telemetry URLs", desc: "OneCollector + ARIA collectors, Adjust domains, App Center, ECS flags, Google Analytics, OAID — all redirected to 127.0.0.1", color: "terminal-green" },
+  { count: "64", label: "manifest removals", desc: "4 tracking permissions (AD_ID, ADSERVICES, RECEIVE_SMS), 4 device-ID vendor queries, 27 Adjust/HMS/Xiaomi/Firebase/Citrix/KOOM components, 29 telemetry meta-data entries", color: "terminal-green" },
+  { count: "25", label: "DEX method stubs", desc: "OneAuth token sharing, Intune MAM handlers, OneDS telemetry, Microsoft LogManager (5), Adjust SDK (10), Tencent Matrix tracers — across 3 DEX files", color: "terminal-amber" },
+  { count: "15", label: "native libs stripped", desc: "Citrix ctxlog/log4cpp/SSL, KOOM heap dump, Tencent trace-canary, Crashpad, ARCore, OAID, Bing opus (~36MB). Plus 12 System.loadLibrary() calls NOP'd", color: "terminal-cyan" },
+  { count: "35", label: "telemetry URLs", desc: "OneCollector + 9 ARIA collectors, 8 Adjust domains, App Center, ECS flags, Google Analytics, AdMob, OAID, 6 Xiaomi endpoints — all redirected to 127.0.0.1", color: "terminal-green" },
+];
+
+// Full per-SDK breakdown of what the pipeline neutralizes.
+const trackers = [
+  { name: "Microsoft OneDS / ARIA / OneCollector", purpose: "Cross-app analytics + telemetry event collection", method: "11 collector endpoints → 127.0.0.1; LogManager initialize/flush/uploadNow/setTransmitProfile stubbed; OneDS init + native loader stubbed", color: "terminal-amber" },
+  { name: "Microsoft OneAuth token sharing", purpose: "Shares signed-in auth tokens across Microsoft apps", method: "registerTokenSharing() stubbed; token_share_* meta-data removed", color: "terminal-amber" },
+  { name: "Microsoft Intune MAM", purpose: "Mobile app-management / MDM enrolment hooks", method: "4 background handlers stubbed (onHandleIntent, onStartCommand, onReceive, onCreate); MAMSDKVersion meta-data removed", color: "terminal-amber" },
+  { name: "Adjust SDK", purpose: "Install attribution + ad/marketing analytics", method: "Auto-init content provider dropped; 10 API methods stubbed; 8 .com/.io domains → 127.0.0.1; OAID loader NOP'd", color: "terminal-green" },
+  { name: "Google Firebase / DataTransport", purpose: "Cloud messaging + analytics transport", method: "5 components + CctBackendFactory removed; 7 Firebase registrar meta-data removed; google-analytics.com → 127.0.0.1", color: "terminal-green" },
+  { name: "Google AD_ID / AdServices / AdMob", purpose: "Advertising identifier + attribution API", method: "AD_ID + ACCESS_ADSERVICES_ATTRIBUTION + install-referrer permissions removed; AdMob gen_204 ping → 127.0.0.1", color: "terminal-green" },
+  { name: "Huawei HMS / AGConnect", purpose: "Push + analytics (China region)", method: "8 components + 7 meta-data removed; com/huawei/hms + agconnect class trees deleted; HMS cert assets stripped", color: "terminal-cyan" },
+  { name: "Xiaomi Push / MiPush", purpose: "Push messaging (China region)", method: "7 components + 4 meta-data removed; xiaomi/push + mipush class trees deleted; 6 endpoints → 127.0.0.1", color: "terminal-cyan" },
+  { name: "Tencent Matrix", purpose: "Performance / ANR trace-canary instrumentation", method: "3 tracer onAlive() methods stubbed; libtrace-canary.so stripped + loadLibrary NOP'd", color: "terminal-cyan" },
+  { name: "KOOM (Kuaishou)", purpose: "Heap monitoring + memory-dump capture", method: "HeapAnalysisService removed; 3 koom .so stripped; loadLibrary NOP'd", color: "terminal-cyan" },
+  { name: "Citrix MVPN / MAM", purpose: "MITM proxy + secure-storage providers", method: "4 components removed; ctxlog/log4cpp/CoreSdkCrypto/fullsslsdk stripped; loadLibrary NOP'd", color: "terminal-amber" },
+  { name: "Device-ID probes (MSA/Samsung/Coolpad/OPPO/OAID)", purpose: "Hardware advertising-ID resolution", method: "4 <queries> package probes removed; libmsaoaidsec/auth stripped; CertChecker loadLibrary NOP'd", color: "terminal-green" },
+  { name: "App Center + ECS", purpose: "Crash reporting + remote experiment flags", method: "in.appcenter.ms + config.edge.skype.com → 127.0.0.1", color: "terminal-amber" },
+  { name: "Chromium Crashpad", purpose: "Native crash-dump upload", method: "libchrome_crashpad_handler + trampoline stripped", color: "terminal-green" },
+  { name: "Misc native code", purpose: "ARCore, Bing speech (opus), learning-tools, RECEIVE_SMS, GMS revocation, Play-stamp metadata", method: "Libs stripped; permission + RevocationBoundService removed; stamp/split meta-data removed", color: "terminal-dim" },
 ];
 
 const pipeline = [
@@ -86,6 +105,52 @@ const pipeline = [
       </div>
     </section>
 
+    <!-- Full tracker table -->
+    <section id="trackers" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-5xl">
+        <h2 class="mb-2 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Full Tracker Breakdown
+        </h2>
+        <p class="mb-8 text-sm text-terminal-dim">
+          Every analytics SDK, push framework, MDM hook and telemetry endpoint the pipeline neutralizes, by vendor.
+          The exact lists live in <code class="text-terminal-green">edge-fix/config/</code>.
+        </p>
+
+        <!-- Desktop table -->
+        <div class="hidden overflow-hidden rounded-lg border border-terminal-border/50 md:block">
+          <table class="w-full border-collapse font-[family-name:var(--font-mono)] text-xs">
+            <thead>
+              <tr class="border-b border-terminal-border bg-terminal-surface text-left text-terminal-bright">
+                <th class="p-3 font-medium">SDK / Vendor</th>
+                <th class="p-3 font-medium">What it does</th>
+                <th class="p-3 font-medium">How it's neutralized</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trackers.map((t, i) => (
+                <tr class={`border-b border-terminal-border/30 align-top ${i % 2 ? "bg-terminal-surface/30" : ""}`}>
+                  <td class={`p-3 font-medium text-${t.color}`}>{t.name}</td>
+                  <td class="p-3 text-terminal-text">{t.purpose}</td>
+                  <td class="p-3 leading-relaxed text-terminal-dim">{t.method}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Mobile cards -->
+        <div class="space-y-3 md:hidden">
+          {trackers.map((t) => (
+            <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+              <h3 class={`mb-1 font-[family-name:var(--font-mono)] text-sm font-medium text-${t.color}`}>{t.name}</h3>
+              <p class="mb-2 font-[family-name:var(--font-mono)] text-xs text-terminal-text">{t.purpose}</p>
+              <p class="font-[family-name:var(--font-mono)] text-xs leading-relaxed text-terminal-dim">{t.method}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+
     <!-- Pipeline -->
     <section id="pipeline" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
@@ -114,6 +179,41 @@ const pipeline = [
       </div>
     </section>
 
+    <!-- Build your own -->
+    <section id="self-build" class="px-4 py-16 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-4xl">
+        <h2 class="mb-2 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
+          <span class="text-terminal-green">#</span> Patch Your Own — From the Canary You Already Have
+        </h2>
+        <p class="mb-6 text-sm text-terminal-dim">
+          No APKMirror download, no AppManager export. <code class="text-terminal-green">build-from-device.sh</code> pulls
+          the split APKs from the Edge Canary already installed on your phone over ADB, runs the full pipeline, and
+          (optionally) installs the result back in place.
+        </p>
+
+        <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
+          <div class="p-4 font-[family-name:var(--font-mono)] text-sm leading-relaxed">
+            <div class="text-terminal-dim"># clone, then from edge-fix/:</div>
+            <div class="text-terminal-dim"># build only — output lands in output/</div>
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./build-from-device.sh</span></div>
+            <div class="mt-2 text-terminal-dim"># build AND update in place — preserves your Edge data</div>
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./build-from-device.sh --install</span></div>
+            <div class="mt-2 text-terminal-dim"># target a specific device when several are connected</div>
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./build-from-device.sh -s 192.168.0.190:38465 --install</span></div>
+            <div class="mt-2 text-terminal-dim">  <span class="text-terminal-green">✓</span> pulled 4 APKs &middot; patched &middot; merged &middot; re-signed</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">✓</span> updated com.microsoft.emmx.canary &middot; data preserved</div>
+          </div>
+        </div>
+
+        <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          <span class="text-terminal-amber">First</span> switch from the Play Store build still needs an uninstall (its
+          signature differs from yours, so Android wipes data). After that, every rebuild updates in place because it's
+          signed with your stable <code class="text-terminal-green">edge-fix.keystore</code>. Needs ADB + the same
+          build prerequisites below.
+        </p>
+      </div>
+    </section>
+
     <!-- Build -->
     <section id="build" class="px-4 py-16 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
@@ -127,8 +227,8 @@ const pipeline = [
             <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./build.sh</span></div>
             <div class="mt-2 text-terminal-dim"># Or pass an input bundle explicitly</div>
             <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./build.sh /path/to/Edge_Canary_VERSION.apks</span></div>
-            <div class="mt-2 text-terminal-dim">  <span class="text-terminal-green">✓</span> patched manifest &middot; 23 stubs &middot; 5 libs neutered</div>
-            <div class="text-terminal-dim">  <span class="text-terminal-green">✓</span> stripped <span class="text-terminal-bright">56</span> trackers &middot; re-signed APK → <span class="text-terminal-amber">output/</span></div>
+            <div class="mt-2 text-terminal-dim">  <span class="text-terminal-green">✓</span> patched manifest &middot; 25 stubs &middot; 15 libs stripped</div>
+            <div class="text-terminal-dim">  <span class="text-terminal-green">✓</span> stripped <span class="text-terminal-bright">64</span> manifest entries &middot; merged + re-signed APK → <span class="text-terminal-amber">output/</span></div>
             <div class="mt-2 text-terminal-dim">~ $<span class="ml-1 inline-block h-4 w-2 animate-pulse bg-terminal-green"></span></div>
           </div>
         </div>
