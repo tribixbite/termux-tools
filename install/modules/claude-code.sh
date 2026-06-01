@@ -65,6 +65,57 @@ module_claude_code() {
 #   - $HOME/.bun/bin/bun-termux (from ~/git/bun-on-termux make install)
 #   - $HOME/.bun/lib/bun-shim.so (ditto)
 #   - $PREFIX/glibc/lib/ld-linux-aarch64.so.1 (pacman: glibc, glibc-runner)
+# Byte-preserving system-prompt patch for the bun-compiled binary.
+#
+# The bun-compiled binary embeds its JS in a bun-vfs blob keyed by internal
+# byte offsets. Any in-place edit that CHANGES byte length shifts every
+# downstream offset and corrupts the binary (--version then reports the bun
+# runtime version, e.g. 1.3.x, instead of the claude version). Same-length
+# overwrites are safe — bun-vfs does not checksum the blob, verified end to
+# end (patched binary still reports 2.1.158 and runs full inference).
+#
+# So we neutralize the two CLAUDE.md-conflicting directives by blanking them
+# with equal-length spaces rather than removing the lines:
+#   P3 — "NEVER commit changes unless the user explicitly asks you to."
+#        (conflicts with the global "make a conventional commit" workflow)
+#   P4 — "Default to writing no comments."
+#        (conflicts with "use ... explanatory comments" + "write a # TODO")
+#
+# P5 (length caps) needs no patch: 2.1.158 already ships the relaxed
+# 60/250-word limits upstream. Opt out with CCPATCH_KEEP_NO_COMMIT=1 /
+# CCPATCH_KEEP_NO_COMMENTS=1.
+_patch_claude_binary() {
+  local bin="$1"
+  [ -f "$bin" ] || return 0
+  [ -f "${bin}.bak-prepatch" ] || cp "$bin" "${bin}.bak-prepatch"
+  CCPATCH_KEEP_NO_COMMIT="${CCPATCH_KEEP_NO_COMMIT:-}" \
+  CCPATCH_KEEP_NO_COMMENTS="${CCPATCH_KEEP_NO_COMMENTS:-}" \
+  python3 - "$bin" <<'PY'
+import os, sys
+path = sys.argv[1]
+b = bytearray(open(path, "rb").read())
+orig = len(b)
+def blank_all(text):
+    o = text.encode(); n = b" " * len(o)
+    c = b.count(o); start = 0
+    while True:
+        i = b.find(o, start)
+        if i < 0: break
+        b[i:i+len(o)] = n; start = i + len(o)
+    return c
+changed = 0
+if not os.environ.get("CCPATCH_KEEP_NO_COMMIT"):
+    changed += blank_all("NEVER commit changes unless the user explicitly asks you to.")
+if not os.environ.get("CCPATCH_KEEP_NO_COMMENTS"):
+    changed += blank_all("Default to writing no comments.")
+assert len(b) == orig, "byte length changed — would corrupt bun-vfs"
+if changed:
+    open(path, "wb").write(b)
+print(f"binary prompt patches applied: {changed} occurrence(s)")
+PY
+  ok "Patched binary system prompt (CLAUDE.md alignment, byte-preserving)"
+}
+
 _install_claude_binary() {
   local version="$1"
   [[ "$version" == "next" ]] && version="2.1.158"
@@ -100,6 +151,8 @@ _install_claude_binary() {
   cp "$tmp/package/claude" "$target_dir/claude-binary"
   chmod +x "$target_dir/claude-binary"
   rm -rf "$tmp"
+
+  _patch_claude_binary "$target_dir/claude-binary"
 
   # Drop the launcher
   mkdir -p "$HOME/.local/bin"
