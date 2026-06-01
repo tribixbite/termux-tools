@@ -26,8 +26,8 @@ npx claude-chrome-android
 claude-chrome-android              # start the bridge server
 claude-chrome-android --mcp        # MCP server mode (spawned by Claude Code)
 claude-chrome-android --stop       # stop a running bridge
-claude-chrome-android --setup      # register MCP + install CRX extension
-claude-chrome-android --doctor     # check Edge/patch/extension setup, offer to fix
+claude-chrome-android --setup      # full setup: MCP + url-opener + Edge/extension
+claude-chrome-android --setup-edge # browser-side only: install Edge, patch, sideload extension
 claude-chrome-android --version    # show version
 claude-chrome-android --help       # show help
 ```
@@ -53,23 +53,29 @@ Claude Code session N ─→ cli.js --mcp ─┘
 2. **Creates `~/bin/termux-url-opener`** — handles `cfcbridge://start` URLs to auto-start the bridge
 3. **Installs CRX extension** — serves the bundled CRX over HTTP and opens Edge for installation (requires ADB)
 
-## Doctor
+## First-run setup
 
 The bridge is only useful once a privacy-patched Edge with the CFC extension is
-running. `--doctor` checks each piece over ADB and offers to fix what's missing:
+running. The **first time you run `claude-chrome-android` in a terminal**, if
+the browser side isn't wired up it walks you through setup before starting the
+bridge — so a bare `bunx claude-chrome-android` is enough to get going. You can
+re-run just the browser-side setup any time with `--setup-edge`.
+
+Setup checks each piece over ADB and offers to fix what's missing:
 
 - **ADB device connected** — required for everything below
-- **Edge installed** — detects Canary/Dev/Beta/stable
-- **Edge privacy-patched** — heuristic: the `AD_ID` tracking permission is stripped
+- **Edge installed** — detects Canary/Dev/Beta/stable; if absent it opens the
+  Play Store listing for Edge Canary via deeplink so it's one tap to install
+  (Play has no silent-install API), then waits and re-checks
+- **Edge privacy-patched** — heuristic: the `AD_ID` tracking permission is stripped;
+  if not, offers to build + install a patched Edge from your installed copy via
+  `edge-fix/build-from-device.sh` (no data wipe on re-sign)
 - **CFC extension sideloaded** — files in `/data/local/tmp/cfc-ext` + `--load-extension` flag set
 - **Extension connected to bridge** — live WebSocket client count from `/health`
 
-When run in a terminal it prompts before acting: it can build + install a
-patched Edge from your installed copy (via `edge-fix/build-from-device.sh`, no
-data wipe) and sideload the extension. It never downloads base Edge for you (no
-Play/APKMirror API) and never touches the signing keystore. The same probe runs
-non-interactively at `claude-chrome-android` startup and prints a one-line hint
-if anything looks unset.
+It never silently installs base Edge (no Play/APKMirror API — you tap Install)
+and never touches the signing keystore. Non-interactive launches (e.g. spawned
+by `termux-url-opener`) skip the prompts and just print a one-line hint.
 
 ## Important
 

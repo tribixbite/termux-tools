@@ -6179,8 +6179,8 @@ Usage:
   claude-chrome-android              Start the bridge server
   claude-chrome-android --mcp        MCP server mode (spawned by Claude Code)
   claude-chrome-android --stop       Stop a running bridge
-  claude-chrome-android --setup      Register MCP server in Claude Code + create url-opener
-  claude-chrome-android --doctor     Check Edge/patch/extension setup and offer to fix
+  claude-chrome-android --setup      Full setup: register MCP + create url-opener + Edge/extension
+  claude-chrome-android --setup-edge Browser-side setup only: install Edge, patch, sideload extension
   claude-chrome-android --version    Print version
   claude-chrome-android --help       Show this help
 
@@ -6334,7 +6334,7 @@ esac
   (0, import_fs.writeFileSync)(urlOpenerPath, urlOpenerScript);
   (0, import_fs.chmodSync)(urlOpenerPath, 493);
   console.log(`${urlOpenerExists ? "Updated" : "Created"} ${urlOpenerPath}`);
-  await installExtension(spawnSync2);
+  await runEdgeSetup(spawnSync2, Boolean(process.stdin.isTTY));
   console.log(`
 Setup complete!
 
@@ -6344,8 +6344,8 @@ Next steps:
   3. Open a new Claude Code session \u2014 browser tools (mcp__cfc-bridge__*) will be available
   4. Use ToolSearch to find and load cfc-bridge tools
 
-To update the extension later:
-  npx claude-chrome-android --setup   (re-pushes latest files)
+To re-run just the browser-side setup later:
+  npx claude-chrome-android --setup-edge   (Edge + patch + extension)
 `);
 }
 async function installExtension(sp) {
@@ -6418,6 +6418,7 @@ Installing CFC extension v${extVersion} via --load-extension...`);
   console.log("  Extension will load automatically when Edge starts.");
   return true;
 }
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function ask(question) {
   return new Promise((res) => {
     const rl = require("readline").createInterface({ input: process.stdin, output: process.stdout });
@@ -6428,6 +6429,33 @@ function ask(question) {
   });
 }
 var isYes = (a) => a === "" || a === "y" || a === "yes";
+var EDGE_CANARY = "com.microsoft.emmx.canary";
+async function ensureEdgeInstalled(sp, interactive) {
+  let pkg = detectEdgePkg(sp);
+  if (pkg) return pkg;
+  const listing = `https://play.google.com/store/apps/details?id=${EDGE_CANARY}`;
+  if (!interactive) {
+    console.log(`
+Edge not installed. Install Edge Canary, then re-run:
+  ${listing}`);
+    return "";
+  }
+  const a = await ask("\nEdge isn't installed. Open the Play Store to install Edge Canary now? [Y/n] ");
+  if (!isYes(a)) {
+    console.log("Skipped Edge install.");
+    return "";
+  }
+  sp("adb", ["shell", `am start -a android.intent.action.VIEW -d 'market://details?id=${EDGE_CANARY}'`], { stdio: "pipe" });
+  console.log("Opened the Play Store on your device. Tap Install, wait for it to finish, then return here.");
+  await ask("Press Enter once Edge Canary has finished installing... ");
+  for (let i = 0; i < 5 && !pkg; i++) {
+    pkg = detectEdgePkg(sp);
+    if (!pkg) await sleep(2e3);
+  }
+  if (pkg) console.log(`Detected ${pkg}.`);
+  else console.log("Still don't see Edge installed \u2014 skipping the rest of setup.");
+  return pkg;
+}
 async function probeEdge(sp) {
   const hasAdb = adbOnline(sp);
   const edgePkg = hasAdb ? detectEdgePkg(sp) : "";
@@ -6476,48 +6504,39 @@ Build + install a privacy-patched ${edgePkg} now via build-from-device.sh? [Y/n]
   else console.log(`
 build-from-device.sh exited ${r.status}. See output above.`);
 }
-async function cmdDoctor() {
-  console.log(`claude-chrome-android v${PKG_VERSION} \u2014 doctor
-`);
-  const { spawnSync: spawnSync2 } = await import("child_process");
-  const interactive = Boolean(process.stdin.isTTY);
-  const s = await probeEdge(spawnSync2);
+async function runEdgeSetup(sp, interactive) {
+  const s = await probeEdge(sp);
   printEdgeStatus(s);
   if (!s.hasAdb) {
     console.log("\nNo ADB device. Connect with: adb tcpip 5555 && adb connect <device-ip>");
-    return;
+    return false;
   }
-  if (!s.edgePkg) {
-    console.log("\nInstall Microsoft Edge Canary from the Play Store, then re-run --doctor.");
-    return;
+  const edgePkg = s.edgePkg || await ensureEdgeInstalled(sp, interactive);
+  if (!edgePkg) return false;
+  const patched = s.edgePkg ? s.patched : edgeIsPatched(sp, edgePkg);
+  if (patched !== true) {
+    if (patched === false) console.log("\nYour Edge still ships tracking permissions.");
+    await offerPatchBuild(sp, edgePkg, interactive);
   }
-  if (s.patched !== true) {
-    if (s.patched === false) console.log("\nYour Edge still ships tracking permissions.");
-    await offerPatchBuild(spawnSync2, s.edgePkg, interactive);
-  }
-  if (!s.extPushed || !s.flagsLoadExt || s.clients === 0) {
+  const reProbe = await probeEdge(sp);
+  if (!reProbe.extPushed || !reProbe.flagsLoadExt || reProbe.clients === 0) {
     if (interactive) {
       const a = await ask("\nSideload the CFC extension into Edge now? [Y/n] ");
-      if (isYes(a)) await installExtension(spawnSync2);
+      if (isYes(a)) await installExtension(sp);
       else console.log("Skipped extension install.");
     } else {
       console.log("\nInstall the CFC extension with: claude-chrome-android --setup");
     }
   }
-  console.log("\nDoctor complete. Start the bridge with: claude-chrome-android");
+  const final = await probeEdge(sp);
+  return Boolean(final.edgePkg && final.patched === true && final.extPushed && final.flagsLoadExt);
 }
-async function preflightHint() {
-  try {
-    const { spawnSync: spawnSync2 } = await import("child_process");
-    if (!adbOnline(spawnSync2)) return;
-    const edgePkg = detectEdgePkg(spawnSync2);
-    const ready = edgePkg && extPushed(spawnSync2) && flagsLoadExt(spawnSync2);
-    if (!ready) {
-      console.log("\nHeads up: Edge + CFC extension don't look fully set up.");
-      console.log("Run `claude-chrome-android --doctor` to detect and fix missing pieces.\n");
-    }
-  } catch {
-  }
+async function cmdSetupEdge() {
+  console.log(`claude-chrome-android v${PKG_VERSION} \u2014 Edge setup
+`);
+  const { spawnSync: spawnSync2 } = await import("child_process");
+  await runEdgeSetup(spawnSync2, Boolean(process.stdin.isTTY));
+  console.log("\nDone. Start the bridge with: claude-chrome-android");
 }
 async function cmdStart() {
   if (await isBridgeAlive()) {
@@ -6525,7 +6544,25 @@ async function cmdStart() {
     console.log("Use --stop to stop it first, or --help for more options.");
     process.exit(0);
   }
-  await preflightHint();
+  const interactive = Boolean(process.stdin.isTTY);
+  try {
+    const { spawnSync: spawnSync2 } = await import("child_process");
+    if (adbOnline(spawnSync2)) {
+      const edgePkg = detectEdgePkg(spawnSync2);
+      const ready = edgePkg && extPushed(spawnSync2) && flagsLoadExt(spawnSync2);
+      if (!ready) {
+        if (interactive) {
+          console.log("First-time setup: let's get Edge + the CFC extension ready.\n");
+          await runEdgeSetup(spawnSync2, true);
+          console.log("");
+        } else {
+          console.log("\nHeads up: Edge + CFC extension don't look fully set up.");
+          console.log("Run `claude-chrome-android --setup-edge` to finish setup.\n");
+        }
+      }
+    }
+  } catch {
+  }
   console.log(`Starting CFC Bridge v${PKG_VERSION} on ws://${WS_HOST2}:${WS_PORT2}...`);
   try {
     await Promise.resolve().then(() => (init_claude_chrome_bridge(), claude_chrome_bridge_exports));
@@ -6900,9 +6937,9 @@ switch (command) {
   case "--setup":
     cmdSetup();
     break;
-  case "--doctor":
   case "--setup-edge":
-    cmdDoctor();
+  case "--doctor":
+    cmdSetupEdge();
     break;
   case "--mcp":
     cmdMcp();
