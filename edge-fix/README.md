@@ -96,6 +96,23 @@ cp output/signed/split_*.apk ~/storage/shared/edge-fix/
 ```
 On the receiving device, install the 4 APKs together using SAI or ADB.
 
+## Build from your installed Canary (easiest)
+
+`build-from-device.sh` pulls the split APKs from the Edge Canary already
+installed on a connected device, bundles them, and runs the full pipeline — no
+APKMirror download or AppManager export needed.
+
+```bash
+./build-from-device.sh                 # build only → output/
+./build-from-device.sh --install       # build, then in-place update (no wipe)
+./build-from-device.sh -s <serial>     # pick a device when several are connected
+```
+
+The result is signed with `edge-fix.keystore`. The **first** switch from the
+Play Store build needs an uninstall (signature mismatch wipes data); after that,
+every rebuild updates in place because the signature matches. Requires `adb`
+plus the build prerequisites below.
+
 ## Build from source
 
 ### Prerequisites
