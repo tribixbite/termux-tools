@@ -67,6 +67,9 @@ sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${z2()}/claude-mcp-browser-bridge-|g
 #   (CCPATCH_KEEP_TIGHT_LENGTH=1 to skip)
 ```
 
+### Second path: bun-compiled binary (2.1.158, Opus 4.8)
+The above is the `cli.js` path (pinned 2.1.112, capped at Opus 4.7). v2.1.123+ ships a bun-compiled glibc binary instead, run on Termux via `~/.local/bin/claude-next` (`BUN_BINARY_PATH=<binary> ~/.bun/bin/bun-termux`, no grun). `sed` corrupts it (bun-vfs offsets shift on any length change), but **same-length space-blanking survives** — bun-vfs isn't checksummed. `_install_claude_binary` → `_patch_claude_binary` blanks P3 (NEVER commit) + P4 (no comments); P5 needs no patch (60/250 already upstream). Full reasoning: `docs/claude-code-patches/README.md` + the `claude-code-pinning` memory.
+
 ### Gates not currently patched
 v2.1.37 docs listed several gates that have evolved by v2.1.112:
 
