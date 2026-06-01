@@ -17,54 +17,53 @@
 
   const tabs: Tab[] = [
     {
-      id: "core",
-      label: "Core",
+      id: "setup",
+      label: "Setup",
       commands: [
-        { cmd: "tmx boot", desc: "Start daemon + boot all sessions in dependency order" },
-        { cmd: "tmx status", desc: "Show daemon uptime, sessions, memory, battery" },
-        { cmd: "tmx health", desc: "Run health checks on all sessions now" },
-        { cmd: "tmx config", desc: "Validate and display parsed tmx.toml" },
-        { cmd: "tmx upgrade", desc: "Rebuild, shutdown, and let watchdog auto-restart" },
-        { cmd: "tmx shutdown", desc: "Gracefully stop daemon (sessions orphaned)" },
+        { cmd: "./claude-edge-setup.sh", desc: "Interactive installer menu" },
+        { cmd: "./claude-edge-setup.sh --all", desc: "Run every install step non-interactively" },
+        { cmd: "install/modules/bun.sh", desc: "Install Bun via bun-on-termux" },
+        { cmd: "install/modules/claude-code.sh", desc: "Install + byte-preserving patch Claude Code" },
+        { cmd: "install/modules/adb.sh", desc: "Pair and connect ADB over WiFi" },
+        { cmd: "install/modules/extension.sh", desc: "Build CRX + sideload into Edge" },
       ],
     },
     {
-      id: "sessions",
-      label: "Sessions",
+      id: "edge",
+      label: "Edge Build",
       commands: [
-        { cmd: "tmx go <name>", desc: "Send 'go' to a Claude session waiting for input" },
-        { cmd: "tmx open <path>", desc: "Open a new Claude session dynamically" },
-        { cmd: "tmx close <name>", desc: "Stop and remove a dynamic session" },
-        { cmd: "tmx start <name>", desc: "Start a stopped session (fuzzy-matches names)" },
-        { cmd: "tmx stop <name>", desc: "Stop a running session" },
-        { cmd: "tmx restart <name>", desc: "Stop + start a session" },
+        { cmd: "edge-fix/build.sh <edge.apks>", desc: "Unpack, patch, sign, zipalign the APK" },
+        { cmd: "patch-manifest.py", desc: "Drop 56+ tracking permissions from the manifest" },
+        { cmd: "replace-urls.list", desc: "Rewrite telemetry endpoints → 127.0.0.1" },
+        { cmd: "edge-fix/config/", desc: "Permission + URL strip lists" },
+        { cmd: "gh release download", desc: "Pull prebuilt smali/baksmali tooling" },
       ],
     },
     {
-      id: "monitoring",
-      label: "Monitoring",
+      id: "bridge",
+      label: "CFC Bridge",
       commands: [
-        { cmd: "tmx memory", desc: "System memory + per-session RSS + pressure level" },
-        { cmd: "tmx tabs", desc: "Open Termux tabs for all running tmux sessions" },
-        { cmd: "tmx recent", desc: "List recent Claude projects from history.jsonl" },
-        { cmd: "tmx send <n> <text>", desc: "Send raw text to a session's tmux pane" },
+        { cmd: "npx claude-chrome-android", desc: "Start the WebSocket bridge server" },
+        { cmd: "npx claude-chrome-android --mcp", desc: "MCP relay mode (spawned by Claude Code)" },
+        { cmd: "npx claude-chrome-android --setup", desc: "Register MCP server + url-opener" },
+        { cmd: "npx claude-chrome-android --stop", desc: "Stop a running bridge" },
+        { cmd: "npx claude-chrome-android --version", desc: "Print bridge version" },
       ],
     },
     {
-      id: "api",
-      label: "REST API",
+      id: "termux",
+      label: "Termux Tooling",
       commands: [
-        { cmd: "GET /api/status", desc: "Full daemon state (sessions, memory, battery)" },
-        { cmd: "GET /api/events", desc: "SSE stream for real-time state updates" },
-        { cmd: "POST /api/start/:name", desc: "Start a session via HTTP" },
-        { cmd: "POST /api/stop/:name", desc: "Stop a session via HTTP" },
-        { cmd: "GET /api/recent", desc: "Recent Claude projects from history" },
-        { cmd: "POST /api/open/:name", desc: "Open/register a session via HTTP" },
+        { cmd: "pip-tool-install <pkg>", desc: "Install C-ext Python CLIs into an isolated venv" },
+        { cmd: "x86-on-termux/install-sysroot.sh", desc: "Run x86_64 binaries via qemu user emulation" },
+        { cmd: "scripts/install-ghostty-termux.sh", desc: "Source-build the GTK4 Ghostty terminal" },
+        { cmd: "scripts/migrate-termux.sh", desc: "Migrate a Termux environment to a new device" },
+        { cmd: "android-secure-prefs-dump <pkg>", desc: "Decrypt EncryptedSharedPreferences (root)" },
       ],
     },
   ];
 
-  let activeTab = $state("switching");
+  let activeTab = $state("setup");
   let visibleCommands = $derived(
     tabs.find((t) => t.id === activeTab)?.commands ?? []
   );
@@ -110,7 +109,7 @@
     </div>
 
     <p class="mt-4 text-center font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-      Dashboard at <code class="text-terminal-amber">http://localhost:18970</code> &mdash; REST API on the same port
+      Full reference in <code class="text-terminal-amber">docs/</code> &mdash; every module is self-contained and re-runnable
     </p>
   </div>
 </section>

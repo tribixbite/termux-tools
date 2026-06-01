@@ -11,7 +11,7 @@
   <div class="relative mx-auto max-w-4xl text-center">
     <!-- Terminal prompt -->
     <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
-      <span class="text-terminal-green">$</span> termux-tools <span class="text-terminal-amber">v2.0.0</span>
+      <span class="text-terminal-green">$</span> ./claude-edge-setup.sh
     </div>
 
     <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl lg:text-6xl">
@@ -19,11 +19,11 @@
     </h1>
 
     <p class="mx-auto mb-2 max-w-2xl text-xl text-terminal-text sm:text-2xl">
-      Turn your phone into a persistent dev server
+      Claude Code and a debloated browser, on your Android phone
     </p>
 
     <p class="mb-8 text-sm text-terminal-dim">
-      Shell / JS / TS / Python &middot; MIT Licensed &middot; ARM64
+      Custom Edge Canary build &middot; CFC browser bridge &middot; Claude Code patching &middot; Termux tooling
     </p>
 
     <!-- CTAs -->
@@ -52,16 +52,15 @@
       </div>
       <!-- Terminal content -->
       <div class="p-4 font-[family-name:var(--font-mono)] text-sm leading-relaxed">
-        <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> tmx boot</span></div>
-        <div class="mt-1 text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> ADB fixed &middot; wake lock acquired</div>
-        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> cleverkeys started <span class="text-terminal-dim">(claude)</span></div>
-        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> torch started <span class="text-terminal-dim">(claude)</span></div>
-        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> playwright started <span class="text-terminal-dim">(service)</span></div>
-        <div class="mt-2 text-terminal-dim">~ $<span class="text-terminal-bright"> tmx status</span></div>
-        <div class="mt-1 text-terminal-dim">  NAME          STATUS    RSS     ACTIVITY</div>
-        <div class="text-terminal-dim">  cleverkeys    <span class="text-terminal-green">running</span>   184MB   <span class="text-terminal-green">active</span></div>
-        <div class="text-terminal-dim">  torch         <span class="text-terminal-green">running</span>   338MB   <span class="text-terminal-green">active</span></div>
-        <div class="text-terminal-dim">  playwright    <span class="text-terminal-green">running</span>   2MB     <span class="text-terminal-dim">idle</span></div>
+        <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> ./claude-edge-setup.sh --all</span></div>
+        <div class="mt-1 text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> adb &middot; wireless paired</div>
+        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> bun &middot; runtime ready</div>
+        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> claude-code <span class="text-terminal-dim">2.1.158 (Opus 4.8) patched</span></div>
+        <div class="text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> cfc-bridge <span class="text-terminal-dim">+ extension installed</span></div>
+        <div class="mt-2 text-terminal-dim">~ $<span class="text-terminal-bright"> claude --version</span></div>
+        <div class="mt-1 text-terminal-dim">  <span class="text-terminal-amber">2.1.158</span> (Claude Code)</div>
+        <div class="mt-2 text-terminal-dim">~ $<span class="text-terminal-bright"> edge-fix/build.sh</span></div>
+        <div class="mt-1 text-terminal-dim">  <span class="text-terminal-green">&#10003;</span> stripped <span class="text-terminal-bright">56</span> trackers &middot; re-signed APK</div>
         <div class="mt-2 text-terminal-dim">~ $<span class="ml-1 inline-block h-4 w-2 animate-pulse bg-terminal-green"></span></div>
       </div>
     </div>

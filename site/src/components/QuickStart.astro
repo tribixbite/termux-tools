@@ -1,44 +1,27 @@
 ---
 import CodeBlock from "./CodeBlock.svelte";
 
-const installCode = `# Install required packages
-pkg install tmux termux-api bun
+const installCode = `# One-liner bootstrap — clones the repo, then opens the menu
+curl -fsSL https://raw.githubusercontent.com/tribixbite/termux-tools/main/claude-edge-setup.sh | bash
 
-# Install Termux:Boot and Termux:API from F-Droid
-# (required for boot persistence and notifications)
-
-# Clone and build the orchestrator
+# Or clone first, then run the interactive installer
 git clone https://github.com/tribixbite/termux-tools ~/git/termux-tools
-cd ~/git/termux-tools/orchestrator
-bun install && bun run build
+cd ~/git/termux-tools
+./claude-edge-setup.sh           # interactive menu
+./claude-edge-setup.sh --all     # non-interactive, run every step`;
 
-# Symlink the CLI
-mkdir -p ~/.local/bin
-ln -sf $(pwd)/dist/tmx.js ~/.local/bin/tmx
+const menuCode = `CFC Setup
 
-# Install watchdog as boot script
-cp watchdog.sh ~/.termux/boot/startup.sh
-chmod +x ~/.termux/boot/startup.sh`;
-
-const configCode = `# ~/.config/tmx/tmx.toml
-
-[orchestrator]
-dashboard_port = 18970
-
-[boot]
-auto_start = 6      # auto-start top 6 recent sessions
-visible = 10         # show 10 on dashboard with play button
-
-[[session]]
-name = "cleverkeys"
-type = "claude"
-path = "$HOME/git/swype/cleverkeys"
-
-[[session]]
-name = "my-project"
-type = "claude"
-path = "$HOME/git/my-project"
-auto_go = true       # send 'go' after startup`;
+  1) Install Bun (via bun-on-termux)
+  2) Install Claude Code CLI            # byte-preserving patch
+  3) Configure Termux permissions
+  4) Setup ADB wireless
+  5) Build extension (CRX)
+  6) Install extension in browser
+  7) Start/manage bridge
+  8) Health check & diagnostics
+  9) Run all (full setup)
+  0) Exit`;
 ---
 
 <section id="quickstart" class="px-4 py-16 sm:px-6 lg:px-8">
@@ -47,8 +30,9 @@ auto_go = true       # send 'go' after startup`;
       <span class="text-terminal-green">#</span> Quick Start
     </h2>
     <p class="mb-8 text-terminal-dim">
-      Up and running in under 5 minutes. Requires
-      <a href="https://f-droid.org/packages/com.termux.boot/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">Termux:Boot</a>
+      One installer wires up the whole stack on bionic Android — Bun, a patched Claude Code,
+      ADB wireless, the debloated Edge build, and the CFC bridge. Requires
+      <a href="https://f-droid.org/packages/com.termux/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">Termux</a>
       and
       <a href="https://f-droid.org/packages/com.termux.api/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">Termux:API</a>
       from F-Droid.
@@ -56,20 +40,25 @@ auto_go = true       # send 'go' after startup`;
 
     <div class="space-y-6">
       <div>
-        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">1. Install & Configure</h3>
-        <CodeBlock code={installCode} title="install.sh" client:visible />
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">1. Bootstrap the installer</h3>
+        <CodeBlock code={installCode} title="claude-edge-setup.sh" client:visible />
       </div>
 
       <div>
-        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">2. Configure Your Projects</h3>
-        <CodeBlock code={configCode} title="tmx.toml" client:visible />
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">2. Pick what to install</h3>
+        <p class="mb-3 text-sm text-terminal-dim">
+          Each menu option sources a self-contained module from <code class="text-terminal-green">install/modules/</code>.
+          Run them piecemeal or choose <code class="text-terminal-green">9) Run all</code>.
+        </p>
+        <CodeBlock code={menuCode} title="interactive menu" client:visible />
       </div>
 
       <div>
-        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">3. Boot</h3>
+        <h3 class="mb-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">3. Connect Claude to the browser</h3>
         <p class="text-sm text-terminal-dim">
-          Run <code class="text-terminal-green">tmx boot</code> to start the daemon, or reboot your device
-          and Termux:Boot will run the watchdog automatically. Dashboard at <code class="text-terminal-green">http://localhost:18970</code>.
+          After step 7 the bridge is live and the Edge extension is connected. Register it as an MCP server with
+          <code class="text-terminal-green">npx claude-chrome-android --setup</code>, then screenshots, navigation
+          and JS-over-CDP show up as tools inside any Claude Code session.
         </p>
       </div>
     </div>

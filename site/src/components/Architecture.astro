@@ -8,54 +8,41 @@
       <span class="text-terminal-green">#</span> How It Works
     </h2>
 
-    <!-- Boot flow diagram -->
+    <!-- CFC bridge data-flow diagram -->
     <div class="overflow-x-auto rounded-lg border border-terminal-border bg-terminal-surface p-6">
       <pre class="font-[family-name:var(--font-mono)] text-xs leading-relaxed sm:text-sm"><code><span class="text-terminal-dim">┌──────────────────────────────────────────────────────┐</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-amber">Device Boot</span>                                        <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Termux:Boot</span> ──▶ <span class="text-terminal-bright">watchdog.sh</span> <span class="text-terminal-dim">(bash loop)</span>           <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">TMX Daemon</span> <span class="text-terminal-dim">(TypeScript, bun runtime)</span>              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">termux-wake-lock (persists forever)</span>      <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">ADB wireless + phantom process fix</span>      <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">Read</span> <span class="text-terminal-amber">tmx.toml</span> <span class="text-terminal-dim">+ registry.json</span>            <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-dim">Resolve boot recency (top N from history)</span> <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       │                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Dependency sort</span> ──▶ parallel start per depth     <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-cyan">claude</span>: poll readiness ──▶ send "go"     <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── <span class="text-terminal-cyan">daemon</span>: run custom command              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       └── <span class="text-terminal-cyan">service</span>: headless background            <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-amber">CFC Bridge — browser automation for Claude Code</span>     <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">│</span>                                                      <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Continuous monitoring:</span>                             <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── health checks + auto-restart              <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── memory pressure (/proc/meminfo)            <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── battery monitoring + radio management      <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       └── dashboard SSE on <span class="text-terminal-amber">:18970</span>                   <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>                                                      <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Crash resilience:</span> <span class="text-terminal-dim">(all processes PPid: 1)</span>         <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── sessions survive Termux app kill           <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       ├── IPC socket self-heals after tmpfs cleanup   <span class="text-terminal-dim">│</span>
-<span class="text-terminal-dim">│</span>       └── <span class="text-terminal-green">watchdog</span> restarts daemon after OOM kill    <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-cyan">Edge Canary</span> <span class="text-terminal-dim">(debloated, sideloaded extension)</span>     <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │  <span class="text-terminal-dim">screenshots · navigate · form-fill · CDP</span>   <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │  <span class="text-terminal-green">▲ WebSocket ▼</span>                            <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Bridge server</span> <span class="text-terminal-dim">(claude-chrome-android)</span>           <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │  <span class="text-terminal-dim">FIFO tool queue · /health · /tool</span>         <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │  <span class="text-terminal-green">▲ stdio ▼</span>                                <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">Native host</span> <span class="text-terminal-dim">(Claude Code cli.js)</span>                 <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       │  <span class="text-terminal-green">▲ unix socket ▼</span>                          <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       ▼                                              <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>  <span class="text-terminal-green">MCP relay</span> ──▶ <span class="text-terminal-cyan">tools in any Claude session</span>        <span class="text-terminal-dim">│</span>
+<span class="text-terminal-dim">│</span>       <span class="text-terminal-dim">mcp__cfc-bridge__screenshot, navigate, …</span>      <span class="text-terminal-dim">│</span>
 <span class="text-terminal-dim">└──────────────────────────────────────────────────────┘</span></code></pre>
     </div>
 
     <!-- Key points -->
     <div class="mt-6 grid gap-4 sm:grid-cols-2">
       <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
-        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">XDG-Compliant Paths</h3>
+        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">MV2 on Edge Android</h3>
         <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-          Config in <code>~/.config/tmx/</code><br>
-          State + logs in <code>~/.local/share/tmx/</code>
+          MV3 service workers never start in sideloaded CDP targets.
+          CFC ships as an MV2 background page, pushed via <code>--load-extension</code>.
         </p>
       </div>
       <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
-        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Multi-Instance Sessions</h3>
+        <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-amber">Byte-preserving patches</h3>
         <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-          Multiple Claude sessions per project.<br>
-          Named sessions auto-resume on boot.
+          Claude Code's bun-compiled binary is patched in place —
+          equal-length overwrites keep the vfs offsets intact so it still runs.
         </p>
       </div>
     </div>

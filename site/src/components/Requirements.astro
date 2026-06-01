@@ -3,12 +3,12 @@
 
 const requirements = [
   { name: "Termux", url: "https://f-droid.org/packages/com.termux/", required: true },
-  { name: "tmux", url: "https://wiki.termux.com/wiki/Tmux", required: true },
-  { name: "termux-api", url: "https://wiki.termux.com/wiki/Termux:API", required: true },
-  { name: "Termux:Boot", url: "https://f-droid.org/packages/com.termux.boot/", required: true },
   { name: "Termux:API app", url: "https://f-droid.org/packages/com.termux.api/", required: true },
+  { name: "Bun", url: "https://bun.sh/", required: true },
+  { name: "ADB (wireless)", url: "https://developer.android.com/tools/adb", required: true },
+  { name: "Edge Canary", url: "https://play.google.com/store/apps/details?id=com.microsoft.emmx.canary", required: false },
+  { name: "apktool / apksigner", url: "https://apktool.org/", required: false },
   { name: "Node.js 18+", url: "https://nodejs.org/", required: false },
-  { name: "Bun", url: "https://bun.sh/", required: false },
 ];
 ---
 
@@ -40,7 +40,7 @@ const requirements = [
 
     <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
       <span class="text-terminal-green">●</span> required &nbsp;
-      <span class="text-terminal-dim">○</span> optional (for bridge/extension features)
+      <span class="text-terminal-dim">○</span> optional (for the Edge build &amp; extras)
     </p>
   </div>
 </section>

@@ -2,14 +2,15 @@
 // Static repo structure display — zero client JS
 
 const dirs = [
-  { name: "tools/", desc: "ADB wireless connect, restore-tabs, flutter setup, system fixes", color: "terminal-green", href: "" },
-  { name: "tasker/", desc: "Crash recovery automation — auto-setup, health checks, Tasker XML profiles", color: "terminal-amber", href: "" },
+  { name: "edge-fix/", desc: "Edge Canary debloat pipeline — unpack, strip trackers, re-sign the APK", color: "terminal-green", href: "/edge" },
   { name: "bridge/", desc: "NPM package (claude-chrome-android) — WS bridge + MCP server for browser tools", color: "terminal-cyan", href: "/bridge" },
-  { name: "edge-claude-ext/", desc: "Edge browser extension source — manifest v3, background + content scripts", color: "terminal-green", href: "/extension" },
-  { name: "scripts/", desc: "Build scripts — CRX packaging, release automation", color: "terminal-dim", href: "" },
-  { name: "docs/", desc: "25+ guides — architecture, commands, workflows, device-specific fixes", color: "terminal-dim", href: "" },
-  { name: "examples/", desc: "Config templates — startup.sh, repos.conf, bash_aliases, crontab", color: "terminal-amber", href: "" },
-  { name: "install/", desc: "Installation helpers and dependency checks", color: "terminal-dim", href: "" },
+  { name: "edge-claude-ext/", desc: "CFC browser extension source — MV2 background + content scripts", color: "terminal-green", href: "/extension" },
+  { name: "install/", desc: "Modular installer — lib/common.sh + per-step modules (bun, claude-code, adb, crx)", color: "terminal-amber", href: "" },
+  { name: "scripts/", desc: "pip-tool-install, install-ghostty, migrate-termux, secure-prefs-dump, CRX build", color: "terminal-dim", href: "" },
+  { name: "x86-on-termux/", desc: "qemu-user sysroot installer to run x86_64 binaries on aarch64", color: "terminal-cyan", href: "" },
+  { name: "tools/", desc: "ADB wireless connect, restore-tabs, post-update phantom-killer fixes", color: "terminal-green", href: "" },
+  { name: "hooks/", desc: "Claude Code hooks — session lifecycle + queue automation", color: "terminal-dim", href: "" },
+  { name: "docs/", desc: "Architecture, command reference, ADB wireless guide, bridge protocol spec", color: "terminal-dim", href: "/docs" },
 ];
 ---
 

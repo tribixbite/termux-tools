@@ -3,38 +3,52 @@
 
 const features = [
   {
-    icon: "⌨",
-    title: "TMX Orchestrator",
-    description: "TypeScript daemon managing tmux session lifecycle. Dependency-ordered parallel boot, health checks, auto-restart, and a real-time web dashboard.",
+    icon: "🛡",
+    title: "Custom Edge Canary Build",
+    description: "A reproducible pipeline that strips 56+ tracking permissions, analytics SDKs (OneCollector, Adjust, Tencent Matrix, KOOM), Intune MDM and telemetry endpoints from Edge Canary, then re-signs the APK.",
     commands: [
-      { cmd: "tmx boot", desc: "start daemon + all sessions" },
-      { cmd: "tmx status", desc: "sessions, memory, battery" },
-      { cmd: "tmx go torch", desc: "send 'go' to Claude session" },
-      { cmd: "tmx open ~/proj", desc: "add session dynamically" },
+      { cmd: "edge-fix/build.sh", desc: "unpack, patch, sign, zipalign" },
+      { cmd: "patch-manifest.py", desc: "drop tracking permissions" },
+      { cmd: "replace-urls.list", desc: "telemetry → 127.0.0.1" },
     ],
     color: "terminal-green",
+    href: "/edge",
   },
   {
     icon: "📡",
     title: "CFC Browser Bridge",
-    description: "WebSocket bridge connecting Chrome extension to Claude Code CLI. Browser automation — screenshots, navigation, form fill — as MCP tools.",
+    description: "A WebSocket bridge that wires the Edge extension to Claude Code's native Chrome host — exposing screenshots, navigation, form fill and JS-over-CDP as MCP tools inside any Claude session on Android.",
     commands: [
-      { cmd: "claude-chrome-android", desc: "start bridge server" },
-      { cmd: "--mcp", desc: "MCP relay for Claude Code" },
+      { cmd: "claude-chrome-android", desc: "start the WS bridge" },
+      { cmd: "--mcp", desc: "MCP relay per session" },
       { cmd: "--setup", desc: "register MCP + extension" },
     ],
     color: "terminal-amber",
+    href: "/bridge",
   },
   {
-    icon: "🔄",
-    title: "Crash Resilience",
-    description: "All processes detach from Termux (PPid: 1) — sessions survive app kills. IPC socket self-heals after tmpfs cleanup. Watchdog auto-restarts daemon after OOM.",
+    icon: "◆",
+    title: "Claude Code on Termux",
+    description: "Runs the latest Claude Code (2.1.158, Opus 4.8) on bionic Android. A byte-preserving patcher edits the bun-compiled binary's vfs in place, plus sed patches for the legacy cli.js path — aligned to your CLAUDE.md.",
     commands: [
-      { cmd: "watchdog.sh", desc: "boot script in ~/.termux/boot/" },
-      { cmd: "/api/fix-socket", desc: "instant IPC socket recovery" },
-      { cmd: "tmx health", desc: "run health checks now" },
+      { cmd: "CCINSTALL_VERSION=next", desc: "install the 4.8 binary" },
+      { cmd: "claude-code.sh", desc: "install + auto-patch" },
+      { cmd: "byte-preserving", desc: "survives bun-vfs offsets" },
     ],
     color: "terminal-cyan",
+    href: "/claude",
+  },
+  {
+    icon: "⚙",
+    title: "Termux Dev Tooling",
+    description: "The glue that makes bionic Android a real dev box: a modular installer, x86_64 emulation via qemu, a Ghostty source build, pip-on-Termux fixes, ADB wireless automation and device-migration scripts.",
+    commands: [
+      { cmd: "x86-on-termux", desc: "run x86_64 binaries via qemu" },
+      { cmd: "pip-tool-install", desc: "C-ext Python CLIs on Termux" },
+      { cmd: "install-ghostty", desc: "GTK4 terminal, source build" },
+    ],
+    color: "terminal-text",
+    href: "/docs",
   },
 ];
 ---
@@ -45,12 +59,12 @@ const features = [
       <span class="text-terminal-green">#</span> Core Features
     </h2>
 
-    <div class="grid gap-6 md:grid-cols-3">
+    <div class="grid gap-6 sm:grid-cols-2">
       {features.map((f) => (
-        <div class="group rounded-lg border border-terminal-border bg-terminal-surface p-6 transition-colors hover:border-terminal-dim">
+        <a href={f.href} class="group block rounded-lg border border-terminal-border bg-terminal-surface p-6 transition-colors hover:border-terminal-dim">
           <!-- Icon + Title -->
           <div class="mb-4 text-3xl">{f.icon}</div>
-          <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-semibold text-terminal-bright">
+          <h3 class="mb-3 font-[family-name:var(--font-mono)] text-lg font-semibold text-terminal-bright group-hover:text-terminal-green">
             {f.title}
           </h3>
           <p class="mb-5 text-sm leading-relaxed text-terminal-dim">
@@ -66,7 +80,7 @@ const features = [
               </div>
             ))}
           </div>
-        </div>
+        </a>
       ))}
     </div>
   </div>
