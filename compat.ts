@@ -295,8 +295,13 @@ function createNodeServer(config: BridgeServerConfig): BridgeServer {
       }
       const request = new Request(url, reqInit);
 
-      const upgrade = (data?: Record<string, unknown>) => {
-        pendingUpgradeData = data ?? {};
+      // Use a request-local flag — real WS upgrades are handled by the separate
+      // "upgrade" event below, NOT here. Sharing the outer `pendingUpgradeData`
+      // would leak a stale non-null value set by a prior WS connection, causing
+      // every later /health and /tool response to be silently skipped.
+      let httpUpgradeRequested = false;
+      const upgrade = (_data?: Record<string, unknown>) => {
+        httpUpgradeRequested = true;
         return true;
       };
 
@@ -304,9 +309,9 @@ function createNodeServer(config: BridgeServerConfig): BridgeServer {
         const response = await config.fetch(request, upgrade);
 
         // If upgrade was requested (fetch returned undefined), skip HTTP response
-        if (response === undefined || pendingUpgradeData !== null) {
+        if (response === undefined || httpUpgradeRequested) {
           // Upgrade will be handled by the "upgrade" event
-          if (pendingUpgradeData === null) {
+          if (!httpUpgradeRequested) {
             nodeRes.writeHead(500);
             nodeRes.end("WebSocket upgrade not triggered");
           }

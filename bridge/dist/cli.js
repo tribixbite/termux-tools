@@ -3855,14 +3855,15 @@ function createNodeServer(config) {
         reqInit.body = body;
       }
       const request = new Request(url, reqInit);
-      const upgrade = (data) => {
-        pendingUpgradeData = data ?? {};
+      let httpUpgradeRequested = false;
+      const upgrade = (_data) => {
+        httpUpgradeRequested = true;
         return true;
       };
       try {
         const response = await config.fetch(request, upgrade);
-        if (response === void 0 || pendingUpgradeData !== null) {
-          if (pendingUpgradeData === null) {
+        if (response === void 0 || httpUpgradeRequested) {
+          if (!httpUpgradeRequested) {
             nodeRes.writeHead(500);
             nodeRes.end("WebSocket upgrade not triggered");
           }
@@ -4716,7 +4717,7 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, nativeHostKillTimer, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, NATIVE_HOST_WRAPPER, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, nativeHostKillTimer, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
     init_import_meta_shim();
@@ -4746,7 +4747,10 @@ var init_claude_chrome_bridge = __esm({
     _adbSerial = "";
     _adbSerialTs = 0;
     ADB_SERIAL_TTL_MS = 3e4;
-    REPO_CLI = (0, import_path.resolve)(SCRIPT_DIR, "cli.js");
+    NATIVE_HOST_WRAPPER = (0, import_path.resolve)(
+      process.env.HOME ?? "~",
+      ".claude/chrome/chrome-native-host"
+    );
     BUN_GLOBAL_CLI = (0, import_path.resolve)(
       process.env.HOME ?? "~",
       ".bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
@@ -4756,8 +4760,16 @@ var init_claude_chrome_bridge = __esm({
       ".npm/lib/node_modules/@anthropic-ai/claude-code/cli.js"
     );
     CLI_PATH = (() => {
-      const { existsSync: existsSync2 } = require("fs");
-      for (const p of [REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI]) {
+      const { existsSync: existsSync2, readFileSync: readFileSync2 } = require("fs");
+      if (existsSync2(NATIVE_HOST_WRAPPER)) {
+        try {
+          const wrapper = readFileSync2(NATIVE_HOST_WRAPPER, "utf-8");
+          const m = wrapper.match(/"([^"]*cli\.js)"\s+--chrome-native-host/);
+          if (m && existsSync2(m[1])) return m[1];
+        } catch {
+        }
+      }
+      for (const p of [BUN_GLOBAL_CLI, NPM_GLOBAL_CLI]) {
         if (existsSync2(p)) return p;
       }
       const result = runSync(["which", "claude"]);

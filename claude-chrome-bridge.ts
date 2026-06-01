@@ -122,8 +122,17 @@ function adbNotify(tag: string, title: string, text: string): void {
 // Ideally we'd use termux-notification (ongoing, buttons, actions) but Bun's process spawning
 // breaks termux-api-broadcast's abstract Unix socket IPC. See commit history for investigation.
 
-// Resolve cli.js path — check multiple locations
-const REPO_CLI = resolve(SCRIPT_DIR, "cli.js");
+// Resolve Claude Code's cli.js — the binary that implements `--chrome-native-host`.
+// NOTE: this must be Claude Code's own cli.js (@anthropic-ai/claude-code), NOT this
+// repo's bridge cli.js. Our bridge cli.js has no `--chrome-native-host` handler, so
+// spawning it falls through to the help banner — which the parent then misreads as a
+// native-messaging frame ("Invalid native message length") and the host exit→restart
+// loops forever. The canonical source of truth is Claude Code's native-host wrapper,
+// which it regenerates to point at whichever cli.js the active install uses.
+const NATIVE_HOST_WRAPPER = resolve(
+  process.env.HOME ?? "~",
+  ".claude/chrome/chrome-native-host"
+);
 const BUN_GLOBAL_CLI = resolve(
   process.env.HOME ?? "~",
   ".bun/install/global/node_modules/@anthropic-ai/claude-code/cli.js"
@@ -133,8 +142,19 @@ const NPM_GLOBAL_CLI = resolve(
   ".npm/lib/node_modules/@anthropic-ai/claude-code/cli.js"
 );
 const CLI_PATH = (() => {
-  const { existsSync } = require("fs");
-  for (const p of [REPO_CLI, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI]) {
+  const { existsSync, readFileSync } = require("fs");
+  // Preferred: parse the cli.js path out of Claude Code's own native-host wrapper.
+  // The wrapper is generated as: exec "<node>" "<cli.js>" --chrome-native-host
+  if (existsSync(NATIVE_HOST_WRAPPER)) {
+    try {
+      const wrapper = readFileSync(NATIVE_HOST_WRAPPER, "utf-8");
+      const m = wrapper.match(/"([^"]*cli\.js)"\s+--chrome-native-host/);
+      if (m && existsSync(m[1])) return m[1];
+    } catch {
+      // fall through to known install locations
+    }
+  }
+  for (const p of [BUN_GLOBAL_CLI, NPM_GLOBAL_CLI]) {
     if (existsSync(p)) return p;
   }
   // Last resort: try to find via which
