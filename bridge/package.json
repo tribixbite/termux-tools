@@ -13,6 +13,8 @@
   },
   "files": [
     "dist/",
+    "!dist/*.pem",
+    "!dist/claude-code-bridge-v*.crx",
     "README.md"
   ],
   "scripts": {

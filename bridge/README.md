@@ -27,6 +27,7 @@ claude-chrome-android              # start the bridge server
 claude-chrome-android --mcp        # MCP server mode (spawned by Claude Code)
 claude-chrome-android --stop       # stop a running bridge
 claude-chrome-android --setup      # register MCP + install CRX extension
+claude-chrome-android --doctor     # check Edge/patch/extension setup, offer to fix
 claude-chrome-android --version    # show version
 claude-chrome-android --help       # show help
 ```
@@ -51,6 +52,24 @@ Claude Code session N ─→ cli.js --mcp ─┘
 1. **Registers MCP server** in `~/.claude/settings.json` as `cfc-bridge` — Claude Code spawns `cli.js --mcp` per session
 2. **Creates `~/bin/termux-url-opener`** — handles `cfcbridge://start` URLs to auto-start the bridge
 3. **Installs CRX extension** — serves the bundled CRX over HTTP and opens Edge for installation (requires ADB)
+
+## Doctor
+
+The bridge is only useful once a privacy-patched Edge with the CFC extension is
+running. `--doctor` checks each piece over ADB and offers to fix what's missing:
+
+- **ADB device connected** — required for everything below
+- **Edge installed** — detects Canary/Dev/Beta/stable
+- **Edge privacy-patched** — heuristic: the `AD_ID` tracking permission is stripped
+- **CFC extension sideloaded** — files in `/data/local/tmp/cfc-ext` + `--load-extension` flag set
+- **Extension connected to bridge** — live WebSocket client count from `/health`
+
+When run in a terminal it prompts before acting: it can build + install a
+patched Edge from your installed copy (via `edge-fix/build-from-device.sh`, no
+data wipe) and sideload the extension. It never downloads base Edge for you (no
+Play/APKMirror API) and never touches the signing keystore. The same probe runs
+non-interactively at `claude-chrome-android` startup and prints a one-line hint
+if anything looks unset.
 
 ## Important
 

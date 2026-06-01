@@ -7,6 +7,7 @@
  *   npx claude-chrome-android --mcp      MCP server mode (spawned by Claude Code)
  *   npx claude-chrome-android --stop     Stop a running bridge
  *   npx claude-chrome-android --setup    Register MCP server + create url-opener
+ *   npx claude-chrome-android --doctor   Detect missing Edge/patch/extension + offer to fix
  *   npx claude-chrome-android --version  Print version
  *   npx claude-chrome-android --help     Show help
  */
@@ -56,6 +57,94 @@ async function isBridgeAlive(): Promise<boolean> {
   }
 }
 
+/** Number of browser extensions currently connected to the bridge (0 if down). */
+async function bridgeClientCount(): Promise<number | null> {
+  try {
+    const res = await fetchWithTimeout(HEALTH_URL, { timeout: 2000 });
+    if (!res.ok) return null;
+    const d = (await res.json()) as Record<string, unknown>;
+    return typeof d.clients === "number" ? d.clients : 0;
+  } catch {
+    return null;
+  }
+}
+
+// --- Edge / extension environment probes -------------------------------------
+// Shared by --setup, --doctor, and the startup preflight in cmdStart.
+
+const EDGE_PACKAGES = [
+  "com.microsoft.emmx.canary",
+  "com.microsoft.emmx.dev",
+  "com.microsoft.emmx.beta",
+  "com.microsoft.emmx",
+];
+const EXT_DEST = "/data/local/tmp/cfc-ext";
+const FLAGS_FILE = "/data/local/tmp/chrome-command-line";
+
+type SpawnSync = typeof import("child_process").spawnSync;
+
+/** Resolve the directory holding this CLI (works in CJS bundle + ESM). */
+function selfDir(): string {
+  return typeof __dirname !== "undefined" ? __dirname : dirname(new URL(import.meta.url).pathname);
+}
+
+/** Locate the unpacked CFC extension (source repo or shipped dist/). */
+function findExtDir(): string | undefined {
+  const dir = selfDir();
+  const candidates = [
+    resolve(dir, "../../edge-claude-ext"), // running from source repo
+    resolve(dir, "edge-claude-ext"),       // npm package dist/edge-claude-ext/
+  ];
+  return candidates.find((d) => existsSync(resolve(d, "manifest.json")));
+}
+
+/** Locate edge-fix/build-from-device.sh for the self-build flow (source repo only). */
+function findBuildScript(): string | undefined {
+  const home = process.env.HOME ?? "/data/data/com.termux/files/home";
+  const candidates = [
+    resolve(selfDir(), "../../../edge-fix/build-from-device.sh"),
+    resolve(home, "git/termux-tools/edge-fix/build-from-device.sh"),
+  ];
+  return candidates.find((p) => existsSync(p));
+}
+
+function adbOnline(sp: SpawnSync): boolean {
+  const r = sp("adb", ["devices"], { stdio: "pipe", encoding: "utf-8" });
+  return r.status === 0 && /\tdevice\b/.test(r.stdout ?? "");
+}
+
+/** Which Edge variant is installed on the device, if any. */
+function detectEdgePkg(sp: SpawnSync): string {
+  for (const pkg of EDGE_PACKAGES) {
+    const r = sp("adb", ["shell", "pm", "list", "packages", pkg], { stdio: "pipe", encoding: "utf-8" });
+    if (r.stdout?.includes(`package:${pkg}`)) return pkg;
+  }
+  return "";
+}
+
+/** True if the unpacked extension is present on the device. */
+function extPushed(sp: SpawnSync): boolean {
+  const r = sp("adb", ["shell", "ls", `${EXT_DEST}/manifest.json`], { stdio: "pipe", encoding: "utf-8" });
+  return r.status === 0 && (r.stdout ?? "").includes("manifest.json");
+}
+
+/** True if chrome-command-line points --load-extension at our extension dir. */
+function flagsLoadExt(sp: SpawnSync): boolean {
+  const r = sp("adb", ["shell", "cat", FLAGS_FILE], { stdio: "pipe", encoding: "utf-8" });
+  return (r.stdout ?? "").includes(EXT_DEST);
+}
+
+/**
+ * Heuristic: the privacy patch strips the AD_ID tracking permission, so its
+ * absence from the manifest is a strong signal the installed Edge is patched.
+ * Returns null when we can't determine it (e.g. dumpsys unavailable).
+ */
+function edgeIsPatched(sp: SpawnSync, pkg: string): boolean | null {
+  const r = sp("adb", ["shell", "dumpsys", "package", pkg], { stdio: "pipe", encoding: "utf-8" });
+  if (r.status !== 0 || !r.stdout) return null;
+  return !r.stdout.includes("com.google.android.gms.permission.AD_ID");
+}
+
 // --- Commands ----------------------------------------------------------------
 
 function cmdVersion(): void {
@@ -72,6 +161,7 @@ Usage:
   claude-chrome-android --mcp        MCP server mode (spawned by Claude Code)
   claude-chrome-android --stop       Stop a running bridge
   claude-chrome-android --setup      Register MCP server in Claude Code + create url-opener
+  claude-chrome-android --doctor     Check Edge/patch/extension setup and offer to fix
   claude-chrome-android --version    Print version
   claude-chrome-android --help       Show this help
 
@@ -257,130 +347,8 @@ esac
   chmodSync(urlOpenerPath, 0o755);
   console.log(`${urlOpenerExists ? "Updated" : "Created"} ${urlOpenerPath}`);
 
-  // --- Extension Install via --load-extension ---------------------------------
-  // Edge Android's MV3 service workers don't start for sideloaded extensions,
-  // and CRX downloads don't trigger install. Instead, push unpacked extension
-  // files to /data/local/tmp/cfc-ext/ and use --load-extension flag.
-  const dir = typeof __dirname !== "undefined" ? __dirname : dirname(new URL(import.meta.url).pathname);
-  const EXT_DEST = "/data/local/tmp/cfc-ext";
-  const FLAGS_FILE = "/data/local/tmp/chrome-command-line";
-  const LOAD_EXT_FLAG = `--load-extension=${EXT_DEST}`;
-
-  // Find extension source directory
-  const extDirCandidates = [
-    resolve(dir, "../../edge-claude-ext"),     // source repo
-    resolve(dir, "edge-claude-ext"),           // npm package (dist/edge-claude-ext/)
-  ];
-  const extDir = extDirCandidates.find((d) => existsSync(resolve(d, "manifest.json")));
-
-  // Extension files needed on device (skip docs)
-  const EXT_FILES = [
-    "manifest.json", "background.js", "content.js",
-    "popup.html", "popup.js", "launcher.html", "launcher.js",
-    "icon16.png", "icon48.png", "icon128.png",
-  ];
-
-  // Check if ADB is available
-  const adbCheck = spawnSync("adb", ["devices"], { stdio: "pipe", encoding: "utf-8" });
-  const hasAdb = adbCheck.status === 0 && adbCheck.stdout.includes("\tdevice");
-
-  if (!extDir) {
-    console.log("\nExtension source not found. Skipping extension install.");
-    console.log("To install manually, clone the repo and run push-extension.sh.");
-  } else if (!hasAdb) {
-    console.log("\nADB not available. Extension install requires ADB connection.");
-    console.log("Connect via: adb tcpip 5555 && adb connect <device-ip>");
-  } else {
-    const extVersion = (() => {
-      try {
-        return JSON.parse(readFileSync(resolve(extDir, "manifest.json"), "utf-8")).version as string;
-      } catch { return PKG_VERSION; }
-    })();
-
-    console.log(`\nInstalling CFC extension v${extVersion} via --load-extension...`);
-
-    // Create target directory on device
-    spawnSync("adb", ["shell", "mkdir", "-p", EXT_DEST], { stdio: "pipe" });
-
-    // Push each extension file
-    let pushed = 0;
-    for (const f of EXT_FILES) {
-      const src = resolve(extDir, f);
-      if (existsSync(src)) {
-        const result = spawnSync("adb", ["push", src, `${EXT_DEST}/${f}`], {
-          stdio: "pipe", encoding: "utf-8",
-        });
-        if (result.status === 0) pushed++;
-      }
-    }
-    console.log(`  Pushed ${pushed}/${EXT_FILES.length} files to ${EXT_DEST}`);
-
-    // Read current flags and add --load-extension if missing
-    const flagsResult = spawnSync("adb", ["shell", "cat", FLAGS_FILE], {
-      stdio: "pipe", encoding: "utf-8",
-    });
-    let currentFlags = flagsResult.stdout?.trim() || "";
-
-    if (!currentFlags.includes("--load-extension=")) {
-      // Append --load-extension to existing flags, or create new flags file
-      if (!currentFlags) {
-        currentFlags = `_ ${LOAD_EXT_FLAG}`;
-      } else {
-        currentFlags = `${currentFlags} ${LOAD_EXT_FLAG}`;
-      }
-
-      // Write updated flags
-      spawnSync("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], {
-        stdio: "pipe",
-      });
-      console.log("  Added --load-extension flag to chrome-command-line");
-    } else if (!currentFlags.includes(EXT_DEST)) {
-      // Flag exists but points elsewhere — update it
-      currentFlags = currentFlags.replace(/--load-extension=\S+/, LOAD_EXT_FLAG);
-      spawnSync("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], {
-        stdio: "pipe",
-      });
-      console.log("  Updated --load-extension path in chrome-command-line");
-    } else {
-      console.log("  --load-extension flag already set");
-    }
-
-    // Ensure debug_app is set (required for flag reading without debuggable APK)
-    const edgePackages = [
-      "com.microsoft.emmx.canary",
-      "com.microsoft.emmx.dev",
-      "com.microsoft.emmx.beta",
-      "com.microsoft.emmx",
-    ];
-
-    // Detect which Edge package is installed
-    let edgePkg = "";
-    for (const pkg of edgePackages) {
-      const check = spawnSync("adb", ["shell", "pm", "list", "packages", pkg], {
-        stdio: "pipe", encoding: "utf-8",
-      });
-      if (check.stdout?.includes(pkg)) {
-        edgePkg = pkg;
-        break;
-      }
-    }
-
-    if (edgePkg) {
-      // Set debug_app for chrome-command-line flag reading
-      spawnSync("adb", ["shell", "settings", "put", "global", "debug_app", edgePkg], {
-        stdio: "pipe",
-      });
-      console.log(`  Set debug_app=${edgePkg} for flag reading`);
-
-      // Force-stop Edge so it picks up new extension + flags on next launch
-      spawnSync("adb", ["shell", "am", "force-stop", edgePkg], { stdio: "pipe" });
-      console.log(`  Restarted ${edgePkg} to apply changes`);
-    } else {
-      console.log("  WARNING: No Edge browser found. Install Edge Canary from the Play Store.");
-    }
-
-    console.log("  Extension will load automatically when Edge starts.");
-  }
+  // --- Extension install via --load-extension ---------------------------------
+  await installExtension(spawnSync);
 
   console.log(`
 Setup complete!
@@ -396,9 +364,211 @@ To update the extension later:
 `);
 }
 
+/**
+ * Push the unpacked CFC extension to the device and wire up the
+ * --load-extension flag + debug_app so Edge loads it on next launch.
+ * Edge Android's MV3 service workers don't start for sideloaded extensions and
+ * CRX downloads don't trigger install, so we sideload unpacked files instead.
+ */
+async function installExtension(sp: SpawnSync): Promise<boolean> {
+  const extDir = findExtDir();
+  const hasAdb = adbOnline(sp);
+
+  if (!extDir) {
+    console.log("\nExtension source not found. Skipping extension install.");
+    console.log("To install manually, clone the repo and run push-extension.sh.");
+    return false;
+  }
+  if (!hasAdb) {
+    console.log("\nADB not available. Extension install requires ADB connection.");
+    console.log("Connect via: adb tcpip 5555 && adb connect <device-ip>");
+    return false;
+  }
+
+  const extVersion = (() => {
+    try {
+      return JSON.parse(readFileSync(resolve(extDir, "manifest.json"), "utf-8")).version as string;
+    } catch { return PKG_VERSION; }
+  })();
+
+  const EXT_FILES = [
+    "manifest.json", "background.js", "content.js",
+    "popup.html", "popup.js", "launcher.html", "launcher.js",
+    "icon16.png", "icon48.png", "icon128.png",
+  ];
+  const LOAD_EXT_FLAG = `--load-extension=${EXT_DEST}`;
+
+  console.log(`\nInstalling CFC extension v${extVersion} via --load-extension...`);
+
+  sp("adb", ["shell", "mkdir", "-p", EXT_DEST], { stdio: "pipe" });
+
+  let pushed = 0;
+  for (const f of EXT_FILES) {
+    const src = resolve(extDir, f);
+    if (existsSync(src)) {
+      const r = sp("adb", ["push", src, `${EXT_DEST}/${f}`], { stdio: "pipe", encoding: "utf-8" });
+      if (r.status === 0) pushed++;
+    }
+  }
+  console.log(`  Pushed ${pushed}/${EXT_FILES.length} files to ${EXT_DEST}`);
+
+  const flagsResult = sp("adb", ["shell", "cat", FLAGS_FILE], { stdio: "pipe", encoding: "utf-8" });
+  let currentFlags = flagsResult.stdout?.trim() || "";
+
+  if (!currentFlags.includes("--load-extension=")) {
+    currentFlags = currentFlags ? `${currentFlags} ${LOAD_EXT_FLAG}` : `_ ${LOAD_EXT_FLAG}`;
+    sp("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], { stdio: "pipe" });
+    console.log("  Added --load-extension flag to chrome-command-line");
+  } else if (!currentFlags.includes(EXT_DEST)) {
+    currentFlags = currentFlags.replace(/--load-extension=\S+/, LOAD_EXT_FLAG);
+    sp("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], { stdio: "pipe" });
+    console.log("  Updated --load-extension path in chrome-command-line");
+  } else {
+    console.log("  --load-extension flag already set");
+  }
+
+  const edgePkg = detectEdgePkg(sp);
+  if (edgePkg) {
+    sp("adb", ["shell", "settings", "put", "global", "debug_app", edgePkg], { stdio: "pipe" });
+    console.log(`  Set debug_app=${edgePkg} for flag reading`);
+    sp("adb", ["shell", "am", "force-stop", edgePkg], { stdio: "pipe" });
+    console.log(`  Restarted ${edgePkg} to apply changes`);
+  } else {
+    console.log("  WARNING: No Edge browser found. Install Edge Canary from the Play Store.");
+  }
+
+  console.log("  Extension will load automatically when Edge starts.");
+  return true;
+}
+
+// =============================================================================
+// --doctor: detect missing pieces (Edge / patch / extension) and offer to fix
+// =============================================================================
+
+function ask(question: string): Promise<string> {
+  return new Promise((res) => {
+    const rl = require("readline").createInterface({ input: process.stdin, output: process.stdout });
+    rl.question(question, (answer: string) => { rl.close(); res(answer.trim().toLowerCase()); });
+  });
+}
+
+const isYes = (a: string) => a === "" || a === "y" || a === "yes";
+
+interface EdgeStatus {
+  hasAdb: boolean;
+  edgePkg: string;
+  patched: boolean | null;
+  extPushed: boolean;
+  flagsLoadExt: boolean;
+  clients: number | null;
+}
+
+async function probeEdge(sp: SpawnSync): Promise<EdgeStatus> {
+  const hasAdb = adbOnline(sp);
+  const edgePkg = hasAdb ? detectEdgePkg(sp) : "";
+  return {
+    hasAdb,
+    edgePkg,
+    patched: hasAdb && edgePkg ? edgeIsPatched(sp, edgePkg) : null,
+    extPushed: hasAdb ? extPushed(sp) : false,
+    flagsLoadExt: hasAdb ? flagsLoadExt(sp) : false,
+    clients: await bridgeClientCount(),
+  };
+}
+
+function printEdgeStatus(s: EdgeStatus): void {
+  const mark = (ok: boolean | null) => (ok === null ? "?" : ok ? "OK" : "MISSING");
+  console.log("CFC environment check:");
+  console.log(`  [${mark(s.hasAdb)}] ADB device connected`);
+  console.log(`  [${s.edgePkg ? "OK" : "MISSING"}] Edge installed${s.edgePkg ? ` (${s.edgePkg})` : ""}`);
+  console.log(`  [${mark(s.patched)}] Edge privacy-patched (AD_ID stripped)`);
+  console.log(`  [${mark(s.extPushed && s.flagsLoadExt)}] CFC extension sideloaded + flag set`);
+  console.log(`  [${s.clients === null ? "—" : s.clients > 0 ? "OK" : "MISSING"}] Extension connected to bridge${s.clients !== null ? ` (${s.clients} client${s.clients === 1 ? "" : "s"})` : " (bridge not running)"}`);
+}
+
+/**
+ * Offer to (re)build a privacy-patched Edge from the installed copy via
+ * edge-fix/build-from-device.sh. Requires the source repo + build toolchain;
+ * we never auto-download base Edge (no Play/APKMirror API) and never touch the
+ * keystore here.
+ */
+async function offerPatchBuild(sp: SpawnSync, edgePkg: string, interactive: boolean): Promise<void> {
+  const script = findBuildScript();
+  if (!script) {
+    console.log("\nTo build a privacy-patched Edge from your installed copy:");
+    console.log("  git clone https://github.com/tribixbite/termux-tools");
+    console.log("  cd termux-tools/edge-fix && ./build-from-device.sh --install");
+    console.log("(needs apktool, zipalign/apksigner, java, python3 + the tool jars in tools/)");
+    return;
+  }
+  if (!interactive) {
+    console.log(`\nRun the self-build to patch Edge (no data wipe on re-sign):`);
+    console.log(`  ${script} --install`);
+    return;
+  }
+  const a = await ask(`\nBuild + install a privacy-patched ${edgePkg} now via build-from-device.sh? [Y/n] `);
+  if (!isYes(a)) { console.log("Skipped patch build."); return; }
+  console.log("\nRunning build-from-device.sh --install (this takes a few minutes)...\n");
+  const r = sp("bash", [script, "--install"], { stdio: "inherit" });
+  if (r.status === 0) console.log("\nPatched Edge installed.");
+  else console.log(`\nbuild-from-device.sh exited ${r.status}. See output above.`);
+}
+
+async function cmdDoctor(): Promise<void> {
+  console.log(`claude-chrome-android v${PKG_VERSION} — doctor\n`);
+  const { spawnSync } = await import("child_process");
+  const interactive = Boolean(process.stdin.isTTY);
+
+  const s = await probeEdge(spawnSync);
+  printEdgeStatus(s);
+
+  if (!s.hasAdb) {
+    console.log("\nNo ADB device. Connect with: adb tcpip 5555 && adb connect <device-ip>");
+    return;
+  }
+  if (!s.edgePkg) {
+    console.log("\nInstall Microsoft Edge Canary from the Play Store, then re-run --doctor.");
+    return;
+  }
+
+  // Offer the patch build when Edge isn't patched (or we couldn't tell).
+  if (s.patched !== true) {
+    if (s.patched === false) console.log("\nYour Edge still ships tracking permissions.");
+    await offerPatchBuild(spawnSync, s.edgePkg, interactive);
+  }
+
+  // Offer the extension install when it's not sideloaded / not connected.
+  if (!s.extPushed || !s.flagsLoadExt || s.clients === 0) {
+    if (interactive) {
+      const a = await ask("\nSideload the CFC extension into Edge now? [Y/n] ");
+      if (isYes(a)) await installExtension(spawnSync);
+      else console.log("Skipped extension install.");
+    } else {
+      console.log("\nInstall the CFC extension with: claude-chrome-android --setup");
+    }
+  }
+
+  console.log("\nDoctor complete. Start the bridge with: claude-chrome-android");
+}
+
 // =============================================================================
 // Default: start the bridge server
 // =============================================================================
+
+/** Non-blocking startup hint: warn if the browser side isn't wired up yet. */
+async function preflightHint(): Promise<void> {
+  // Only probe when ADB is reachable; never block the bridge from starting.
+  try {
+    const { spawnSync } = await import("child_process");
+    if (!adbOnline(spawnSync)) return;
+    const edgePkg = detectEdgePkg(spawnSync);
+    const ready = edgePkg && extPushed(spawnSync) && flagsLoadExt(spawnSync);
+    if (!ready) {
+      console.log("\nHeads up: Edge + CFC extension don't look fully set up.");
+      console.log("Run `claude-chrome-android --doctor` to detect and fix missing pieces.\n");
+    }
+  } catch { /* best-effort only */ }
+}
 
 async function cmdStart(): Promise<void> {
   if (await isBridgeAlive()) {
@@ -406,6 +576,8 @@ async function cmdStart(): Promise<void> {
     console.log("Use --stop to stop it first, or --help for more options.");
     process.exit(0);
   }
+
+  await preflightHint();
 
   console.log(`Starting CFC Bridge v${PKG_VERSION} on ws://${WS_HOST}:${WS_PORT}...`);
 
@@ -845,6 +1017,10 @@ switch (command) {
     break;
   case "--setup":
     cmdSetup();
+    break;
+  case "--doctor":
+  case "--setup-edge":
+    cmdDoctor();
     break;
   case "--mcp":
     cmdMcp();

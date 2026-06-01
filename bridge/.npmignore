@@ -1,0 +1,11 @@
+# Never publish the CRX signing private key
+dist/*.pem
+*.pem
+
+# Old versioned CRX builds — only ship the current claude-code-bridge.crx
+dist/claude-code-bridge-v*.crx
+
+# Build inputs / scratch
+build.cjs
+publish.sh
+src/
