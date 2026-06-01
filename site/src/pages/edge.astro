@@ -14,8 +14,9 @@ const pipeline = [
   { step: "1", file: "patch-manifest.py", desc: "XML-based manifest surgery — drops tracking permissions and analytics components" },
   { step: "2", file: "stub-method.py", desc: "Replaces 23 telemetry method bodies with safe return defaults via smali" },
   { step: "3", file: "neutralize-loadlibrary.py", desc: "NOPs System.loadLibrary() calls in 5 native-backed classes" },
-  { step: "4", file: "replace-strings.py", desc: "Rewrites 30+ telemetry endpoint URLs to 127.0.0.1" },
+  { step: "4", file: "replace-strings.py", desc: "Rewrites 30+ telemetry endpoint URLs to 127.0.0.1, strips tracker class trees + unused native libs" },
   { step: "5", file: "zipalign + apksigner", desc: "Re-aligns and re-signs the split APK bundle with a stable keystore" },
+  { step: "6", file: "APKEditor.jar", desc: "Merges base + splits into a single installable APK and re-signs it" },
 ];
 ---
 
@@ -93,7 +94,7 @@ const pipeline = [
         </h2>
 
         <p class="mb-6 text-sm text-terminal-dim">
-          A 5-step orchestrator copies the original APK and replaces only the patched files (DEX + manifest),
+          A 6-step orchestrator copies the original APK and replaces only the patched files (DEX + manifest),
           preserving every resource, native lib and unmodified DEX byte-for-byte.
         </p>
 
@@ -149,20 +150,37 @@ const pipeline = [
         </h2>
 
         <p class="mb-6 text-sm text-terminal-dim">
-          Uninstall the Play Store version first (signature mismatch). Then install the 4-part split bundle via
-          <code class="text-terminal-green">adb install-multiple</code>, or with
+          The build produces a single merged APK (easiest — installs with any installer) and the 4-part split bundle.
+          The <strong class="text-terminal-text">first</strong> install from your keystore requires uninstalling the
+          Play Store version (signature mismatch wipes Edge data). No ADB? Use
           <a href="https://f-droid.org/packages/com.aefyr.sai.fdroid/" class="text-terminal-amber hover:underline" target="_blank" rel="noopener">SAI</a>
-          / Quick Share if you have no ADB.
+          or Quick Share.
         </p>
 
         <div class="overflow-hidden rounded-lg border border-terminal-border bg-terminal-surface">
           <div class="p-4 font-[family-name:var(--font-mono)] text-sm leading-relaxed">
+            <div class="text-terminal-dim"># first install — wipes data (signature mismatch)</div>
             <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> adb uninstall com.microsoft.emmx.canary</span></div>
-            <div class="mt-2 text-terminal-dim">~ $<span class="text-terminal-bright"> adb install-multiple \</span></div>
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> adb install output/EdgeCanary-VERSION-privacy-merged.apk</span></div>
+            <div class="mt-2 text-terminal-dim"># …or the split bundle</div>
+            <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> adb install-multiple \</span></div>
             <div class="text-terminal-dim">  output/EdgeCanary-VERSION-privacy.apk \</div>
             <div class="text-terminal-dim">  output/signed/split_chrome.apk \</div>
             <div class="text-terminal-dim">  output/signed/split_config.en.apk \</div>
             <div class="text-terminal-dim">  output/signed/split_on_demand.apk</div>
+          </div>
+        </div>
+
+        <div class="mt-4 rounded-lg border border-terminal-green/30 bg-terminal-green/5 p-4">
+          <h3 class="mb-1 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-green">In-place update — no data wipe</h3>
+          <p class="mb-3 font-[family-name:var(--font-mono)] text-xs leading-relaxed text-terminal-dim">
+            Already on a build signed with the same keystore? Android accepts the update because the signatures match —
+            bookmarks, logins and settings are preserved. Don't uninstall first; keep <code class="text-terminal-green">edge-fix.keystore</code> stable.
+          </p>
+          <div class="overflow-hidden rounded-md border border-terminal-border bg-terminal-surface">
+            <div class="p-3 font-[family-name:var(--font-mono)] text-xs leading-relaxed">
+              <div class="text-terminal-dim">~ $<span class="text-terminal-bright"> adb install -r output/EdgeCanary-VERSION-privacy-merged.apk</span></div>
+            </div>
           </div>
         </div>
       </div>

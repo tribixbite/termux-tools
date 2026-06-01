@@ -32,18 +32,44 @@ Modular pipeline to strip telemetry, tracking, and analytics from Microsoft Edge
 
 ## Install (pre-built)
 
-Requires uninstalling the Play Store version first (signature mismatch).
+The build produces two install formats in `output/`:
 
-### Via ADB
+- `EdgeCanary-VERSION-privacy-merged.apk` — a **single APK** (base + splits combined). Easiest: installs with any installer, no split juggling.
+- `EdgeCanary-VERSION-privacy.apk` + `signed/split_*.apk` — the split bundle.
+
+### First install (signature mismatch — wipes Edge data)
+
+A self-signed build can't replace the Play Store version in place. The first
+install from this keystore requires uninstalling the original, which **wipes Edge
+data**.
 
 ```bash
 adb uninstall com.microsoft.emmx.canary
+
+# Single merged APK (recommended):
+adb install output/EdgeCanary-VERSION-privacy-merged.apk
+
+# …or the split bundle:
 adb install-multiple \
   output/EdgeCanary-VERSION-privacy.apk \
   output/signed/split_chrome.apk \
   output/signed/split_config.en.apk \
   output/signed/split_on_demand.apk
 ```
+
+### In-place update — NO data wipe
+
+If the device is **already running a build signed with this same keystore**,
+Android accepts an update because the signatures match — bookmarks, logins, and
+settings are preserved. Do **not** uninstall first:
+
+```bash
+adb install -r output/EdgeCanary-VERSION-privacy-merged.apk   # merged, or
+adb install-multiple -r \
+  output/EdgeCanary-VERSION-privacy.apk output/signed/split_*.apk
+```
+
+This is why `edge-fix.keystore` must be kept stable across builds.
 
 ### Via SAI (no ADB needed)
 
@@ -101,22 +127,45 @@ Output goes to `output/`. A signing keystore is auto-generated on first run at `
 ## Architecture
 
 ```
-build.sh                          # 5-step pipeline orchestrator
+build.sh                          # 6-step pipeline orchestrator
 config/
-  targeted-stubs.list             # methods to stub (smali_path|method_name)
+  # manifest surgery (read by patch-manifest.py)
+  strip-permissions.list          # <uses-permission> names to remove
+  strip-components.list           # activity|service|provider|receiver names
+  strip-queries.list              # <queries> package names (device-ID probes)
+  strip-metadata.list             # <meta-data> names to remove
+  # DEX surgery (read by build.sh)
+  targeted-stubs.list             # per-method stubs (smali_path|method_name)
   neutralize-libs.list            # files with loadLibrary calls to NOP
   replace-urls.list               # telemetry URLs to redirect to 127.0.0.1
+  strip-classes.list              # whole smali package trees to delete
+  # APK assembly
+  strip-libs.list                 # native .so files to drop (~36MB saved)
+  # runtime (not used by build.sh)
+  command-line-flags.list         # Chromium flags pushed by push-flags.sh
+  smali-stubs.list                # legacy whole-class stub list (unused;
+                                  #   superseded by targeted-stubs.list)
 scripts/
   patch-manifest.py               # XML-based manifest surgery
   patch-manifest.sh               # wrapper for manifest patching
   stub-method.py                  # replace method body with safe return default
   neutralize-loadlibrary.py       # replace System.loadLibrary with nop
   replace-strings.py              # replace const-string/annotation URL values
+  patch-commandline.py            # patch BuildInfo.isDebugAndroid() → true
   patch-dex-strings.py            # binary DEX string replacement (disabled)
+  push-flags.sh                   # push command-line flags to /data/local/tmp
+  push-extension.sh               # sideload the CFC extension over ADB
 tools/
   baksmali-3.0.9-fat.jar          # standalone DEX decompiler (not in git)
   smali-3.0.9-fat.jar             # standalone DEX compiler (not in git)
+  APKEditor.jar                   # merges splits → single APK (Step 6)
 ```
+
+Pipeline steps: (1) extract `.apks`, (2) patch manifest, (3) patch DEX
+(method stubs, loadLibrary NOPs, URL redirects, class stripping, `BuildInfo`
+command-line gate), (4) assemble — copy original APK and replace only the
+patched DEX + manifest, strip unused libs/assets, (5) sign all APKs, (6) merge
+splits into a single installable APK and re-sign.
 
 The pipeline copies the original APK and replaces only the patched files (DEX + manifest), preserving all resources, native libs, and unmodified DEX files byte-for-byte.
 

@@ -522,6 +522,41 @@ done
 # Copy signed base to output path
 cp "${SIGNED_DIR}/base.apk" "$OUTPUT_APK"
 
+# ─── 6. Merge splits into a single installable APK (optional) ───
+# A merged single APK installs with any installer (no split juggling) and is the
+# easiest distribution format for end users. Requires tools/APKEditor.jar.
+# Merge combines the patched base + splits, strips signatures (-clean-meta),
+# then we re-sign the whole with the same stable keystore.
+APKEDITOR_JAR="$TOOLS_DIR/APKEditor.jar"
+MERGED_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy-merged.apk"
+if [ -f "$APKEDITOR_JAR" ]; then
+    echo ""
+    echo "=== Step 6/6: Merging splits into single APK ==="
+    MERGE_WORK="$WORK_DIR/merge"
+    rm -rf "$MERGE_WORK"
+    mkdir -p "$MERGE_WORK/input"
+    # Use the signed patched base + signed splits as merge input
+    cp "${SIGNED_DIR}/base.apk" "$MERGE_WORK/input/base.apk"
+    for split_apk in "${SIGNED_DIR}"/split_*.apk; do
+        [ -f "$split_apk" ] && cp "$split_apk" "$MERGE_WORK/input/"
+    done
+    echo "  Merging $(ls "$MERGE_WORK/input"/*.apk | wc -l) APKs..."
+    java -jar "$APKEDITOR_JAR" m -i "$MERGE_WORK/input" \
+        -o "$MERGE_WORK/merged-unsigned.apk" -clean-meta -f 2>&1 | tail -3
+    # Re-sign the merged APK with the stable keystore
+    zipalign -f -p 4 "$MERGE_WORK/merged-unsigned.apk" "$MERGE_WORK/merged-aligned.apk"
+    "$APKSIGNER" sign \
+        --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" \
+        --ks-pass "pass:${KEY_PASS}" --key-pass "pass:${KEY_PASS}" \
+        --out "$MERGED_APK" "$MERGE_WORK/merged-aligned.apk" 2>&1
+    rm -rf "$MERGE_WORK"
+    echo "  [x] Merged single APK: $(ls -lh "$MERGED_APK" | awk '{print $5}')"
+else
+    echo ""
+    echo "  [i] tools/APKEditor.jar not found — skipping single-APK merge."
+    echo "      Install split bundle instead (see below)."
+fi
+
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║                    BUILD COMPLETE                    ║"
@@ -568,9 +603,22 @@ for split in "$SIGNED_DIR"/split_*.apk; do
     [ -f "$split" ] && INSTALL_CMD="$INSTALL_CMD $split"
 done
 
-echo "Install (requires uninstalling original first):"
-echo "  adb uninstall com.microsoft.emmx.canary"
+if [ -f "$MERGED_APK" ]; then
+    echo "Install — single merged APK (easiest, any installer):"
+    echo "  adb install $MERGED_APK"
+    echo ""
+fi
+echo "Install — split bundle:"
 echo "  $INSTALL_CMD"
+echo ""
+echo "First install from THIS keystore requires uninstalling the original"
+echo "(signature mismatch wipes Edge data):"
+echo "  adb uninstall com.microsoft.emmx.canary   # then install above"
+echo ""
+echo "In-place UPDATE (NO data wipe) — only if already on a build from this"
+echo "same keystore. Android allows the update because signatures match:"
+echo "  adb install -r $MERGED_APK            # merged, or"
+echo "  adb install-multiple -r $OUTPUT_APK <splits...>"
 echo ""
 echo "To reapply to a new release:"
 echo "  ./build.sh /path/to/new/Edge_Canary_xxx.apks"
