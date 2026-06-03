@@ -97,6 +97,10 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 
 ## Changelog
 
+### 1.5.1
+
+- Fix setup-edge probes failing with "more than one device/emulator" when multiple ADB devices are listed (e.g. a stale offline one): resolve and pin a single serial (`ADB_SERIAL`/`BRIDGE_ADB_SERIAL`, else the sole online device) on every adb call; status output shows the targeted serial
+
 ### 1.5.0
 
 - First-run setup: `claude-chrome-android` in a terminal now walks through Edge/extension setup before starting the bridge when the browser side isn't wired up
