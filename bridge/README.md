@@ -97,6 +97,13 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 
 ## Changelog
 
+### 1.5.0
+
+- First-run setup: `claude-chrome-android` in a terminal now walks through Edge/extension setup before starting the bridge when the browser side isn't wired up
+- Add `--setup-edge` (alias `--doctor`): probes ADB, Edge install, privacy-patch status (AD_ID stripped), extension sideload, and live bridge connection, and offers to fix each
+- Install Edge Canary via Play Store deeplink when missing; offer the `build-from-device.sh` privacy-patch build (no data wipe on re-sign)
+- Stop publishing the CRX signing key (`dist/edge-claude-ext.pem`) and stale versioned CRX builds to npm via `files` allowlist negation
+
 ### 1.2.2
 
 - Fix CDP pending commands hanging on WebSocket close (reject immediately)
