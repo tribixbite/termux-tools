@@ -108,29 +108,69 @@ function findBuildScript(): string | undefined {
   return candidates.find((p) => existsSync(p));
 }
 
-function adbOnline(sp: SpawnSync): boolean {
+interface AdbDevice { serial: string; state: string; }
+
+/** Parse `adb devices` into {serial, state} rows (skips the header line). */
+function listAdbDevices(sp: SpawnSync): AdbDevice[] {
   const r = sp("adb", ["devices"], { stdio: "pipe", encoding: "utf-8" });
-  return r.status === 0 && /\tdevice\b/.test(r.stdout ?? "");
+  if (r.status !== 0) return [];
+  return (r.stdout ?? "")
+    .split("\n")
+    .slice(1)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => {
+      const [serial, state] = l.split(/\s+/);
+      return { serial, state: state ?? "" };
+    })
+    .filter((d) => d.serial && d.state);
+}
+
+/**
+ * Resolve a single online device serial to pin every adb call to. A bare
+ * `adb shell` fails with "more than one device/emulator" whenever more than one
+ * device is listed — including when one is merely offline — so the probes must
+ * always pass `-s <serial>`. Honors ADB_SERIAL / BRIDGE_ADB_SERIAL when it
+ * names an online device; otherwise picks the sole online one. Returns "" when
+ * none are online; with several online and no env hint, prefers the first.
+ */
+function resolveAdbSerial(sp: SpawnSync): string {
+  const online = listAdbDevices(sp).filter((d) => d.state === "device");
+  const env = process.env.ADB_SERIAL || process.env.BRIDGE_ADB_SERIAL || "";
+  if (env && online.some((d) => d.serial === env)) return env;
+  if (online.length === 1) return online[0].serial;
+  if (online.length > 1) return env || online[0].serial;
+  return "";
+}
+
+/** Run an adb command pinned to a serial (when one was resolved). */
+function runAdb(sp: SpawnSync, serial: string, args: string[]) {
+  const base = serial ? ["-s", serial] : [];
+  return sp("adb", [...base, ...args], { stdio: "pipe", encoding: "utf-8" });
+}
+
+function adbOnline(sp: SpawnSync): boolean {
+  return resolveAdbSerial(sp) !== "";
 }
 
 /** Which Edge variant is installed on the device, if any. */
-function detectEdgePkg(sp: SpawnSync): string {
+function detectEdgePkg(sp: SpawnSync, serial: string): string {
   for (const pkg of EDGE_PACKAGES) {
-    const r = sp("adb", ["shell", "pm", "list", "packages", pkg], { stdio: "pipe", encoding: "utf-8" });
+    const r = runAdb(sp, serial, ["shell", "pm", "list", "packages", pkg]);
     if (r.stdout?.includes(`package:${pkg}`)) return pkg;
   }
   return "";
 }
 
 /** True if the unpacked extension is present on the device. */
-function extPushed(sp: SpawnSync): boolean {
-  const r = sp("adb", ["shell", "ls", `${EXT_DEST}/manifest.json`], { stdio: "pipe", encoding: "utf-8" });
+function extPushed(sp: SpawnSync, serial: string): boolean {
+  const r = runAdb(sp, serial, ["shell", "ls", `${EXT_DEST}/manifest.json`]);
   return r.status === 0 && (r.stdout ?? "").includes("manifest.json");
 }
 
 /** True if chrome-command-line points --load-extension at our extension dir. */
-function flagsLoadExt(sp: SpawnSync): boolean {
-  const r = sp("adb", ["shell", "cat", FLAGS_FILE], { stdio: "pipe", encoding: "utf-8" });
+function flagsLoadExt(sp: SpawnSync, serial: string): boolean {
+  const r = runAdb(sp, serial, ["shell", "cat", FLAGS_FILE]);
   return (r.stdout ?? "").includes(EXT_DEST);
 }
 
@@ -139,8 +179,8 @@ function flagsLoadExt(sp: SpawnSync): boolean {
  * absence from the manifest is a strong signal the installed Edge is patched.
  * Returns null when we can't determine it (e.g. dumpsys unavailable).
  */
-function edgeIsPatched(sp: SpawnSync, pkg: string): boolean | null {
-  const r = sp("adb", ["shell", "dumpsys", "package", pkg], { stdio: "pipe", encoding: "utf-8" });
+function edgeIsPatched(sp: SpawnSync, serial: string, pkg: string): boolean | null {
+  const r = runAdb(sp, serial, ["shell", "dumpsys", "package", pkg]);
   if (r.status !== 0 || !r.stdout) return null;
   return !r.stdout.includes("com.google.android.gms.permission.AD_ID");
 }
@@ -370,16 +410,16 @@ To re-run just the browser-side setup later:
  * Edge Android's MV3 service workers don't start for sideloaded extensions and
  * CRX downloads don't trigger install, so we sideload unpacked files instead.
  */
-async function installExtension(sp: SpawnSync): Promise<boolean> {
+async function installExtension(sp: SpawnSync, serial?: string): Promise<boolean> {
   const extDir = findExtDir();
-  const hasAdb = adbOnline(sp);
+  const adbSerial = serial ?? resolveAdbSerial(sp);
 
   if (!extDir) {
     console.log("\nExtension source not found. Skipping extension install.");
     console.log("To install manually, clone the repo and run push-extension.sh.");
     return false;
   }
-  if (!hasAdb) {
+  if (!adbSerial) {
     console.log("\nADB not available. Extension install requires ADB connection.");
     console.log("Connect via: adb tcpip 5555 && adb connect <device-ip>");
     return false;
@@ -400,38 +440,38 @@ async function installExtension(sp: SpawnSync): Promise<boolean> {
 
   console.log(`\nInstalling CFC extension v${extVersion} via --load-extension...`);
 
-  sp("adb", ["shell", "mkdir", "-p", EXT_DEST], { stdio: "pipe" });
+  runAdb(sp, adbSerial, ["shell", "mkdir", "-p", EXT_DEST]);
 
   let pushed = 0;
   for (const f of EXT_FILES) {
     const src = resolve(extDir, f);
     if (existsSync(src)) {
-      const r = sp("adb", ["push", src, `${EXT_DEST}/${f}`], { stdio: "pipe", encoding: "utf-8" });
+      const r = runAdb(sp, adbSerial, ["push", src, `${EXT_DEST}/${f}`]);
       if (r.status === 0) pushed++;
     }
   }
   console.log(`  Pushed ${pushed}/${EXT_FILES.length} files to ${EXT_DEST}`);
 
-  const flagsResult = sp("adb", ["shell", "cat", FLAGS_FILE], { stdio: "pipe", encoding: "utf-8" });
+  const flagsResult = runAdb(sp, adbSerial, ["shell", "cat", FLAGS_FILE]);
   let currentFlags = flagsResult.stdout?.trim() || "";
 
   if (!currentFlags.includes("--load-extension=")) {
     currentFlags = currentFlags ? `${currentFlags} ${LOAD_EXT_FLAG}` : `_ ${LOAD_EXT_FLAG}`;
-    sp("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], { stdio: "pipe" });
+    runAdb(sp, adbSerial, ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`]);
     console.log("  Added --load-extension flag to chrome-command-line");
   } else if (!currentFlags.includes(EXT_DEST)) {
     currentFlags = currentFlags.replace(/--load-extension=\S+/, LOAD_EXT_FLAG);
-    sp("adb", ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`], { stdio: "pipe" });
+    runAdb(sp, adbSerial, ["shell", `echo '${currentFlags}' > ${FLAGS_FILE}`]);
     console.log("  Updated --load-extension path in chrome-command-line");
   } else {
     console.log("  --load-extension flag already set");
   }
 
-  const edgePkg = detectEdgePkg(sp);
+  const edgePkg = detectEdgePkg(sp, adbSerial);
   if (edgePkg) {
-    sp("adb", ["shell", "settings", "put", "global", "debug_app", edgePkg], { stdio: "pipe" });
+    runAdb(sp, adbSerial, ["shell", "settings", "put", "global", "debug_app", edgePkg]);
     console.log(`  Set debug_app=${edgePkg} for flag reading`);
-    sp("adb", ["shell", "am", "force-stop", edgePkg], { stdio: "pipe" });
+    runAdb(sp, adbSerial, ["shell", "am", "force-stop", edgePkg]);
     console.log(`  Restarted ${edgePkg} to apply changes`);
   } else {
     console.log("  WARNING: No Edge browser found. Install Edge Canary from the Play Store.");
@@ -464,8 +504,8 @@ const EDGE_CANARY = "com.microsoft.emmx.canary";
  * user to tap Install, then poll until the package appears. Play has no silent
  * install API, so the one tap is unavoidable — we just make it one tap.
  */
-async function ensureEdgeInstalled(sp: SpawnSync, interactive: boolean): Promise<string> {
-  let pkg = detectEdgePkg(sp);
+async function ensureEdgeInstalled(sp: SpawnSync, serial: string, interactive: boolean): Promise<string> {
+  let pkg = detectEdgePkg(sp, serial);
   if (pkg) return pkg;
 
   const listing = `https://play.google.com/store/apps/details?id=${EDGE_CANARY}`;
@@ -477,12 +517,12 @@ async function ensureEdgeInstalled(sp: SpawnSync, interactive: boolean): Promise
   const a = await ask("\nEdge isn't installed. Open the Play Store to install Edge Canary now? [Y/n] ");
   if (!isYes(a)) { console.log("Skipped Edge install."); return ""; }
 
-  sp("adb", ["shell", `am start -a android.intent.action.VIEW -d 'market://details?id=${EDGE_CANARY}'`], { stdio: "pipe" });
+  runAdb(sp, serial, ["shell", `am start -a android.intent.action.VIEW -d 'market://details?id=${EDGE_CANARY}'`]);
   console.log("Opened the Play Store on your device. Tap Install, wait for it to finish, then return here.");
   await ask("Press Enter once Edge Canary has finished installing... ");
 
   for (let i = 0; i < 5 && !pkg; i++) {
-    pkg = detectEdgePkg(sp);
+    pkg = detectEdgePkg(sp, serial);
     if (!pkg) await sleep(2000);
   }
   if (pkg) console.log(`Detected ${pkg}.`);
@@ -492,6 +532,8 @@ async function ensureEdgeInstalled(sp: SpawnSync, interactive: boolean): Promise
 
 interface EdgeStatus {
   hasAdb: boolean;
+  serial: string;
+  multiOnline: boolean;
   edgePkg: string;
   patched: boolean | null;
   extPushed: boolean;
@@ -500,14 +542,18 @@ interface EdgeStatus {
 }
 
 async function probeEdge(sp: SpawnSync): Promise<EdgeStatus> {
-  const hasAdb = adbOnline(sp);
-  const edgePkg = hasAdb ? detectEdgePkg(sp) : "";
+  const serial = resolveAdbSerial(sp);
+  const hasAdb = serial !== "";
+  const multiOnline = listAdbDevices(sp).filter((d) => d.state === "device").length > 1;
+  const edgePkg = hasAdb ? detectEdgePkg(sp, serial) : "";
   return {
     hasAdb,
+    serial,
+    multiOnline,
     edgePkg,
-    patched: hasAdb && edgePkg ? edgeIsPatched(sp, edgePkg) : null,
-    extPushed: hasAdb ? extPushed(sp) : false,
-    flagsLoadExt: hasAdb ? flagsLoadExt(sp) : false,
+    patched: hasAdb && edgePkg ? edgeIsPatched(sp, serial, edgePkg) : null,
+    extPushed: hasAdb ? extPushed(sp, serial) : false,
+    flagsLoadExt: hasAdb ? flagsLoadExt(sp, serial) : false,
     clients: await bridgeClientCount(),
   };
 }
@@ -515,11 +561,14 @@ async function probeEdge(sp: SpawnSync): Promise<EdgeStatus> {
 function printEdgeStatus(s: EdgeStatus): void {
   const mark = (ok: boolean | null) => (ok === null ? "?" : ok ? "OK" : "MISSING");
   console.log("CFC environment check:");
-  console.log(`  [${mark(s.hasAdb)}] ADB device connected`);
+  console.log(`  [${mark(s.hasAdb)}] ADB device connected${s.serial ? ` (${s.serial})` : ""}`);
   console.log(`  [${s.edgePkg ? "OK" : "MISSING"}] Edge installed${s.edgePkg ? ` (${s.edgePkg})` : ""}`);
   console.log(`  [${mark(s.patched)}] Edge privacy-patched (AD_ID stripped)`);
   console.log(`  [${mark(s.extPushed && s.flagsLoadExt)}] CFC extension sideloaded + flag set`);
   console.log(`  [${s.clients === null ? "—" : s.clients > 0 ? "OK" : "MISSING"}] Extension connected to bridge${s.clients !== null ? ` (${s.clients} client${s.clients === 1 ? "" : "s"})` : " (bridge not running)"}`);
+  if (s.multiOnline) {
+    console.log(`  note: multiple devices online — targeting ${s.serial}; set ADB_SERIAL to override`);
+  }
 }
 
 /**
@@ -528,24 +577,26 @@ function printEdgeStatus(s: EdgeStatus): void {
  * we never auto-download base Edge (no Play/APKMirror API) and never touch the
  * keystore here.
  */
-async function offerPatchBuild(sp: SpawnSync, edgePkg: string, interactive: boolean): Promise<void> {
+async function offerPatchBuild(sp: SpawnSync, serial: string, edgePkg: string, interactive: boolean): Promise<void> {
   const script = findBuildScript();
+  // build-from-device.sh takes `-s <serial>` to pin the device it pulls from.
+  const serialArgs = serial ? ["-s", serial] : [];
   if (!script) {
     console.log("\nTo build a privacy-patched Edge from your installed copy:");
     console.log("  git clone https://github.com/tribixbite/termux-tools");
-    console.log("  cd termux-tools/edge-fix && ./build-from-device.sh --install");
+    console.log(`  cd termux-tools/edge-fix && ./build-from-device.sh ${serialArgs.join(" ")} --install`.replace(/\s+/g, " "));
     console.log("(needs apktool, zipalign/apksigner, java, python3 + the tool jars in tools/)");
     return;
   }
   if (!interactive) {
     console.log(`\nRun the self-build to patch Edge (no data wipe on re-sign):`);
-    console.log(`  ${script} --install`);
+    console.log(`  ${script} ${serialArgs.join(" ")} --install`.replace(/\s+$/, ""));
     return;
   }
   const a = await ask(`\nBuild + install a privacy-patched ${edgePkg} now via build-from-device.sh? [Y/n] `);
   if (!isYes(a)) { console.log("Skipped patch build."); return; }
   console.log("\nRunning build-from-device.sh --install (this takes a few minutes)...\n");
-  const r = sp("bash", [script, "--install"], { stdio: "inherit" });
+  const r = sp("bash", [script, ...serialArgs, "--install"], { stdio: "inherit" });
   if (r.status === 0) console.log("\nPatched Edge installed.");
   else console.log(`\nbuild-from-device.sh exited ${r.status}. See output above.`);
 }
@@ -566,15 +617,17 @@ async function runEdgeSetup(sp: SpawnSync, interactive: boolean): Promise<boolea
     return false;
   }
 
+  const serial = s.serial;
+
   // 1. Edge installed? Offer the Play Store deeplink install.
-  const edgePkg = s.edgePkg || (await ensureEdgeInstalled(sp, interactive));
+  const edgePkg = s.edgePkg || (await ensureEdgeInstalled(sp, serial, interactive));
   if (!edgePkg) return false;
 
   // 2. Privacy-patched? Offer the self-build (no data wipe on re-sign).
-  const patched = s.edgePkg ? s.patched : edgeIsPatched(sp, edgePkg);
+  const patched = s.edgePkg ? s.patched : edgeIsPatched(sp, serial, edgePkg);
   if (patched !== true) {
     if (patched === false) console.log("\nYour Edge still ships tracking permissions.");
-    await offerPatchBuild(sp, edgePkg, interactive);
+    await offerPatchBuild(sp, serial, edgePkg, interactive);
   }
 
   // 3. Extension sideloaded + connected?
@@ -582,7 +635,7 @@ async function runEdgeSetup(sp: SpawnSync, interactive: boolean): Promise<boolea
   if (!reProbe.extPushed || !reProbe.flagsLoadExt || reProbe.clients === 0) {
     if (interactive) {
       const a = await ask("\nSideload the CFC extension into Edge now? [Y/n] ");
-      if (isYes(a)) await installExtension(sp);
+      if (isYes(a)) await installExtension(sp, serial);
       else console.log("Skipped extension install.");
     } else {
       console.log("\nInstall the CFC extension with: claude-chrome-android --setup");
@@ -617,9 +670,10 @@ async function cmdStart(): Promise<void> {
   const interactive = Boolean(process.stdin.isTTY);
   try {
     const { spawnSync } = await import("child_process");
-    if (adbOnline(spawnSync)) {
-      const edgePkg = detectEdgePkg(spawnSync);
-      const ready = edgePkg && extPushed(spawnSync) && flagsLoadExt(spawnSync);
+    const serial = resolveAdbSerial(spawnSync);
+    if (serial) {
+      const edgePkg = detectEdgePkg(spawnSync, serial);
+      const ready = edgePkg && extPushed(spawnSync, serial) && flagsLoadExt(spawnSync, serial);
       if (!ready) {
         if (interactive) {
           console.log("First-time setup: let's get Edge + the CFC extension ready.\n");
