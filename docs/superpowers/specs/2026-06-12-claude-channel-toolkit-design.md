@@ -44,8 +44,15 @@ Each launcher is the bun-on-termux form (matching the current `claude-next`):
 ```bash
 #!/data/data/com.termux/files/usr/bin/bash
 export CLAUDE_CODE_TMPDIR="${CLAUDE_CODE_TMPDIR:-$PREFIX/tmp}"
+export DISABLE_AUTOUPDATER=1   # ccx is the sole updater; keep the pinned/patched binary put
 BUN_BINARY_PATH="<.../claude-<ver>/claude-binary>" exec "$HOME/.bun/bin/bun-termux" "$@"
 ```
+
+**Why `DISABLE_AUTOUPDATER=1`:** claude-code self-updates from the very channel `ccx`
+uses, replacing its own executable (`os.Executable` = the pinned binary file). Left on,
+it would silently overwrite a pinned channel's binary — un-pinning the version and
+discarding our byte-preserving patch. Disabling it makes `ccx` authoritative and keeps
+next/stable reproducible. (`ccx status` warns if a launcher is missing the flag.)
 
 `update` only rewrites the **next** launcher. `promote` snapshots next→stable by writing
 the **stable** launcher to point at the exact binary next currently uses. Because they're
