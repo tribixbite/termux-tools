@@ -76,7 +76,7 @@ old cli.js shim `~/.bun/bin/claude`). `ccx status` checks this and `ccx alias` d
   version that was ever promoted.
 - Binary **files** are large (~250 MB each), so they are retention-managed (see `prune`),
   not kept unboundedly. If `rollback` needs a binary that was pruned, it re-fetches it
-  from npm — so the archive stays restorable regardless of disk pressure.
+  from the release channel — so the archive stays restorable regardless of disk pressure.
 - On startup the tool reconciles state with reality (launcher contents, files on disk);
   a missing/corrupt state file is rebuilt from what's installed.
 
@@ -84,10 +84,10 @@ old cli.js shim `~/.bun/bin/claude`). `ccx status` checks this and `ccx alias` d
 
 | Command | Behavior |
 |---|---|
-| `ccx update [--channel latest\|stable\|next]` | Resolve the npm dist-tag (default `latest`). If it equals the installed **next** version → print "up to date", exit 0. Else: fetch + verify + patch + install as next, update state, verify `claude-next --version`. **Idempotent; this is the aliased command.** |
+| `ccx update [--channel latest\|stable] [--pin <version>]` | Resolve the upstream channel file (default `latest`). If it equals the installed **next** version → print "up to date", exit 0. Else: fetch + sha256-verify + patch + install as next, update state, verify `claude-next --version`. **Idempotent; this is the aliased command.** `--pin <X.Y.Z>` installs an exact version. |
 | `ccx promote` | Push current `stable` onto `archive[]` (with `archivedAt`), then point the **stable** launcher at the binary **next** currently uses; update state. No-op (with notice) if stable already equals next. |
 | `ccx rollback [--to <version>]` | Restore stable to the most recent archived version (or `--to`). If that binary was pruned, re-fetch+patch it first. Updates state. |
-| `ccx status` | Table: next version, stable version, npm latest per channel, "update available?", and a PATH-precedence check (`~/.local/bin` before `~/.bun/bin`). |
+| `ccx status` | Table: next version, stable version, upstream `stable`/`latest` channel versions, "update available?", and a PATH-precedence check (`~/.local/bin` before `~/.bun/bin`). |
 | `ccx list` | Installed binary versions on disk + the archive history from state. |
 | `ccx prune [--keep N]` | Delete binary files not referenced by next/stable and beyond the `N` most-recent archived (default `N=2`). Never touches `archive[]` metadata. |
 | `ccx schedule [--every <dur>]` / `ccx unschedule` | Opt-in: install/remove a scheduled `ccx update` (Termux: a `crontab` line via `crond`; standard Linux: a systemd user timer). Prints what it installed. |
@@ -100,7 +100,7 @@ Global flags: `--json` (machine output for `status`/`list`), `--yes` (skip confi
 ```
 interface Platform {
   id(): "termux" | "linux" | "darwin";
-  resolveLatest(channel: Channel): Promise<string>;            // npm dist-tag -> version
+  resolveLatest(channel: Channel): Promise<string>;            // GET $BASE/{stable,latest} -> version
   isInstalled(version: string): boolean;
   fetchBinary(version: string): Promise<string>;               // -> patched binary path
   writeLauncher(kind: "next"|"stable", binary: string): void;  // write ~/.local/bin/{claude-next,claude}
@@ -115,14 +115,28 @@ interface Platform {
 `NotImplementedError` with a pointer to the issue tracker. `detectPlatform()` keys off
 `process.platform` + the presence of `$PREFIX/glibc` and `~/.bun/bin/bun-termux`.
 
-### Termux specifics (carried from this session)
+### Update source: the native release channel (NOT npm)
 
-- **Registry:** `GET https://registry.npmjs.org/@anthropic-ai/claude-code` → `dist-tags`;
-  `GET .../@anthropic-ai/claude-code-linux-arm64/<ver>` → `dist.tarball`. Node `fetch`
-  (Node 18+), with a `node:https` fallback. No third-party HTTP deps.
-- **Fetch/extract:** download the `.tgz`, `tar -xzf`, copy `package/claude` →
-  `~/.claude/binaries/claude-<ver>/claude-binary`, `chmod +x`. Verify the npm
-  `dist.integrity` (sha512) before trusting it.
+Claude Code moved to a native installer + self-update; **npm lags** (when written, npm
+`latest` = 2.1.170 while the native channel `latest` = 2.1.175). So the toolkit uses the
+same source claude-code itself self-updates from — the official CDN over the
+`claude-code-dist` GCS bucket — and does **not** touch npm:
+
+- **Base:** `https://downloads.claude.ai/claude-code-releases` (this is what
+  `claude.ai/install.sh` uses).
+- **Channels:** `GET $BASE/stable` and `GET $BASE/latest` each return a bare version
+  string (e.g. `2.1.175`). Validate it matches `^\d+\.\d+\.\d+(-\S+)?$` (reject HTML
+  error pages) before use.
+- **Manifest:** `GET $BASE/<version>/manifest.json` →
+  `{ version, commit, buildDate, platforms: { "<platform>": { binary, checksum, size } } }`
+  where `checksum` is **sha256**.
+- **Binary (no tarball):** `GET $BASE/<version>/<platform>/claude` is the raw executable.
+  Copy → `~/.claude/binaries/claude-<ver>/claude-binary`, `chmod +x`, verify sha256
+  against the manifest before trusting it, then patch.
+- **Platform:** `linux-arm64` on Termux. Reuse install.sh's musl probe
+  (`/lib/libc.musl-*` / `ldd /bin/ls | grep musl`); bionic Termux is non-musl → the
+  glibc `linux-arm64` build (which we already run via bun-on-termux).
+- HTTP via Node `fetch` (Node 18+) with a `node:https` fallback; no third-party HTTP deps.
 - **Patch (byte-preserving only):** port `_patch_claude_binary` — blank
   `"NEVER commit changes unless the user explicitly asks you to."` and
   `"Default to writing no comments."` with equal-length spaces; `assert origLen == newLen`
@@ -149,7 +163,7 @@ interface Platform {
 
 ## Error handling
 
-- Network/registry failures → clear message, non-zero exit, state untouched.
+- Network/release-channel failures → clear message, non-zero exit, state untouched.
 - Checksum mismatch → abort before install, leave previous state intact.
 - Verify step (`--version`) failing after install → roll the channel back to its prior
   pin and report.
@@ -163,10 +177,10 @@ interface Platform {
   the two target strings → asserts equal length + blanked); launcher parse/round-trip;
   state-file reconcile/migrate; channel decision logic (update no-ops when current; promote
   archives then repoints; rollback restores / triggers re-fetch when binary missing).
-- **Integration (network, opt-in via env):** `resolveLatest` against the live registry;
-  a full `update` against a real (small-as-possible) fetch into a temp `HOME`.
-- Run with `bun test` locally (Termux), Node on CI. Mock the registry + filesystem via a
-  temp `HOME` so tests never touch the real `~/.claude` or `~/.local/bin`.
+- **Integration (network, opt-in via env):** `resolveLatest` against the live release
+  channel; a full `update` against a real fetch into a temp `HOME`.
+- Run with `bun test` locally (Termux), Node on CI. Mock the release channel (HTTP) +
+  filesystem via a temp `HOME` so tests never touch the real `~/.claude` or `~/.local/bin`.
 
 ## Open retention question for spec review
 
