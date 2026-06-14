@@ -189,8 +189,10 @@ same source claude-code itself self-updates from — the official CDN over the
 - Run with `bun test` locally (Termux), Node on CI. Mock the release channel (HTTP) +
   filesystem via a temp `HOME` so tests never touch the real `~/.claude` or `~/.local/bin`.
 
-## Open retention question for spec review
+## Resolved decisions
 
-Default `prune --keep 2` (current next + current stable + 2 most-recent archived stable ≈
-up to ~1 GB). Flag if you'd prefer keep-all (rollback never re-fetches, but disk grows
-~250 MB per promote) or a smaller/larger N.
+- **Retention:** `prune --keep 2` is the default (current next + current stable + 2
+  most-recent archived stable ≈ up to ~1 GB). Rollback re-fetches a pruned binary from
+  the release channel.
+- **Default update channel:** `ccx update` defaults to `latest` (matching `install.sh`);
+  `--channel stable` opts into the conservative channel.
