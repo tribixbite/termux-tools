@@ -1,7 +1,8 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import path from "node:path";
 import type { Ctx } from "./ctx";
 import type { Platform } from "./platform/platform";
-import type { Channel } from "./types";
+import type { Channel, ArchiveEntry } from "./types";
 import { loadState, saveState } from "./state";
 
 const nowIso = (): string => new Date().toISOString();
@@ -60,4 +61,78 @@ export async function rollback(platform: Platform, ctx: Ctx, toVersion?: string)
   state.stable = { version: target.version, binary, patched: true, promotedAt: nowIso() };
   saveState(ctx, state);
   return { to: target.version, refetched };
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  const pb = b.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+export interface StatusInfo {
+  next: { version: string; binary: string } | null;
+  stable: { version: string; binary: string } | null;
+  channelLatest: string | null;
+  channelStable: string | null;
+  updateAvailable: boolean;
+  pathOk: boolean;
+  nextHasAutoupdaterOff: boolean;
+}
+export async function status(platform: Platform, ctx: Ctx): Promise<StatusInfo> {
+  const state = loadState(ctx);
+  let channelLatest: string | null = null;
+  let channelStable: string | null = null;
+  try { channelLatest = await platform.resolveLatest("latest"); } catch { /* offline */ }
+  try { channelStable = await platform.resolveLatest("stable"); } catch { /* offline */ }
+  const updateAvailable = !!(channelLatest && (!state.next || compareVersions(channelLatest, state.next.version) > 0));
+  return {
+    next: state.next ? { version: state.next.version, binary: state.next.binary } : null,
+    stable: state.stable ? { version: state.stable.version, binary: state.stable.binary } : null,
+    channelLatest, channelStable, updateAvailable,
+    pathOk: platform.pathPrecedenceOk(),
+    nextHasAutoupdaterOff: hasAutoupdaterOff(ctx),
+  };
+}
+
+function hasAutoupdaterOff(ctx: Ctx): boolean {
+  const p = path.join(ctx.localBin, "claude-next");
+  if (!existsSync(p)) return true; // nothing installed yet — nothing to warn about
+  try {
+    return readFileSync(p, "utf8").includes("DISABLE_AUTOUPDATER=1");
+  } catch {
+    return false;
+  }
+}
+
+function installedDirs(ctx: Ctx): string[] {
+  try {
+    return readdirSync(ctx.binariesDir)
+      .filter((n) => n.startsWith("claude-"))
+      .map((n) => path.join(ctx.binariesDir, n))
+      .filter((d) => statSync(d).isDirectory());
+  } catch { return []; }
+}
+
+export function list(ctx: Ctx): { installed: string[]; archive: ArchiveEntry[] } {
+  const installed = installedDirs(ctx).map((d) => path.basename(d).replace(/^claude-/, ""));
+  return { installed, archive: loadState(ctx).archive };
+}
+
+export interface PruneResult { removed: string[]; kept: string[]; }
+export function prune(ctx: Ctx, keep = 2): PruneResult {
+  const state = loadState(ctx);
+  const protectedBins = new Set<string>();
+  if (state.next) protectedBins.add(state.next.binary);
+  if (state.stable) protectedBins.add(state.stable.binary);
+  for (const a of state.archive.slice(0, keep)) protectedBins.add(a.binary);
+  const removed: string[] = [];
+  for (const dir of installedDirs(ctx)) {
+    const bin = path.join(dir, "claude-binary");
+    if (!protectedBins.has(bin)) { rmSync(dir, { recursive: true, force: true }); removed.push(dir); }
+  }
+  return { removed, kept: [...protectedBins] };
 }
