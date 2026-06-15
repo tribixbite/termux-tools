@@ -8,10 +8,10 @@
 
 **Tech Stack:** TypeScript (strict, `moduleResolution: bundler`, extensionless imports), runs under **node** (bionic node is fine), bundled with **Bun.build** to `dist/cli.js`, tested with **bun:test**. Update source is the native release channel `https://downloads.claude.ai/claude-code-releases` (NOT npm). Spec: `docs/superpowers/specs/2026-06-12-claude-channel-toolkit-design.md`.
 
-**Local run commands (this Termux session):** use **`buno`** (the real bun; `bun`/`bunx` honor the leaked `BUN_BINARY_PATH` and would run Claude Code):
-- Test: `buno test claude-channel/src/<file>.test.ts`
-- Typecheck: `bunx tsc --noEmit -p claude-channel/tsconfig.json` (bunx is safe; verified)
-- Build: `cd claude-channel && buno run build.ts`
+**Local run commands (this Termux session):** use **`bun`** — the `~/.bun/bin/bun` wrapper unsets the leaked `BUN_BINARY_PATH` itself (`bun --version` → `1.3.10`, not Claude Code) AND loads glibc via grun. Do NOT use `buno` directly: it's the raw glibc bun ELF and fails with `cannot execute: required file not found` (no glibc loader). If `bun` ever does route to Claude Code, fall back to `grun buno`.
+- Test: `cd claude-channel && bun test src/<file>.test.ts`
+- Typecheck: `bunx tsc --noEmit -p claude-channel/tsconfig.json`
+- Build: `cd claude-channel && bun run build.ts`
 
 ---
 
