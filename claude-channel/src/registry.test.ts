@@ -43,7 +43,7 @@ test("resolveChannelVersion returns the channel version", async () => {
 test("resolveChannelVersion rejects non-version bodies", async () => {
   const bad = makeCtx({ HOME: "/h" } as NodeJS.ProcessEnv, {
     baseUrl: base,
-    fetchImpl: (async () => new Response("<html>error</html>")) as typeof fetch,
+    fetchImpl: (async () => new Response("<html>error</html>")) as unknown as typeof fetch,
   });
   await expect(resolveChannelVersion(bad, "latest")).rejects.toThrow(/non-version/);
 });

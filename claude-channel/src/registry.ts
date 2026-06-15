@@ -36,7 +36,7 @@ export async function downloadBinary(
       if (done) break;
       const chunk = Buffer.from(value);
       hash.update(chunk);
-      if (!file.write(chunk)) await new Promise((r) => file.once("drain", r));
+      if (!file.write(chunk)) await new Promise<void>((r) => file.once("drain", () => r()));
     }
   } finally {
     await new Promise<void>((r) => file.end(() => r()));
