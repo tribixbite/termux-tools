@@ -1,0 +1,17 @@
+{
+  "name": "claude-channel",
+  "version": "0.1.0",
+  "description": "Manage Claude Code as pinned next/stable channels on Termux",
+  "bin": { "ccx": "./dist/cli.js" },
+  "files": ["dist/", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "bun run build.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}
