@@ -87,6 +87,17 @@ test("rollback restores the most recent archived stable", async () => {
   expect(plat.launchers.stable).toBe(plat.binaryPath("2.1.175"));
 });
 
+test("update verify-failure restores the prior next launcher and leaves state", async () => {
+  const { ctx, plat } = setup();
+  await update(plat, ctx, "latest");            // next=2.1.175, launcher pinned to it
+  const priorBinary = plat.launchers.next;
+  plat.latest = "2.1.180";
+  plat.verify = async () => "9.9.9";            // mismatch on the new version
+  await expect(update(plat, ctx, "latest")).rejects.toThrow(/verify failed/);
+  expect(plat.launchers.next).toBe(priorBinary);          // restored to 2.1.175 binary
+  expect(loadState(ctx).next?.version).toBe("2.1.175");   // state unchanged
+});
+
 test("rollback re-fetches when the archived binary was pruned", async () => {
   const { ctx, plat } = setup();
   await update(plat, ctx, "latest"); promote(plat, ctx);

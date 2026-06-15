@@ -4,6 +4,7 @@ import { NotImplementedError } from "./platform/platform";
 import { update, promote, rollback, status, list, prune } from "./channel";
 import { launcherPath } from "./launcher";
 import type { Channel } from "./types";
+import { VERSION_RE } from "./registry";
 
 export interface ParsedArgs {
   command: string;
@@ -18,6 +19,8 @@ export interface ParsedArgs {
   everyHours?: number;
   json: boolean;
   yes: boolean;
+  /** Only present when --quiet flag was provided */
+  quiet?: boolean;
 }
 
 const COMMANDS = new Set([
@@ -50,21 +53,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
         out.channel = c;
         break;
       }
-      case "--pin":
-        out.pin = next();
-        break;
+      case "--pin": { const v = next(); if (!VERSION_RE.test(v)) throw new Error("--pin must be a version like 2.1.175"); out.pin = v; break; }
       case "--to":
         out.to = next();
         break;
-      case "--keep":
-        out.keep = parseInt(next(), 10);
-        break;
-      case "--every":
-        out.everyHours = parseInt(next(), 10);
-        break;
+      case "--keep": { const n = parseInt(next(), 10); if (!Number.isInteger(n) || n < 0) throw new Error("--keep must be a non-negative integer"); out.keep = n; break; }
+      case "--every": { const n = parseInt(next(), 10); if (!Number.isInteger(n) || n < 1) throw new Error("--every must be a positive integer"); out.everyHours = n; break; }
       case "--json":
         out.json = true;
         break;
+      case "--quiet": out.quiet = true; break;
       case "--yes":
       case "-y":
         out.yes = true;
@@ -104,6 +102,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   const ctx = makeCtx();
+  const say = args.quiet ? (_m: string) => {} : (m: string) => console.log(m);
 
   if (args.command === "alias") {
     console.log(`alias cnup='ccx update'`);
@@ -124,7 +123,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     switch (args.command) {
       case "update": {
         const r = await update(platform, ctx, args.channel, args.pin);
-        console.log(
+        say(
           r.action === "current"
             ? `claude-next already at ${r.to}`
             : `claude-next: ${r.from ?? "(none)"} -> ${r.to}`,
@@ -133,7 +132,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       case "promote": {
         const r = promote(platform, ctx);
-        console.log(
+        say(
           r.action === "noop"
             ? `claude already at ${r.to}`
             : `promoted claude: ${r.from ?? "(none)"} -> ${r.to} (archived ${r.from ?? "nothing"})`,
@@ -142,7 +141,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       case "rollback": {
         const r = await rollback(platform, ctx, args.to);
-        console.log(`claude rolled back to ${r.to}${r.refetched ? " (re-fetched)" : ""}`);
+        say(`claude rolled back to ${r.to}${r.refetched ? " (re-fetched)" : ""}`);
         return 0;
       }
       case "status": {
@@ -151,35 +150,35 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           console.log(JSON.stringify(s, null, 2));
           return 0;
         }
-        console.log(`next:    ${s.next?.version ?? "(none)"}`);
-        console.log(`stable:  ${s.stable?.version ?? "(none)"}   (${launcherPath(ctx, "stable")})`);
-        console.log(`channel: latest=${s.channelLatest ?? "?"} stable=${s.channelStable ?? "?"}`);
-        console.log(`update:  ${s.updateAvailable ? "AVAILABLE (run ccx update)" : "up to date"}`);
-        if (!s.pathOk) console.log(`WARNING: ~/.local/bin is not ahead of ~/.bun/bin on PATH (run ccx alias)`);
-        if (!s.nextHasAutoupdaterOff) console.log(`WARNING: claude-next launcher missing DISABLE_AUTOUPDATER=1`);
+        say(`next:    ${s.next?.version ?? "(none)"}`);
+        say(`stable:  ${s.stable?.version ?? "(none)"}   (${launcherPath(ctx, "stable")})`);
+        say(`channel: latest=${s.channelLatest ?? "?"} stable=${s.channelStable ?? "?"}`);
+        say(`update:  ${s.updateAvailable ? "AVAILABLE (run ccx update)" : "up to date"}`);
+        if (!s.pathOk) say(`WARNING: ~/.local/bin is not ahead of ~/.bun/bin on PATH (run ccx alias)`);
+        if (!s.nextHasAutoupdaterOff) say(`WARNING: claude-next launcher missing DISABLE_AUTOUPDATER=1`);
         return 0;
       }
       case "list": {
         const r = list(ctx);
-        console.log(`installed: ${r.installed.join(", ") || "(none)"}`);
-        console.log(`archive:   ${r.archive.map((a) => a.version).join(", ") || "(none)"}`);
+        say(`installed: ${r.installed.join(", ") || "(none)"}`);
+        say(`archive:   ${r.archive.map((a) => a.version).join(", ") || "(none)"}`);
         return 0;
       }
       case "prune": {
         // Default keep=2 applied at use site since keep is optional in ParsedArgs
         const r = prune(ctx, args.keep ?? 2);
-        console.log(`pruned ${r.removed.length} version(s); kept ${r.kept.length}`);
+        say(`pruned ${r.removed.length} version(s); kept ${r.kept.length}`);
         return 0;
       }
       case "schedule": {
         // Default everyHours=24 applied at use site since everyHours is optional in ParsedArgs
         platform.scheduleInstall(args.everyHours ?? 24);
-        console.log(`scheduled: ccx update every ~${args.everyHours ?? 24}h`);
+        say(`scheduled: ccx update every ~${args.everyHours ?? 24}h`);
         return 0;
       }
       case "unschedule": {
         platform.scheduleRemove();
-        console.log(`unscheduled ccx auto-update`);
+        say(`unscheduled ccx auto-update`);
         return 0;
       }
       default:

@@ -1,9 +1,9 @@
-import { createWriteStream } from "node:fs";
+import { createWriteStream, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import type { Ctx } from "./ctx";
 import type { Channel, Manifest } from "./types";
 
-const VERSION_RE = /^\d+\.\d+\.\d+(-\S+)?$/;
+export const VERSION_RE = /^\d+\.\d+\.\d+(-\S+)?$/;
 
 export async function resolveChannelVersion(ctx: Ctx, channel: Channel): Promise<string> {
   const res = await ctx.fetchImpl(`${ctx.baseUrl}/${channel}`);
@@ -43,6 +43,7 @@ export async function downloadBinary(
   }
   const actual = hash.digest("hex");
   if (actual !== expectedSha256) {
+    rmSync(destPath, { force: true });
     throw new Error(`sha256 mismatch for ${version}/${platformTag}: expected ${expectedSha256}, got ${actual}`);
   }
 }

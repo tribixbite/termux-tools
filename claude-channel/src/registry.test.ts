@@ -61,3 +61,12 @@ test("downloadBinary verifies sha256", async () => {
   await expect(downloadBinary(c, "2.1.175", "linux-arm64", dest, "00".repeat(32)))
     .rejects.toThrow(/sha256 mismatch/);
 });
+
+test("downloadBinary removes the file on sha256 mismatch", async () => {
+  const c = ctx();
+  const dest = path.join(c.home, "claude-binary");
+  await expect(downloadBinary(c, "2.1.175", "linux-arm64", dest, "00".repeat(32)))
+    .rejects.toThrow(/sha256 mismatch/);
+  const { existsSync } = await import("node:fs");
+  expect(existsSync(dest)).toBe(false);
+});

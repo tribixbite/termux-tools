@@ -19,3 +19,11 @@ test("parseArgs: prune --keep, schedule --every, global --json", () => {
 test("parseArgs: unknown command throws", () => {
   expect(() => parseArgs(["frobnicate"])).toThrow(/unknown command/);
 });
+test("parseArgs: --quiet parsed only when present", () => {
+  expect(parseArgs(["status", "--quiet"])).toMatchObject({ command: "status", quiet: true });
+});
+test("parseArgs: invalid --keep/--every/--pin throw", () => {
+  expect(() => parseArgs(["prune", "--keep", "x"])).toThrow(/--keep/);
+  expect(() => parseArgs(["schedule", "--every", "0"])).toThrow(/--every/);
+  expect(() => parseArgs(["update", "--pin", "nope"])).toThrow(/--pin/);
+});

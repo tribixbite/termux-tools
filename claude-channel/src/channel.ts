@@ -15,10 +15,16 @@ export async function update(platform: Platform, ctx: Ctx, channel: Channel = "l
     return { action: "current", from: state.next.version, to: target };
   }
   const binary = await platform.fetchBinary(target);
+  const priorNext = platform.readLauncherBinary("next");
   platform.writeLauncher("next", binary);
-  const reported = await platform.verify("next");
-  if (!reported.startsWith(target)) {
-    throw new Error(`verify failed: claude-next reports "${reported}", expected ${target}`);
+  try {
+    const reported = await platform.verify("next");
+    if (!reported.startsWith(target)) {
+      throw new Error(`verify failed: claude-next reports "${reported}", expected ${target}`);
+    }
+  } catch (e) {
+    if (priorNext) platform.writeLauncher("next", priorNext); // don't leave next pointing at an unverified binary
+    throw e;
   }
   const from = state.next?.version ?? null;
   state.next = { version: target, binary, patched: true, updatedAt: nowIso() };
