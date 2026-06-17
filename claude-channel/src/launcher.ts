@@ -1,4 +1,4 @@
-import { writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync, rmSync } from "node:fs";
 import path from "node:path";
 import type { Ctx } from "./ctx";
 import type { ChannelKind } from "./types";
@@ -27,6 +27,10 @@ export function renderLauncher(ctx: Ctx, binaryPath: string): string {
 export function writeLauncher(ctx: Ctx, kind: ChannelKind, binaryPath: string): void {
   mkdirSync(ctx.localBin, { recursive: true });
   const p = launcherPath(ctx, kind);
+  // Replace any existing launcher OR symlink. Without this, writeFileSync on a path
+  // that is a symlink (e.g. a pre-existing `claude -> claude-next`) writes THROUGH the
+  // link and clobbers the target instead of creating a distinct regular file.
+  rmSync(p, { force: true });
   writeFileSync(p, renderLauncher(ctx, binaryPath));
   chmodSync(p, 0o755);
 }

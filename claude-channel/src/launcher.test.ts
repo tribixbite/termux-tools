@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, symlinkSync, lstatSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { makeCtx } from "./ctx";
@@ -8,6 +8,18 @@ import { renderLauncher, writeLauncher, readLauncherBinary, launcherPath } from 
 function ctx() {
   return makeCtx({ HOME: mkdtempSync(path.join(tmpdir(), "ccx-lnch-")), PREFIX: "/pfx" } as NodeJS.ProcessEnv);
 }
+
+test("writeLauncher replaces a pre-existing symlink with a real file (no write-through)", () => {
+  const c = ctx();
+  writeLauncher(c, "next", "/b/n/claude-binary");
+  // simulate the legacy setup: claude is a symlink -> claude-next
+  mkdirSync(c.localBin, { recursive: true });
+  symlinkSync(launcherPath(c, "next"), launcherPath(c, "stable"));
+  writeLauncher(c, "stable", "/b/s/claude-binary");
+  expect(lstatSync(launcherPath(c, "stable")).isSymbolicLink()).toBe(false); // now a real file
+  expect(readLauncherBinary(c, "stable")).toBe("/b/s/claude-binary");
+  expect(readLauncherBinary(c, "next")).toBe("/b/n/claude-binary"); // target NOT clobbered
+});
 
 test("renderLauncher contains the pin, autoupdater-off, and literal shell vars", () => {
   const c = ctx();
