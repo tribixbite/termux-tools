@@ -1,8 +1,11 @@
+import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import { makeCtx } from "./ctx";
 import { detectPlatform } from "./platform/factory";
 import { NotImplementedError } from "./platform/platform";
-import { update, promote, rollback, status, list, prune } from "./channel";
+import { update, promote, rollback, status, list, prune, prunePlan } from "./channel";
 import { launcherPath } from "./launcher";
+import { withLock } from "./lock";
 import type { Channel } from "./types";
 import { VERSION_RE } from "./registry";
 
@@ -86,6 +89,17 @@ const HELP = `ccx — Claude Code channel manager (Termux)
   ccx alias                                            print shell alias + PATH hint
 `;
 
+/** Ask a yes/no question on an interactive terminal. Prompt goes to stderr. */
+async function confirm(prompt: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  try {
+    const ans = (await rl.question(prompt)).trim().toLowerCase();
+    return ans === "y" || ans === "yes";
+  } finally {
+    rl.close();
+  }
+}
+
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
   let args: ParsedArgs;
   try {
@@ -121,29 +135,32 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   try {
     switch (args.command) {
-      case "update": {
-        const r = await update(platform, ctx, args.channel, args.pin);
-        say(
-          r.action === "current"
-            ? `claude-next already at ${r.to}`
-            : `claude-next: ${r.from ?? "(none)"} -> ${r.to}`,
-        );
-        return 0;
-      }
-      case "promote": {
-        const r = promote(platform, ctx);
-        say(
-          r.action === "noop"
-            ? `claude already at ${r.to}`
-            : `promoted claude: ${r.from ?? "(none)"} -> ${r.to} (archived ${r.from ?? "nothing"})`,
-        );
-        return 0;
-      }
-      case "rollback": {
-        const r = await rollback(platform, ctx, args.to);
-        say(`claude rolled back to ${r.to}${r.refetched ? " (re-fetched)" : ""}`);
-        return 0;
-      }
+      case "update":
+        return await withLock(ctx, async () => {
+          const r = await update(platform, ctx, args.channel, args.pin);
+          say(
+            r.action === "current"
+              ? `claude-next already at ${r.to}`
+              : `claude-next: ${r.from ?? "(none)"} -> ${r.to}`,
+          );
+          return 0;
+        });
+      case "promote":
+        return await withLock(ctx, async () => {
+          const r = promote(platform, ctx);
+          say(
+            r.action === "noop"
+              ? `claude already at ${r.to}`
+              : `promoted claude: ${r.from ?? "(none)"} -> ${r.to} (archived ${r.from ?? "nothing"})`,
+          );
+          return 0;
+        });
+      case "rollback":
+        return await withLock(ctx, async () => {
+          const r = await rollback(platform, ctx, args.to);
+          say(`claude rolled back to ${r.to}${r.refetched ? " (re-fetched)" : ""}`);
+          return 0;
+        });
       case "status": {
         const s = await status(platform, ctx);
         if (args.json) {
@@ -164,12 +181,26 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
         say(`archive:   ${r.archive.map((a) => a.version).join(", ") || "(none)"}`);
         return 0;
       }
-      case "prune": {
-        // Default keep=2 applied at use site since keep is optional in ParsedArgs
-        const r = prune(ctx, args.keep ?? 2);
-        say(`pruned ${r.removed.length} version(s); kept ${r.kept.length}`);
-        return 0;
-      }
+      case "prune":
+        return await withLock(ctx, async () => {
+          const keep = args.keep ?? 2; // default applied here since keep is optional
+          const plan = prunePlan(ctx, keep);
+          if (plan.toRemove.length === 0) {
+            say("nothing to prune");
+            return 0;
+          }
+          const versions = plan.toRemove.map((d) => path.basename(d).replace(/^claude-/, ""));
+          if (!args.yes && process.stdin.isTTY) {
+            const ok = await confirm(`Remove ${plan.toRemove.length} version(s) (${versions.join(", ")})? [y/N] `);
+            if (!ok) {
+              console.error("aborted");
+              return 1;
+            }
+          }
+          const r = prune(ctx, keep);
+          say(`pruned ${r.removed.length} version(s); kept ${r.kept.length}`);
+          return 0;
+        });
       case "schedule": {
         // Default everyHours=24 applied at use site since everyHours is optional in ParsedArgs
         platform.scheduleInstall(args.everyHours ?? 24);

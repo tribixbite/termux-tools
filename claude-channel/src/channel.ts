@@ -69,14 +69,45 @@ export async function rollback(platform: Platform, ctx: Ctx, toVersion?: string)
   return { to: target.version, refetched };
 }
 
-function compareVersions(a: string, b: string): number {
-  const pa = a.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  const pb = b.split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+/** Split "2.1.175-beta.1" into numeric core [2,1,175] and pre-release "beta.1". */
+function splitVer(v: string): [number[], string] {
+  const dash = v.indexOf("-");
+  const core = dash < 0 ? v : v.slice(0, dash);
+  const pre = dash < 0 ? "" : v.slice(dash + 1);
+  return [core.split(".").map((x) => parseInt(x, 10) || 0), pre];
+}
+
+/** Compare pre-release identifiers per semver (numeric < alphanumeric; fewer ids = lower). */
+function comparePre(a: string, b: string): number {
+  const ai = a.split(".");
+  const bi = b.split(".");
+  for (let i = 0; i < Math.max(ai.length, bi.length); i++) {
+    const x = ai[i];
+    const y = bi[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) { const d = parseInt(x, 10) - parseInt(y, 10); if (d !== 0) return d > 0 ? 1 : -1; }
+    else if (xn) return -1;
+    else if (yn) return 1;
+    else if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Semver-ish compare: 1 if a>b, -1 if a<b, 0 if equal. A release outranks its pre-releases. */
+export function compareVersions(a: string, b: string): number {
+  const [pa, apre] = splitVer(a);
+  const [pb, bpre] = splitVer(b);
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0);
     if (d !== 0) return d > 0 ? 1 : -1;
   }
-  return 0;
+  if (!apre && bpre) return 1;   // 2.1.175 > 2.1.175-beta
+  if (apre && !bpre) return -1;
+  if (!apre && !bpre) return 0;
+  return comparePre(apre, bpre);
 }
 
 export interface StatusInfo {
@@ -128,17 +159,25 @@ export function list(ctx: Ctx): { installed: string[]; archive: ArchiveEntry[] }
   return { installed, archive: loadState(ctx).archive };
 }
 
-export interface PruneResult { removed: string[]; kept: string[]; }
-export function prune(ctx: Ctx, keep = 2): PruneResult {
+export interface PrunePlan { toRemove: string[]; protectedBins: string[]; }
+/** Compute which version dirs prune WOULD remove, without deleting (for confirm/preview). */
+export function prunePlan(ctx: Ctx, keep = 2): PrunePlan {
   const state = loadState(ctx);
   const protectedBins = new Set<string>();
   if (state.next) protectedBins.add(state.next.binary);
   if (state.stable) protectedBins.add(state.stable.binary);
   for (const a of state.archive.slice(0, keep)) protectedBins.add(a.binary);
-  const removed: string[] = [];
+  const toRemove: string[] = [];
   for (const dir of installedDirs(ctx)) {
     const bin = path.join(dir, "claude-binary");
-    if (!protectedBins.has(bin)) { rmSync(dir, { recursive: true, force: true }); removed.push(dir); }
+    if (!protectedBins.has(bin)) toRemove.push(dir);
   }
-  return { removed, kept: [...protectedBins] };
+  return { toRemove, protectedBins: [...protectedBins] };
+}
+
+export interface PruneResult { removed: string[]; kept: string[]; }
+export function prune(ctx: Ctx, keep = 2): PruneResult {
+  const plan = prunePlan(ctx, keep);
+  for (const dir of plan.toRemove) rmSync(dir, { recursive: true, force: true });
+  return { removed: plan.toRemove, kept: plan.protectedBins };
 }
