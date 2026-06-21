@@ -106,6 +106,44 @@ The bundled DEX rebuilds from `~/git/x2d/runtime/handy_extract/keystore_dumper/`
 via `./build.sh` (needs `$ANDROID_HOME/platforms/android-34/android.jar` and
 `build-tools/34.0.0*/d8`).
 
+### Git History Recover (`scripts/git-history-recover.ts`)
+
+Recovers overwritten / force-pushed / dangling commits from any **public** GitHub
+repo. A normal clone only returns commits reachable from the live refs; history
+that was force-pushed away (rebase, `filter-repo`, squash, "clean up history") is
+orphaned and invisible. This reconstructs it and reports the oldest overwritten
+commit plus the full force-push timeline.
+
+```bash
+git-history-recover <owner/repo | github-url>            # analyze (read-only report)
+git-history-recover <owner/repo> --recover               # also write ./<repo>-recovered
+git-history-recover <owner/repo> --recover --dir PATH    # choose output dir
+git-history-recover <owner/repo> --no-forks              # events + fetch-by-SHA only (faster)
+git-history-recover <owner/repo> --json                  # machine-readable output
+```
+
+Three independent recovery sources, none needing admin on the repo:
+1. **Events API** — retains the full PushEvent timeline (`before`/`head` SHAs) for
+   ~90 days / 300 events; the authoritative force-push record.
+2. **Fork network** — forks share GitHub's object store, so forks created before a
+   rewrite still point at the pre-rewrite tips.
+3. **Fetch-by-SHA** — GitHub honours `git fetch origin <sha>` for any object still
+   in the network repo, recovering commits that were force-pushed away and never
+   forked.
+
+`--recover` materialises a browsable repo with a `refs/recovered/NN-<sha>` ref on
+every orphaned leaf (so `git log --all` shows the complete reconstructed DAG).
+Coverage is reported honestly: if the events window doesn't reach repo creation it
+says so, and any SHA referenced but no longer fetchable is listed as unrecoverable.
+
+```bash
+ln -sf ~/git/termux-tools/scripts/git-history-recover.ts ~/.local/bin/git-history-recover
+```
+
+Requires `git` + `bun`. Uses a token from `--token`, `$GH_TOKEN`/`$GITHUB_TOKEN`,
+or `gh auth token` (raises API rate limits and enables private-repo access; the
+token is stripped from the recovered repo's `origin` afterward).
+
 ## Quick Start
 
 ```bash
