@@ -108,11 +108,12 @@ via `./build.sh` (needs `$ANDROID_HOME/platforms/android-34/android.jar` and
 
 ### Git History Recover (`scripts/git-history-recover.ts`)
 
-Recovers overwritten / force-pushed / dangling commits from any **public** GitHub
-repo. A normal clone only returns commits reachable from the live refs; history
-that was force-pushed away (rebase, `filter-repo`, squash, "clean up history") is
-orphaned and invisible. This reconstructs it and reports the oldest overwritten
-commit plus the full force-push timeline.
+Recovers overwritten / force-pushed / dangling commits from a GitHub repo (public,
+or private with a token). A normal clone only returns commits reachable from the
+live refs; history that was force-pushed away (rebase, `filter-repo`, squash,
+"clean up history") is orphaned and invisible. This reconstructs it and reports the
+oldest overwritten commit plus the full force-push timeline — and can scan the
+whole recovered history for secrets.
 
 ```bash
 git-history-recover <owner/repo | github-url>            # analyze (read-only report)
@@ -136,13 +137,36 @@ every orphaned leaf (so `git log --all` shows the complete reconstructed DAG).
 Coverage is reported honestly: if the events window doesn't reach repo creation it
 says so, and any SHA referenced but no longer fetchable is listed as unrecoverable.
 
+**Secret scanning (`--secrets`)** — scans *every blob across the entire recovered
+history* (current tree + overwritten/dangling commits, and inside zip archives)
+for committed secrets. Use it to confirm a private repo is clean — anywhere in its
+history — **before** making it public (a history rewrite doesn't help once pushed;
+secrets stay recoverable exactly as this tool demonstrates).
+
+```bash
+git-history-recover myorg/private-repo --secrets               # scan all history, masked report
+git-history-recover myorg/private-repo --secrets --show-secrets # reveal matched values
+git-history-recover myorg/private-repo --secrets --fail-on high # exit 2 only on high-confidence
+git-history-recover myorg/private-repo --secrets --no-archives  # skip zip extraction
+```
+
+Detects: provider-prefixed keys/tokens (AWS, GitHub, Google, Slack, Stripe,
+Anthropic, OpenAI/`sk-`, Google OAuth), PEM private keys, JWTs, key-like
+assignments (`*_KEY = "…"`, placeholders filtered out), **Solana keypairs** as
+both 32/64-byte JSON numeric arrays and 64-byte base58 secret keys (base58-decoded
+to confirm length), and **BIP39 mnemonics** (12/15/18/21/24 words; checksum-valid
+phrases are HIGH, wordlist runs that fail checksum are MEDIUM). Findings are
+grouped by confidence, marked `current` vs `history-only`, masked by default, and
+`--fail-on` makes the exit code gate a pre-publish check (default: fail on medium+).
+
 ```bash
 ln -sf ~/git/termux-tools/scripts/git-history-recover.ts ~/.local/bin/git-history-recover
 ```
 
-Requires `git` + `bun`. Uses a token from `--token`, `$GH_TOKEN`/`$GITHUB_TOKEN`,
-or `gh auth token` (raises API rate limits and enables private-repo access; the
-token is stripped from the recovered repo's `origin` afterward).
+Requires `git` + `bun`; optional `unzip` (archive scanning) and the sibling
+`bip39-english.txt` (mnemonic checksum validation). Uses a token from `--token`,
+`$GH_TOKEN`/`$GITHUB_TOKEN`, or `gh auth token` (raises API rate limits and enables
+private-repo access; the token is stripped from the recovered repo's `origin`).
 
 ## Quick Start
 

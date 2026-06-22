@@ -23,21 +23,35 @@
  * Usage:
  *   git-history-recover <owner/repo | github-url> [flags]
  *
+ * It can also scan EVERY blob across the whole recovered history (current +
+ * overwritten + dangling, and inside zip archives) for committed secrets — keys,
+ * tokens, PEM private keys, Solana keypairs (numeric byte arrays AND base58
+ * secret keys), and BIP39 mnemonics (checksum-validated). Use this to verify a
+ * private repo has no secrets — anywhere in its history — before making it public.
+ *
  * Flags:
  *   --recover            Persist a recovery repo with labelled refs/recovered/*.
  *   --dir <path>         Output dir for the recovery repo (default: ./<repo>-recovered).
  *   --keep               In analyze mode, keep the temp working repo instead of deleting it.
  *   --no-forks           Skip fork enumeration/fetch (events + SHA recovery only; faster).
+ *   --secrets            Scan all history (incl. overwritten/dangling + zip contents) for secrets.
+ *   --show-secrets       Print matched secret values in full instead of masked previews.
+ *   --no-archives        With --secrets, do not extract & scan zip archives.
+ *   --max-blob <MB>      With --secrets, skip blobs larger than this (default 2).
+ *   --fail-on <level>    Exit non-zero (2) if a finding at >= level is found:
+ *                        high | medium (default) | low | none.
  *   --token <tok>        GitHub token (else $GH_TOKEN / $GITHUB_TOKEN / `gh auth token`).
  *   --json               Emit machine-readable JSON instead of the human report.
  *   -h, --help           Show help.
  *
- * Requires: git, bun. Optional: gh (used only as a token source if no token env).
+ * Requires: git, bun. Optional: gh (token source), unzip (archive scanning),
+ * and a sibling bip39-english.txt (mnemonic checksum validation).
  */
 
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,6 +80,28 @@ interface CommitMeta {
   subject: string;
 }
 
+type Confidence = "high" | "medium" | "low";
+
+/** One secret-scan hit. `value` is masked for display unless --show-secrets. */
+interface Finding {
+  category: string;
+  confidence: Confidence;
+  blob: string;            // blob object id the secret was found in
+  path: string;            // a repo path that blob is/was stored at
+  inCurrentTree: boolean;  // false => only exists in overwritten/old history
+  archiveEntry?: string;   // entry path inside a zip, when applicable
+  line: number;            // 1-based line within the blob/entry
+  value: string;           // raw matched text (masked at print time)
+}
+
+interface SecretScan {
+  scannedBlobs: number;
+  skippedBinary: number;
+  skippedLarge: number;
+  archivesScanned: number;
+  findings: Finding[];
+}
+
 interface Report {
   repo: string;
   defaultBranch: string;
@@ -81,6 +117,7 @@ interface Report {
   unrecovered: string[];
   recoveredDir: string | null;
   recoveredRefs: { ref: string; sha: string; subject: string }[];
+  secrets: SecretScan | null;
 }
 
 const ZERO_SHA = "0000000000000000000000000000000000000000";
@@ -95,6 +132,11 @@ function parseArgs(argv: string[]) {
     keep: false,
     noForks: false,
     json: false,
+    secrets: false,
+    showSecrets: false,
+    noArchives: false,
+    maxBlobMb: 2,
+    failOn: "medium" as "high" | "medium" | "low" | "none",
     dir: "" as string,
     token: "" as string,
     repo: "" as string,
@@ -110,6 +152,16 @@ function parseArgs(argv: string[]) {
       case "--keep": flags.keep = true; break;
       case "--no-forks": flags.noForks = true; break;
       case "--json": flags.json = true; break;
+      case "--secrets": flags.secrets = true; break;
+      case "--show-secrets": flags.showSecrets = true; break;
+      case "--no-archives": flags.noArchives = true; break;
+      case "--max-blob": flags.maxBlobMb = Number(argv[++i]) || 2; break;
+      case "--fail-on": {
+        const v = argv[++i];
+        if (v !== "high" && v !== "medium" && v !== "low" && v !== "none") fail(`--fail-on must be high|medium|low|none`);
+        flags.failOn = v;
+        break;
+      }
       case "--dir": flags.dir = argv[++i] ?? ""; break;
       case "--token": flags.token = argv[++i] ?? ""; break;
       default:
@@ -124,11 +176,22 @@ function parseArgs(argv: string[]) {
 
 function printHelp() {
   // The module doc-comment above is the canonical reference; keep this terse.
-  console.log(`git-history-recover <owner/repo | github-url> [--recover] [--dir PATH]
-  [--keep] [--no-forks] [--token TOK] [--json]
+  console.log(`git-history-recover <owner/repo | github-url> [flags]
 
-Recovers overwritten/force-pushed/dangling commits from a public GitHub repo.
-Default = analysis only; --recover also writes a labelled recovery repo.`);
+  --recover            persist a recovery repo with labelled refs/recovered/*
+  --dir PATH           output dir for the recovery repo
+  --keep               keep the temp analyze repo instead of deleting it
+  --no-forks           skip forks (events + fetch-by-SHA recovery only; faster)
+  --secrets            scan ALL history (incl. overwritten/dangling + zips) for secrets
+  --show-secrets       print matched secrets in full (default: masked)
+  --no-archives        with --secrets, don't extract/scan zip archives
+  --max-blob MB        with --secrets, skip blobs larger than MB (default 2)
+  --fail-on LEVEL      exit 2 if finding >= high|medium(default)|low|none
+  --token TOK          GitHub token (else \$GH_TOKEN/\$GITHUB_TOKEN/gh auth token)
+  --json               machine-readable output
+
+Recovers overwritten/force-pushed/dangling commits from a GitHub repo, and
+(with --secrets) scans the entire recovered history for committed secrets.`);
 }
 
 function fail(msg: string): never {
@@ -371,6 +434,15 @@ async function main() {
     return { ...p, force, beforePresent, headPresent };
   });
 
+  // 7b. Secret scan — runs while every recovered object is still reachable via
+  //     the scratch pins (step 8 deletes them), so it covers overwritten history.
+  let secrets: SecretScan | null = null;
+  if (flags.secrets) {
+    log(flags, `scanning every blob in full history for secrets ...`);
+    secrets = scanSecrets(defaultTip, flags);
+    log(flags, `scanned ${secrets.scannedBlobs} blob(s), ${secrets.archivesScanned} archive(s) → ${secrets.findings.length} finding(s)`);
+  }
+
   // 8. Recovery refs: label every overwritten *leaf* (covers all commits) ---
   let recoveredRefs: { ref: string; sha: string; subject: string }[] = [];
   if (persistent) {
@@ -401,12 +473,26 @@ async function main() {
     unrecovered,
     recoveredDir: persistent ? outDir : null,
     recoveredRefs,
+    secrets,
   };
 
   // Temp analyze repo is removed by the process-exit handler (covers errors too).
 
-  if (flags.json) console.log(JSON.stringify(report, null, 2));
-  else printReport(report, allMeta);
+  if (flags.json) console.log(JSON.stringify(report, redactJson(flags.showSecrets), 2));
+  else printReport(report, allMeta, flags);
+
+  // Gate: exit 2 when a finding at or above --fail-on is present (clean = 0).
+  if (secrets && flags.failOn !== "none") {
+    const rank: Record<Confidence, number> = { low: 1, medium: 2, high: 3 };
+    const threshold = rank[flags.failOn];
+    if (secrets.findings.some((f) => rank[f.confidence] >= threshold)) process.exitCode = 2;
+  }
+}
+
+/** JSON replacer that masks finding values unless --show-secrets was passed. */
+function redactJson(show: boolean) {
+  return (key: string, val: unknown) =>
+    !show && key === "value" && typeof val === "string" ? maskValue(val) : val;
 }
 
 // ---------------------------------------------------------------------------
@@ -498,10 +584,338 @@ function buildRecoveredRefs(
 }
 
 // ---------------------------------------------------------------------------
+// Secret scanning — runs over EVERY blob in the recovered object store
+// (current tree + overwritten/dangling history + inside zip archives).
+// ---------------------------------------------------------------------------
+
+/** BIP39 English wordlist, loaded from the sibling data file (empty if absent). */
+const BIP39_WORDS: string[] = (() => {
+  try {
+    const dir = dirname(realpathSync(import.meta.path));
+    const words = readFileSync(join(dir, "bip39-english.txt"), "utf8")
+      .split(/\r?\n/).map((w) => w.trim()).filter(Boolean);
+    return words.length === 2048 ? words : [];
+  } catch { return []; }
+})();
+const BIP39_SET = new Set(BIP39_WORDS);
+const BIP39_INDEX = new Map(BIP39_WORDS.map((w, i) => [w, i] as const));
+
+const B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const B58_MAP = new Map([...B58_ALPHABET].map((c, i) => [c, i] as const));
+
+/** Decode a base58 string to bytes; null if it contains a non-base58 char. */
+export function base58Decode(s: string): Uint8Array | null {
+  const bytes: number[] = [0];
+  for (const ch of s) {
+    const v = B58_MAP.get(ch);
+    if (v === undefined) return null;
+    let carry = v;
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) { bytes.push(carry & 0xff); carry >>= 8; }
+  }
+  for (let k = 0; k < s.length && s[k] === "1"; k++) bytes.push(0);
+  return Uint8Array.from(bytes.reverse());
+}
+
+/** True if `words` is a checksum-valid BIP39 mnemonic (12/15/18/21/24 words). */
+export function bip39Valid(words: string[]): boolean {
+  const n = words.length;
+  if (![12, 15, 18, 21, 24].includes(n) || BIP39_INDEX.size === 0) return false;
+  let bits = "";
+  for (const w of words) {
+    const idx = BIP39_INDEX.get(w);
+    if (idx === undefined) return false;
+    bits += idx.toString(2).padStart(11, "0");
+  }
+  const total = n * 11;
+  const csLen = total / 33;          // checksum bits
+  const entBits = total - csLen;     // entropy bits (multiple of 8)
+  const entBytes = Buffer.alloc(entBits / 8);
+  for (let i = 0; i < entBytes.length; i++) entBytes[i] = parseInt(bits.slice(i * 8, i * 8 + 8), 2);
+  const hashBits = [...createHash("sha256").update(entBytes).digest()]
+    .map((b) => b.toString(2).padStart(8, "0")).join("");
+  return hashBits.slice(0, csLen) === bits.slice(entBits);
+}
+
+interface ReDetector { category: string; confidence: Confidence; re: RegExp; }
+
+/** Provider-prefixed token patterns (high confidence) + a couple of medium ones. */
+const RE_DETECTORS: ReDetector[] = [
+  { category: "AWS access key id",          confidence: "high",   re: /\bAKIA[0-9A-Z]{16}\b/g },
+  { category: "AWS secret access key",      confidence: "medium", re: /\baws_secret_access_key["'\s:=]+[A-Za-z0-9/+]{40}\b/gi },
+  { category: "GitHub token",               confidence: "high",   re: /\bgh[pousr]_[A-Za-z0-9]{36}\b/g },
+  { category: "GitHub fine-grained PAT",    confidence: "high",   re: /\bgithub_pat_[0-9A-Za-z_]{82}\b/g },
+  { category: "Slack token",                confidence: "high",   re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g },
+  { category: "Stripe live secret key",     confidence: "high",   re: /\b[sr]k_live_[0-9A-Za-z]{16,}\b/g },
+  { category: "Google API key",             confidence: "high",   re: /\bAIza[0-9A-Za-z_\-]{35}\b/g },
+  { category: "Google OAuth client secret", confidence: "high",   re: /\bGOCSPX-[0-9A-Za-z_\-]{20,}\b/g },
+  { category: "Anthropic API key",          confidence: "high",   re: /\bsk-ant-[A-Za-z0-9_\-]{20,}\b/g },
+  { category: "OpenAI / sk- API key",       confidence: "high",   re: /\bsk-(?:proj-)?[A-Za-z0-9]{20,}\b/g },
+  { category: "Private key (PEM)",          confidence: "high",   re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
+  { category: "JSON Web Token",             confidence: "medium", re: /\beyJ[A-Za-z0-9_\-]{8,}\.eyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b/g },
+];
+
+/** key-like identifier assigned a quoted value → likely an inline secret. */
+const ASSIGN_RE =
+  /(?<k>[A-Za-z0-9_]{0,40}(?:secret|token|passwd|password|pwd|api[_-]?key|apikey|access[_-]?key|private[_-]?key|mnemonic|seed[_-]?phrase|client[_-]?secret|key))\s*[:=]{1,2}\s*["'`](?<v>[^"'`\n]{8,200})["'`]/gi;
+/** Solana keypair as a JSON byte array: [n,n,...] with 32 or 64 elements 0-255. */
+const ARRAY_RE = /\[(?:\s*\d{1,3}\s*,){31,63}\s*\d{1,3}\s*\]/g;
+/** Candidate base58 string long enough to be a 64-byte Solana secret key. */
+const B58_RE = /\b[1-9A-HJ-NP-Za-km-z]{86,90}\b/g;
+
+/** Obvious non-secret placeholder values (cuts false positives, not real keys). */
+function looksPlaceholder(v: string): boolean {
+  if (v.length < 8) return true;
+  if (/^[A-Z][A-Z0-9_]*$/.test(v)) return true;                                  // ALL_CAPS token e.g. ANTHROPIC_KEY
+  if (/^(your|my|the|test|sample|example|placeholder|change[_-]?me|dummy|fake|none|null|undefined|todo|xxx+|x{4,}|\.{3,}|\*{3,})/i.test(v)) return true;
+  if (/^[<{[(].*[>}\])]$/.test(v)) return true;                                  // <YOUR_KEY> {{KEY}} [KEY]
+  if (/^\$\{?[A-Za-z_]/.test(v)) return true;                                    // ${ENV} / $ENV interpolation
+  if (/^(true|false)$/i.test(v)) return true;
+  if (/^(https?:|\/|\.\/|~\/|\.\.\/)/.test(v)) return true;                       // URLs / file paths
+  return false;
+}
+
+function lineAt(text: string, index: number): number {
+  let line = 1;
+  for (let i = 0; i < index && i < text.length; i++) if (text.charCodeAt(i) === 10) line++;
+  return line;
+}
+
+/** Scan one text body for every secret category; deduped by (line,value). */
+export function scanText(text: string, ctx: { blob: string; path: string; inCurrentTree: boolean; archiveEntry?: string }): Finding[] {
+  const out: Finding[] = [];
+  const seen = new Set<string>();
+  const add = (category: string, confidence: Confidence, value: string, index: number) => {
+    const line = lineAt(text, index);
+    const key = `${line} ${value}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ category, confidence, blob: ctx.blob, path: ctx.path, inCurrentTree: ctx.inCurrentTree, archiveEntry: ctx.archiveEntry, line, value });
+  };
+
+  for (const d of RE_DETECTORS) {
+    d.re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = d.re.exec(text))) add(d.category, d.confidence, m[0], m.index);
+  }
+
+  ASSIGN_RE.lastIndex = 0;
+  let am: RegExpExecArray | null;
+  while ((am = ASSIGN_RE.exec(text))) {
+    const v = am.groups?.v ?? "";
+    if (!looksPlaceholder(v)) add(`secret-like assignment (${(am.groups?.k ?? "").trim()})`, "medium", v, am.index);
+  }
+
+  ARRAY_RE.lastIndex = 0;
+  let arr: RegExpExecArray | null;
+  while ((arr = ARRAY_RE.exec(text))) {
+    const nums = arr[0].slice(1, -1).split(",").map((x) => Number(x.trim()));
+    if ((nums.length === 64 || nums.length === 32) && nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 255))
+      add(`Solana keypair byte array (${nums.length} bytes)`, "high", arr[0], arr.index);
+  }
+
+  B58_RE.lastIndex = 0;
+  let b: RegExpExecArray | null;
+  while ((b = B58_RE.exec(text))) {
+    const dec = base58Decode(b[0]);
+    if (dec && dec.length === 64) add("Solana base58 secret key (64 bytes)", "high", b[0], b.index);
+  }
+
+  // BIP39: runs of consecutive wordlist words separated only by spaces/commas.
+  if (BIP39_SET.size) {
+    const tok = /[A-Za-z]+/g;
+    let t: RegExpExecArray | null;
+    let run: { word: string; index: number }[] = [];
+    let prevEnd = -1;
+    const flush = () => {
+      if (run.length >= 12) {
+        let high = false;
+        for (const n of [24, 21, 18, 15, 12]) {
+          for (let i = 0; i + n <= run.length; i++) {
+            const slice = run.slice(i, i + n).map((x) => x.word);
+            if (bip39Valid(slice)) { add(`BIP39 mnemonic — checksum-valid (${n} words)`, "high", slice.join(" "), run[i].index); high = true; }
+          }
+        }
+        if (!high) add(`possible BIP39 mnemonic (${run.length} consecutive wordlist words)`, "medium", run.map((x) => x.word).join(" "), run[0].index);
+      }
+      run = [];
+    };
+    while ((t = tok.exec(text))) {
+      const w = t[0].toLowerCase();
+      const adjacent = prevEnd >= 0 && /^[\s,]*$/.test(text.slice(prevEnd, t.index));
+      if (BIP39_SET.has(w) && (run.length === 0 || adjacent)) run.push({ word: w, index: t.index });
+      else { flush(); if (BIP39_SET.has(w)) run.push({ word: w, index: t.index }); }
+      prevEnd = t.index + t[0].length;
+    }
+    flush();
+  }
+
+  return out;
+}
+
+function isBinary(buf: Buffer): boolean {
+  const n = Math.min(buf.length, 8000);
+  for (let i = 0; i < n; i++) if (buf[i] === 0) return true;
+  return false;
+}
+function isZip(buf: Buffer): boolean {
+  return buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b && (buf[2] === 0x03 || buf[2] === 0x05 || buf[2] === 0x07);
+}
+
+/** git cat-file --batch-check for many objects in one process → type+size. */
+function batchCheck(shas: string[]): Map<string, { type: string; size: number }> {
+  const m = new Map<string, { type: string; size: number }>();
+  const p = Bun.spawnSync(["git", "cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+    { cwd: REPO_DIR, stdin: Buffer.from(shas.join("\n") + "\n"), stdout: "pipe", stderr: "pipe" });
+  for (const line of p.stdout.toString().split("\n")) {
+    const [sha, type, size] = line.split(" ");
+    if (sha && type && type !== "missing") m.set(sha, { type, size: Number(size) });
+  }
+  return m;
+}
+
+/** git cat-file --batch for many objects in one process → raw blob bytes. */
+function batchContents(shas: string[]): Map<string, Buffer> {
+  const map = new Map<string, Buffer>();
+  const p = Bun.spawnSync(["git", "cat-file", "--batch"],
+    { cwd: REPO_DIR, stdin: Buffer.from(shas.join("\n") + "\n"), stdout: "pipe", stderr: "pipe" });
+  const buf = Buffer.from(p.stdout);
+  let off = 0;
+  while (off < buf.length) {
+    const nl = buf.indexOf(0x0a, off);
+    if (nl < 0) break;
+    const parts = buf.toString("utf8", off, nl).split(" ");
+    off = nl + 1;
+    if (parts.length < 3 || parts[1] === "missing") continue; // "<sha> missing" has no payload
+    const size = Number(parts[2]);
+    map.set(parts[0], Buffer.from(buf.subarray(off, off + size)));
+    off += size + 1; // payload + trailing LF
+  }
+  return map;
+}
+
+function walkFiles(root: string): string[] {
+  const out: string[] = [];
+  const rec = (d: string) => {
+    let entries: string[] = [];
+    try { entries = readdirSync(d); } catch { return; }
+    for (const e of entries) {
+      const p = join(d, e);
+      let st; try { st = statSync(p); } catch { continue; }
+      if (st.isDirectory()) rec(p); else if (st.isFile()) out.push(p);
+    }
+  };
+  rec(root);
+  return out;
+}
+
+let UNZIP_OK: boolean | null = null;
+
+/** Extract a zip blob to a temp dir and scan every text entry (recurses zips). */
+function scanZip(buf: Buffer, ctx: { blob: string; path: string; inCurrentTree: boolean; archiveEntry?: string }, maxBytes: number, depth = 0): Finding[] {
+  const findings: Finding[] = [];
+  if (depth > 3) return findings;
+  if (UNZIP_OK === null) UNZIP_OK = Bun.spawnSync(["sh", "-c", "command -v unzip"]).exitCode === 0;
+  if (!UNZIP_OK) return findings;
+  const dir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), "ghr-zip-"));
+  try {
+    const zipPath = join(dir, "a.zip");
+    writeFileSync(zipPath, buf);
+    const xdir = join(dir, "x");
+    Bun.spawnSync(["unzip", "-qq", "-o", zipPath, "-d", xdir], { stdout: "pipe", stderr: "pipe" });
+    for (const file of walkFiles(xdir)) {
+      let st; try { st = statSync(file); } catch { continue; }
+      if (st.size > maxBytes) continue;
+      const fbuf = readFileSync(file);
+      const entry = file.slice(xdir.length + 1);
+      if (isBinary(fbuf)) {
+        if (isZip(fbuf)) findings.push(...scanZip(fbuf, { ...ctx, archiveEntry: ctx.archiveEntry ? `${ctx.archiveEntry}!${entry}` : entry }, maxBytes, depth + 1));
+        continue;
+      }
+      findings.push(...scanText(fbuf.toString("utf8"), { ...ctx, archiveEntry: ctx.archiveEntry ? `${ctx.archiveEntry}!${entry}` : entry }));
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return findings;
+}
+
+/** Enumerate every blob across all refs, scan each (text + zip), classify location. */
+function scanSecrets(defaultTip: string | null, flags: { maxBlobMb: number; noArchives: boolean }): SecretScan {
+  const maxBytes = Math.max(1, flags.maxBlobMb) * 1024 * 1024;
+  const scan: SecretScan = { scannedBlobs: 0, skippedBinary: 0, skippedLarge: 0, archivesScanned: 0, findings: [] };
+
+  // blob -> representative path (from every object across all refs)
+  const pathOf = new Map<string, string>();
+  const allShas: string[] = [];
+  for (const line of git(["rev-list", "--objects", "--all"]).out.split("\n").filter(Boolean)) {
+    const sp = line.indexOf(" ");
+    const sha = sp < 0 ? line : line.slice(0, sp);
+    if (sp >= 0 && !pathOf.has(sha)) pathOf.set(sha, line.slice(sp + 1));
+    allShas.push(sha);
+  }
+  const meta = batchCheck([...new Set(allShas)]);
+
+  // blobs present in the current default tree (vs history-only)
+  const current = new Set<string>();
+  if (defaultTip) {
+    for (const l of git(["ls-tree", "-r", defaultTip]).out.split("\n").filter(Boolean)) {
+      const parts = l.split(/\s+/); // <mode> <type> <sha>\t<path>
+      if (parts[1] === "blob") current.add(parts[2]);
+    }
+  }
+
+  const blobs = [...meta.entries()].filter(([, v]) => v.type === "blob").map(([sha]) => sha);
+  const toRead = blobs.filter((s) => meta.get(s)!.size <= maxBytes);
+  scan.skippedLarge = blobs.length - toRead.length;
+
+  // batch reads under a cumulative byte budget to bound memory
+  const BUDGET = 32 * 1024 * 1024;
+  const processBatch = (batch: string[]) => {
+    if (!batch.length) return;
+    const contents = batchContents(batch);
+    for (const sha of batch) {
+      const fbuf = contents.get(sha);
+      if (!fbuf) continue;
+      const path = pathOf.get(sha) ?? "(unknown path)";
+      const inCur = current.has(sha);
+      if (isBinary(fbuf)) {
+        if (!flags.noArchives && isZip(fbuf)) { scan.archivesScanned++; scan.findings.push(...scanZip(fbuf, { blob: sha, path, inCurrentTree: inCur }, maxBytes)); }
+        else scan.skippedBinary++;
+        continue;
+      }
+      scan.scannedBlobs++;
+      scan.findings.push(...scanText(fbuf.toString("utf8"), { blob: sha, path, inCurrentTree: inCur }));
+    }
+  };
+  let batch: string[] = [], bsize = 0;
+  for (const sha of toRead) {
+    const sz = meta.get(sha)!.size;
+    if (bsize + sz > BUDGET && batch.length) { processBatch(batch); batch = []; bsize = 0; }
+    batch.push(sha); bsize += sz;
+  }
+  processBatch(batch);
+  return scan;
+}
+
+/** Mask a secret for display: word-phrases by first/last word, else by ends. */
+function maskValue(v: string): string {
+  const trimmed = v.trim();
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 6) return `${words[0]} … ${words[words.length - 1]} (${words.length} words)`;
+  if (trimmed.length <= 12) return trimmed.slice(0, 2) + "*".repeat(Math.max(0, trimmed.length - 2));
+  return `${trimmed.slice(0, 4)}…${"*".repeat(6)}…${trimmed.slice(-4)} (len ${trimmed.length})`;
+}
+
+// ---------------------------------------------------------------------------
 // Human report
 // ---------------------------------------------------------------------------
 
-function printReport(r: Report, meta: Map<string, CommitMeta>) {
+function printReport(r: Report, meta: Map<string, CommitMeta>, flags: { showSecrets: boolean }) {
   const B = "\x1b[1m", D = "\x1b[2m", G = "\x1b[32m", Y = "\x1b[33m", R = "\x1b[31m", X = "\x1b[0m";
   console.log(`\n${B}══ git-history-recover · ${r.repo} ══${X}`);
   console.log(`default branch : ${r.defaultBranch} @ ${short(r.defaultTip)}`);
@@ -548,9 +962,37 @@ function printReport(r: Report, meta: Map<string, CommitMeta>) {
   } else {
     console.log(`\n${D}(analysis only — re-run with --recover to materialise a repo with these refs)${X}`);
   }
+
+  if (r.secrets) {
+    const s = r.secrets;
+    const skipNote = `${D}(${s.scannedBlobs} text blob(s) + ${s.archivesScanned} archive(s); skipped ${s.skippedBinary} binary, ${s.skippedLarge} oversized)${X}`;
+    if (!s.findings.length) {
+      console.log(`\n${B}secret scan${X} ${skipNote} → ${G}${B}clean${X}`);
+      console.log(`  ${G}no secrets found in current or overwritten history.${X}`);
+    } else {
+      console.log(`\n${B}secret scan${X} ${skipNote} → ${R}${B}${s.findings.length} finding(s)${X}`);
+      const color: Record<Confidence, string> = { high: R, medium: Y, low: D };
+      for (const conf of ["high", "medium", "low"] as Confidence[]) {
+        const group = s.findings.filter((f) => f.confidence === conf);
+        if (!group.length) continue;
+        console.log(`  ${color[conf]}${B}${conf.toUpperCase()}${X} ${color[conf]}(${group.length})${X}`);
+        for (const f of group) {
+          const where = f.inCurrentTree ? "current tree" : `${Y}history-only${X}`;
+          const loc = f.archiveEntry ? `${f.path}!${f.archiveEntry}` : f.path;
+          const val = flags.showSecrets ? f.value.replace(/\s+/g, " ").trim() : maskValue(f.value);
+          console.log(`    ${f.category}`);
+          console.log(`      ${D}${loc}:${f.line} · blob ${short(f.blob)} · [${where}]${X}`);
+          console.log(`      ${val}`);
+        }
+      }
+      console.log(`\n  ${Y}Review each above. Rotate/revoke any real secret — a history rewrite does NOT${X}`);
+      console.log(`  ${Y}help once it has been pushed (it stays recoverable, exactly as this tool shows).${X}`);
+    }
+  }
   console.log("");
 }
 
 function short(s: string | null): string { return s ? s.slice(0, 10) : "—"; }
 
-main().catch((e) => fail(e?.message ?? String(e)));
+// Only run the pipeline when invoked directly; importing (e.g. tests) is a no-op.
+if (import.meta.main) main().catch((e) => fail(e?.message ?? String(e)));
