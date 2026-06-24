@@ -5137,15 +5137,24 @@ var init_claude_chrome_bridge = __esm({
         }
       }
       /**
-       * Capture a PNG screenshot via ADB screencap (Edge Android supports neither
-       * chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot). CDP, when
-       * connected, is used only to bring the target tab to the foreground first so
-       * screencap grabs the right content; it is not required.
+       * Capture a PNG screenshot.
+       *
+       * Preferred path — CDP `Page.captureScreenshot`: captures the tab's own
+       * renderer surface (the actual page content), so it works even when the Edge
+       * app is backgrounded. `Page.bringToFront` is REQUIRED first: a backgrounded
+       * renderer has no compositor surface and `captureScreenshot` fails with
+       * "Internal error" until the tab is the active one — bringToFront wakes the
+       * renderer without foregrounding the Edge app itself.
+       *
+       * Fallback — ADB `screencap`: grabs the whole device screen (so Edge must be
+       * foregrounded to show the page). Used only when CDP is unavailable or the
+       * renderer can't produce a frame.
        */
       async captureScreenshot(tabId) {
         if (this.isAvailable()) {
+          let targetId = null;
           try {
-            const targetId = await this.resolveTarget(tabId);
+            targetId = await this.resolveTarget(tabId);
             if (targetId) {
               let sessionId = this.sessionMap.get(targetId);
               if (!sessionId) {
@@ -5157,8 +5166,15 @@ var init_claude_chrome_bridge = __esm({
                 await this.sendCommand("Page.bringToFront", {}, sessionId);
               } catch {
               }
+              const shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId);
+              if (shot?.data) {
+                log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
+                return { data: shot.data };
+              }
             }
-          } catch {
+          } catch (err) {
+            if (targetId) this.sessionMap.delete(targetId);
+            log("debug", `CDP: Page.captureScreenshot failed, falling back to ADB screencap \u2014 ${err.message}`);
           }
         }
         try {
@@ -5175,7 +5191,7 @@ var init_claude_chrome_bridge = __esm({
           }
         } catch {
         }
-        return { error: "Screenshot not available (CDP Page.captureScreenshot unsupported on Android, ADB screencap failed)" };
+        return { error: "Screenshot not available (CDP Page.captureScreenshot failed and ADB screencap failed)" };
       }
       /** Dispatch a computer tool action via CDP Input domain */
       async dispatchComputerAction(action, params, tabId) {
@@ -5750,7 +5766,7 @@ var init_claude_chrome_bridge = __esm({
             if (body.method === "computer" && (body.params?.action === "screenshot" || body.params?.action === "zoom")) {
               const action = body.params.action;
               const shotTabId = body.params.tabId;
-              log("info", `HTTP /tool: intercepting computer ${action} via ADB screencap (tab ${shotTabId ?? "active"})`);
+              log("info", `HTTP /tool: intercepting computer ${action} via CDP/ADB capture (tab ${shotTabId ?? "active"})`);
               const shot = await cdpManager.captureScreenshot(shotTabId);
               if (shot.data) {
                 let imgData = shot.data;

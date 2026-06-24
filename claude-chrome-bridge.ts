@@ -668,18 +668,25 @@ class CdpManager {
   }
 
   /**
-   * Capture a PNG screenshot via ADB screencap (Edge Android supports neither
-   * chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot). CDP, when
-   * connected, is used only to bring the target tab to the foreground first so
-   * screencap grabs the right content; it is not required.
+   * Capture a PNG screenshot.
+   *
+   * Preferred path — CDP `Page.captureScreenshot`: captures the tab's own
+   * renderer surface (the actual page content), so it works even when the Edge
+   * app is backgrounded. `Page.bringToFront` is REQUIRED first: a backgrounded
+   * renderer has no compositor surface and `captureScreenshot` fails with
+   * "Internal error" until the tab is the active one — bringToFront wakes the
+   * renderer without foregrounding the Edge app itself.
+   *
+   * Fallback — ADB `screencap`: grabs the whole device screen (so Edge must be
+   * foregrounded to show the page). Used only when CDP is unavailable or the
+   * renderer can't produce a frame.
    */
   async captureScreenshot(tabId?: number): Promise<{ data?: string; error?: string }> {
-    // Activate the target tab first so ADB screencap captures the right content.
-    // Requires CDP — skipped when CDP isn't connected (screencap still grabs
-    // whatever Edge has in the foreground, which is the active tab on Android).
+    // Preferred: CDP page-content screenshot (works with Edge backgrounded).
     if (this.isAvailable()) {
+      let targetId: string | null = null;
       try {
-        const targetId = await this.resolveTarget(tabId);
+        targetId = await this.resolveTarget(tabId);
         if (targetId) {
           let sessionId = this.sessionMap.get(targetId);
           if (!sessionId) {
@@ -687,12 +694,23 @@ class CdpManager {
             sessionId = attach.sessionId;
             this.sessionMap.set(targetId, sessionId);
           }
+          // Wake the renderer so a backgrounded tab can produce a frame.
           try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
+          const shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId) as { data?: string };
+          if (shot?.data) {
+            log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
+            return { data: shot.data };
+          }
         }
-      } catch { /* non-fatal — we'll try ADB screencap anyway */ }
+      } catch (err) {
+        // Drop the possibly-stale session so the next attempt re-attaches, then
+        // fall back to ADB screencap below.
+        if (targetId) this.sessionMap.delete(targetId);
+        log("debug", `CDP: Page.captureScreenshot failed, falling back to ADB screencap — ${(err as Error).message}`);
+      }
     }
 
-    // ADB screencap — reliable on Android where CDP Page.captureScreenshot times out
+    // Fallback: ADB screencap (whole device screen — needs Edge foregrounded).
     try {
       const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
       const cap = runSync(adb("shell", "screencap", "-p", "/sdcard/cdp-screencap.png"));
@@ -707,7 +725,7 @@ class CdpManager {
       }
     } catch { /* ADB not available — continue */ }
 
-    return { error: "Screenshot not available (CDP Page.captureScreenshot unsupported on Android, ADB screencap failed)" };
+    return { error: "Screenshot not available (CDP Page.captureScreenshot failed and ADB screencap failed)" };
   }
 
   /** Dispatch a computer tool action via CDP Input domain */
@@ -2010,16 +2028,18 @@ const server: BridgeServer = createBridgeServer({
         lastToolName = body.method;
         lastToolTime = new Date().toISOString();
 
-        // Screenshot / zoom intercept. Edge Android supports neither
-        // chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot, so the
-        // extension path returns an error. Capture via ADB screencap instead
-        // (works with or without CDP). On failure, fall through to the extension
-        // so desktop captureVisibleTab still works.
+        // Screenshot / zoom intercept. The extension can't capture on Edge
+        // Android (no captureVisibleTab, CDP page endpoints unreachable from the
+        // content script), so it returns an error / times out. Capture via the
+        // bridge's own CDP connection instead — Page.captureScreenshot grabs the
+        // tab's renderer surface (works with Edge backgrounded), falling back to
+        // ADB screencap. On total failure, fall through to the extension so
+        // desktop captureVisibleTab still works.
         if (body.method === "computer" &&
             (body.params?.action === "screenshot" || body.params?.action === "zoom")) {
           const action = body.params.action as string;
           const shotTabId = body.params.tabId as number | undefined;
-          log("info", `HTTP /tool: intercepting computer ${action} via ADB screencap (tab ${shotTabId ?? "active"})`);
+          log("info", `HTTP /tool: intercepting computer ${action} via CDP/ADB capture (tab ${shotTabId ?? "active"})`);
           const shot = await cdpManager.captureScreenshot(shotTabId);
           if (shot.data) {
             let imgData = shot.data;
