@@ -5137,26 +5137,29 @@ var init_claude_chrome_bridge = __esm({
         }
       }
       /**
-       * Capture a PNG screenshot. Tries CDP Page.captureScreenshot first, then
-       * falls back to ADB screencap (Edge Android doesn't support CDP screenshots).
+       * Capture a PNG screenshot via ADB screencap (Edge Android supports neither
+       * chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot). CDP, when
+       * connected, is used only to bring the target tab to the foreground first so
+       * screencap grabs the right content; it is not required.
        */
       async captureScreenshot(tabId) {
-        if (!this.isAvailable()) return { error: "CDP not available" };
-        try {
-          const targetId = await this.resolveTarget(tabId);
-          if (targetId) {
-            let sessionId = this.sessionMap.get(targetId);
-            if (!sessionId) {
-              const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true });
-              sessionId = attach.sessionId;
-              this.sessionMap.set(targetId, sessionId);
+        if (this.isAvailable()) {
+          try {
+            const targetId = await this.resolveTarget(tabId);
+            if (targetId) {
+              let sessionId = this.sessionMap.get(targetId);
+              if (!sessionId) {
+                const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true });
+                sessionId = attach.sessionId;
+                this.sessionMap.set(targetId, sessionId);
+              }
+              try {
+                await this.sendCommand("Page.bringToFront", {}, sessionId);
+              } catch {
+              }
             }
-            try {
-              await this.sendCommand("Page.bringToFront", {}, sessionId);
-            } catch {
-            }
+          } catch {
           }
-        } catch {
         }
         try {
           const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
@@ -5744,6 +5747,40 @@ var init_claude_chrome_bridge = __esm({
             });
             lastToolName = body.method;
             lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
+            if (body.method === "computer" && (body.params?.action === "screenshot" || body.params?.action === "zoom")) {
+              const action = body.params.action;
+              const shotTabId = body.params.tabId;
+              log("info", `HTTP /tool: intercepting computer ${action} via ADB screencap (tab ${shotTabId ?? "active"})`);
+              const shot = await cdpManager.captureScreenshot(shotTabId);
+              if (shot.data) {
+                let imgData = shot.data;
+                if (action === "zoom") {
+                  try {
+                    const zoomFactor = body.params.zoom_factor ?? 2;
+                    const coord = body.params.coordinate ?? null;
+                    const { width, height, rgba } = decodePNG(shot.data);
+                    const cx = coord?.[0] ?? Math.round(width / 2);
+                    const cy = coord?.[1] ?? Math.round(height / 2);
+                    const cropW = Math.round(width / zoomFactor);
+                    const cropH = Math.round(height / zoomFactor);
+                    const cropX = Math.max(0, Math.min(Math.round(cx - cropW / 2), width - cropW));
+                    const cropY = Math.max(0, Math.min(Math.round(cy - cropH / 2), height - cropH));
+                    const croppedRGBA = cropPixels(rgba, width, height, cropX, cropY, cropW, cropH);
+                    imgData = encodePNG(croppedRGBA, cropW, cropH).toString("base64");
+                  } catch (cropErr) {
+                    log("warn", `HTTP /tool zoom crop failed, returning full screenshot: ${cropErr.message}`);
+                  }
+                }
+                return new Response(
+                  JSON.stringify({
+                    type: "tool_response",
+                    result: { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: imgData } }] }
+                  }),
+                  { headers: { "Content-Type": "application/json" } }
+                );
+              }
+              log("warn", `HTTP /tool: ADB screencap failed (${shot.error ?? "unknown"}); forwarding ${action} to extension`);
+            }
             const MAX_PENDING_TOOLS = 50;
             const totalQueued = pendingToolMap.size + Array.from(busyTabs.values()).reduce((acc, arr) => acc + arr.length, 0);
             if (totalQueued >= MAX_PENDING_TOOLS) {

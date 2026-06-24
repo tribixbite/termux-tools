@@ -668,25 +668,29 @@ class CdpManager {
   }
 
   /**
-   * Capture a PNG screenshot. Tries CDP Page.captureScreenshot first, then
-   * falls back to ADB screencap (Edge Android doesn't support CDP screenshots).
+   * Capture a PNG screenshot via ADB screencap (Edge Android supports neither
+   * chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot). CDP, when
+   * connected, is used only to bring the target tab to the foreground first so
+   * screencap grabs the right content; it is not required.
    */
   async captureScreenshot(tabId?: number): Promise<{ data?: string; error?: string }> {
-    if (!this.isAvailable()) return { error: "CDP not available" };
-
-    // Activate the target tab first so ADB screencap captures the right content
-    try {
-      const targetId = await this.resolveTarget(tabId);
-      if (targetId) {
-        let sessionId = this.sessionMap.get(targetId);
-        if (!sessionId) {
-          const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
-          sessionId = attach.sessionId;
-          this.sessionMap.set(targetId, sessionId);
+    // Activate the target tab first so ADB screencap captures the right content.
+    // Requires CDP — skipped when CDP isn't connected (screencap still grabs
+    // whatever Edge has in the foreground, which is the active tab on Android).
+    if (this.isAvailable()) {
+      try {
+        const targetId = await this.resolveTarget(tabId);
+        if (targetId) {
+          let sessionId = this.sessionMap.get(targetId);
+          if (!sessionId) {
+            const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+            sessionId = attach.sessionId;
+            this.sessionMap.set(targetId, sessionId);
+          }
+          try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
         }
-        try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
-      }
-    } catch { /* non-fatal — we'll try ADB screencap anyway */ }
+      } catch { /* non-fatal — we'll try ADB screencap anyway */ }
+    }
 
     // ADB screencap — reliable on Android where CDP Page.captureScreenshot times out
     try {
@@ -2005,6 +2009,48 @@ const server: BridgeServer = createBridgeServer({
 
         lastToolName = body.method;
         lastToolTime = new Date().toISOString();
+
+        // Screenshot / zoom intercept. Edge Android supports neither
+        // chrome.tabs.captureVisibleTab nor CDP Page.captureScreenshot, so the
+        // extension path returns an error. Capture via ADB screencap instead
+        // (works with or without CDP). On failure, fall through to the extension
+        // so desktop captureVisibleTab still works.
+        if (body.method === "computer" &&
+            (body.params?.action === "screenshot" || body.params?.action === "zoom")) {
+          const action = body.params.action as string;
+          const shotTabId = body.params.tabId as number | undefined;
+          log("info", `HTTP /tool: intercepting computer ${action} via ADB screencap (tab ${shotTabId ?? "active"})`);
+          const shot = await cdpManager.captureScreenshot(shotTabId);
+          if (shot.data) {
+            let imgData = shot.data;
+            if (action === "zoom") {
+              try {
+                const zoomFactor = (body.params.zoom_factor as number) ?? 2;
+                const coord = (body.params.coordinate as number[]) ?? null;
+                const { width, height, rgba } = decodePNG(shot.data);
+                const cx = coord?.[0] ?? Math.round(width / 2);
+                const cy = coord?.[1] ?? Math.round(height / 2);
+                const cropW = Math.round(width / zoomFactor);
+                const cropH = Math.round(height / zoomFactor);
+                const cropX = Math.max(0, Math.min(Math.round(cx - cropW / 2), width - cropW));
+                const cropY = Math.max(0, Math.min(Math.round(cy - cropH / 2), height - cropH));
+                const croppedRGBA = cropPixels(rgba, width, height, cropX, cropY, cropW, cropH);
+                imgData = encodePNG(croppedRGBA, cropW, cropH).toString("base64");
+              } catch (cropErr) {
+                log("warn", `HTTP /tool zoom crop failed, returning full screenshot: ${(cropErr as Error).message}`);
+              }
+            }
+            return new Response(
+              JSON.stringify({
+                type: "tool_response",
+                result: { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: imgData } }] },
+              }),
+              { headers: { "Content-Type": "application/json" } },
+            );
+          }
+          log("warn", `HTTP /tool: ADB screencap failed (${shot.error ?? "unknown"}); forwarding ${action} to extension`);
+          // fall through to normal extension dispatch
+        }
 
         // Guard against unbounded queue growth
         const MAX_PENDING_TOOLS = 50;
