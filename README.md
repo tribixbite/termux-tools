@@ -168,6 +168,38 @@ Requires `git` + `bun`; optional `unzip` (archive scanning) and the sibling
 `$GH_TOKEN`/`$GITHUB_TOKEN`, or `gh auth token` (raises API rate limits and enables
 private-repo access; the token is stripped from the recovered repo's `origin`).
 
+### GitHub Secret Pipeline (`scripts/gh-secret-pipeline.ts`)
+
+One repeatable command that runs the whole audit over an entire org/user (or a
+single repo) and **keeps a ledger of what it has scanned** — driving
+`git-history-recover` per repo, discovering deleted/renamed repos via the GH
+Archive event firehose, and scanning surviving copies (GitHub forks + npm
+tarballs). Symlinked as `gh-secret-pipeline` and `ghsp`.
+
+```bash
+ghsp <org | user | owner/repo>            # full pipeline; re-runs SKIP unchanged repos
+ghsp myorg --force                        # rescan everything
+ghsp myorg --mask                         # mask secrets in the printed report
+ghsp myorg --no-deleted                   # skip GH-Archive deleted-repo discovery
+```
+
+- **Per repo:** full history scan (incl. fork-recovered dangling commits) for
+  originals/small forks; **delta** scan (owner's commits ahead of upstream, via
+  the compare API) for large forks — so upstream fixtures don't create noise.
+- **Solana keypairs + secrets** are extracted, triaged (real vs vendored), and
+  shown unmasked by default. Full values are **always appended** (NDJSON,
+  append-only) to `~/.local/share/gh-secret-pipeline/secrets.ndjson`.
+- **Ledger** at `~/.local/share/gh-secret-pipeline/ledger.json` records every
+  repo's `pushed_at`, findings, keypair pubkeys, deleted-repo results, and run
+  history; unchanged repos are skipped on re-run.
+- **Hang-proof:** all git network ops run with `GIT_TERMINAL_PROMPT=0` + timeouts;
+  a failed GH-Archive query is reported as "unavailable", never as a false "clean".
+
+```bash
+ln -sf ~/git/termux-tools/scripts/gh-secret-pipeline.ts ~/.local/bin/gh-secret-pipeline
+ln -sf ~/git/termux-tools/scripts/gh-secret-pipeline.ts ~/.local/bin/ghsp
+```
+
 ## Quick Start
 
 ```bash

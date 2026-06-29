@@ -51,7 +51,7 @@
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -94,12 +94,22 @@ interface Finding {
   value: string;           // raw matched text (masked at print time)
 }
 
+/** A recovered Solana keypair (from a committed byte-array id.json or inline array). */
+interface KeyPair {
+  pubkey: string;          // base58 public key
+  secret: string;          // base58 secret (full key bytes) — already public in the repo
+  len: number;             // 32 (seed) or 64 (full keypair)
+  valid: boolean;          // 64B: stored pubkey matches the one derived from the seed
+  sources: string[];       // "path:line (current|history)"
+}
+
 interface SecretScan {
   scannedBlobs: number;
   skippedBinary: number;
   skippedLarge: number;
   archivesScanned: number;
   findings: Finding[];
+  keypairs: KeyPair[];     // deduped, derived Solana keypairs (subset of findings)
 }
 
 interface Report {
@@ -221,12 +231,19 @@ process.on("exit", () => {
   if (CLEANUP_DIR) try { rmSync(CLEANUP_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
-/** Run git in REPO_DIR (or opts.cwd). Never throws unless check=true. */
-function git(args: string[], opts: { cwd?: string; check?: boolean } = {}) {
+/**
+ * Run git in REPO_DIR (or opts.cwd). Never throws unless check=true.
+ * GIT_TERMINAL_PROMPT=0 makes auth failures fail fast instead of hanging on a
+ * credential prompt; opts.timeout (default 180s) kills stalled network ops so a
+ * single bad clone/fetch can't hang the whole pipeline indefinitely.
+ */
+function git(args: string[], opts: { cwd?: string; check?: boolean; timeout?: number } = {}) {
   const p = Bun.spawnSync(["git", ...args], {
     cwd: opts.cwd ?? REPO_DIR,
     stdout: "pipe",
     stderr: "pipe",
+    timeout: opts.timeout ?? 180_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "never" },
   });
   const out = p.stdout.toString().trim();
   const err = p.stderr.toString().trim();
@@ -341,7 +358,7 @@ async function main() {
   REPO_DIR = outDir;
 
   log(flags, `cloning into ${outDir} ...`);
-  const cl = git(["clone", "--quiet", netUrl(cloneUrl), outDir], { cwd: process.cwd() });
+  const cl = git(["clone", "--quiet", netUrl(cloneUrl), outDir], { cwd: process.cwd(), timeout: 600_000 });
   if (!cl.ok) fail(`clone failed: ${cl.err}`);
   git(["config", "gc.auto", "0"]);          // never auto-gc — we hold dangling objects
   git(["config", "gc.pruneExpire", "never"]);
@@ -492,7 +509,7 @@ async function main() {
 /** JSON replacer that masks finding values unless --show-secrets was passed. */
 function redactJson(show: boolean) {
   return (key: string, val: unknown) =>
-    !show && key === "value" && typeof val === "string" ? maskValue(val) : val;
+    !show && (key === "value" || key === "secret") && typeof val === "string" ? maskValue(val) : val;
 }
 
 // ---------------------------------------------------------------------------
@@ -619,6 +636,50 @@ export function base58Decode(s: string): Uint8Array | null {
   }
   for (let k = 0; k < s.length && s[k] === "1"; k++) bytes.push(0);
   return Uint8Array.from(bytes.reverse());
+}
+
+/** Encode bytes to base58. */
+function base58Encode(bytes: Uint8Array): string {
+  const d: number[] = [0];
+  for (const x of bytes) { let c = x; for (let j = 0; j < d.length; j++) { c += d[j] << 8; d[j] = c % 58; c = (c / 58) | 0; } while (c > 0) { d.push(c % 58); c = (c / 58) | 0; } }
+  let lead = ""; for (const x of bytes) { if (x === 0) lead += "1"; else break; }
+  return lead + d.reverse().map((x) => B58_ALPHABET[x]).join("");
+}
+
+/** Derive the ed25519 public key (32 bytes) from a 32-byte Solana seed. */
+function pubFromSeed(seed: Buffer): Buffer {
+  const der = Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), seed]);
+  const priv = createPrivateKey({ key: der, format: "der", type: "pkcs8" });
+  // createPublicKey accepts a private KeyObject at runtime; Bun's bundled node
+  // types omit that overload, so cast (verified correct at runtime).
+  const spki = createPublicKey(priv as any).export({ format: "der", type: "spki" }) as Buffer;
+  return spki.subarray(spki.length - 32);
+}
+
+/**
+ * Derive deduped Solana keypairs from the byte-array keypair findings: a Solana
+ * id.json is [seed(32) || pubkey(32)] = 64 bytes, or a bare 32-byte seed. We
+ * verify the 64-byte form (derived pubkey must match the stored one) so random
+ * 32/64-int crypto constants show as MISMATCH rather than masquerading as keys.
+ */
+export function deriveKeypairs(findings: Finding[]): KeyPair[] {
+  const byHex = new Map<string, Set<string>>();
+  for (const f of findings) {
+    if (!/Solana keypair byte array/.test(f.category)) continue;
+    let arr: number[]; try { arr = JSON.parse(f.value); } catch { continue; }
+    if (!Array.isArray(arr) || (arr.length !== 32 && arr.length !== 64)) continue;
+    const hex = Buffer.from(arr).toString("hex");
+    if (!byHex.has(hex)) byHex.set(hex, new Set());
+    byHex.get(hex)!.add(`${f.archiveEntry ? `${f.path}!${f.archiveEntry}` : f.path}:${f.line} (${f.inCurrentTree ? "current" : "history"})`);
+  }
+  const out: KeyPair[] = [];
+  for (const [hex, sources] of byHex) {
+    const bytes = Buffer.from(hex, "hex");
+    let pub: Buffer; try { pub = pubFromSeed(bytes.subarray(0, 32)); } catch { pub = Buffer.alloc(32); }
+    const valid = bytes.length === 64 ? bytes.subarray(32).equals(pub) : true;
+    out.push({ pubkey: base58Encode(pub), secret: base58Encode(bytes), len: bytes.length, valid, sources: [...sources] });
+  }
+  return out;
 }
 
 /** True if `words` is a checksum-valid BIP39 mnemonic (12/15/18/21/24 words). */
@@ -847,7 +908,7 @@ function scanZip(buf: Buffer, ctx: { blob: string; path: string; inCurrentTree: 
 /** Enumerate every blob across all refs, scan each (text + zip), classify location. */
 function scanSecrets(defaultTip: string | null, flags: { maxBlobMb: number; noArchives: boolean }): SecretScan {
   const maxBytes = Math.max(1, flags.maxBlobMb) * 1024 * 1024;
-  const scan: SecretScan = { scannedBlobs: 0, skippedBinary: 0, skippedLarge: 0, archivesScanned: 0, findings: [] };
+  const scan: SecretScan = { scannedBlobs: 0, skippedBinary: 0, skippedLarge: 0, archivesScanned: 0, findings: [], keypairs: [] };
 
   // blob -> representative path (from every object across all refs)
   const pathOf = new Map<string, string>();
@@ -899,6 +960,7 @@ function scanSecrets(defaultTip: string | null, flags: { maxBlobMb: number; noAr
     batch.push(sha); bsize += sz;
   }
   processBatch(batch);
+  scan.keypairs = deriveKeypairs(scan.findings);
   return scan;
 }
 
@@ -987,6 +1049,15 @@ function printReport(r: Report, meta: Map<string, CommitMeta>, flags: { showSecr
       }
       console.log(`\n  ${Y}Review each above. Rotate/revoke any real secret — a history rewrite does NOT${X}`);
       console.log(`  ${Y}help once it has been pushed (it stays recoverable, exactly as this tool shows).${X}`);
+    }
+    if (s.keypairs.length) {
+      console.log(`\n${B}Solana keypairs (${s.keypairs.length})${X} ${D}(secret already public in repo — shown for rotation/verification)${X}`);
+      for (const k of s.keypairs) {
+        const tag = k.valid ? (k.len === 64 ? "valid" : "32B-seed") : `${R}MISMATCH (likely not a key)${X}`;
+        console.log(`  ${B}${k.pubkey}${X}  [${tag}, ${k.len}B]`);
+        console.log(`    ${D}${k.sources.join(" ; ")}${X}`);
+        console.log(`    ${flags.showSecrets ? k.secret : maskValue(k.secret)}`);
+      }
     }
   }
   console.log("");
