@@ -1048,14 +1048,19 @@ function uploadImage(params) {
 }
 
 // --- Element Zapper ------------------------------------------------------------
-// Tap-to-remove mode for dismissing client-side overlays, popups, and paywalls
-// where the content exists in the DOM but is visually blocked. Started from the
-// popup ("Zap Element") via the background's start_zapper handler. Tapping an
-// element selects it (with a smart climb to the enclosing fixed-position overlay
-// root when one covers most of the viewport); toolbar offers Wider / Remove /
-// Undo / Done. Removing anything also unlocks page scroll (sites set
-// overflow:hidden on html/body while an overlay is up). Removed nodes stay on an
-// undo stack so a mis-tap is recoverable until Done.
+// Tap-to-fix mode for client-side overlays, popups, and paywalls where the
+// content exists in the DOM but is visually blocked. Started from the popup
+// ("Zap Element") via the background's start_zapper handler. Tapping an element
+// selects it (with a smart climb to the enclosing fixed-position overlay root
+// when one covers most of the viewport). Toolbar: Wider / Remove / Reveal /
+// Undo / Done. Two paywall archetypes are handled:
+//   • Overlay covers content     → Remove deletes the selected overlay element.
+//   • Content obscured in place   → Reveal strips blur/opacity/pointer-events
+//     locks page-wide (e.g. mlive applies filter:blur() directly to the article
+//     paragraphs, so removing them would delete the content — un-blur instead).
+// Removing or revealing also unlocks page scroll (sites set overflow:hidden on
+// html/body while gated). Removed nodes stay on an undo stack so a mis-tap is
+// recoverable until Done; Reveal is non-destructive.
 
 let zapperState = null;
 
@@ -1092,7 +1097,8 @@ function zapperStart() {
   label.style.cssText =
     "font-family:monospace;font-size:11px;color:#8b949e;margin-bottom:8px;" +
     "white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-  label.textContent = "Tap the overlay or popup you want to remove";
+  const DEFAULT_HINT = "Tap an overlay to Remove, or Reveal to un-blur content";
+  label.textContent = DEFAULT_HINT;
 
   const row = document.createElement("div");
   row.style.cssText = "display:flex;gap:8px";
@@ -1110,6 +1116,7 @@ function zapperStart() {
 
   const widerBtn = mkBtn("Wider");
   const removeBtn = mkBtn("Remove", "#da3633");
+  const revealBtn = mkBtn("Reveal", "#1f6feb");
   const undoBtn = mkBtn("Undo");
   const doneBtn = mkBtn("Done", "#238636");
 
@@ -1142,7 +1149,7 @@ function zapperStart() {
     } else {
       state.selected = null;
       highlight.style.display = "none";
-      label.textContent = "Tap the overlay or popup you want to remove";
+      label.textContent = DEFAULT_HINT;
     }
     removeBtn.style.opacity = state.selected ? "1" : "0.4";
     widerBtn.style.opacity = state.selected ? "1" : "0.4";
@@ -1236,6 +1243,65 @@ function zapperStart() {
     refreshUi();
   });
 
+  // Reveal: for paywalls that obscure the real content in place (blur filter,
+  // low opacity, pointer-events/user-select locks) rather than covering it with
+  // a removable overlay — the content is in the DOM, so we un-hide it instead of
+  // deleting it. Scoped to the selection subtree when one is picked, else the
+  // whole page. Non-destructive; a persistent override style prevents re-hiding.
+  function revealObscured(scope) {
+    const root = scope && scope.isConnected ? scope : document.body;
+    // Include the scope itself plus every descendant.
+    const els = [root, ...root.querySelectorAll("*")];
+    let count = 0;
+    for (const el of els) {
+      if (el.closest && el.closest("[data-cfc-zapper]")) continue;
+      const cs = getComputedStyle(el);
+      let changed = false;
+      if (cs.filter && cs.filter !== "none" && /blur|grayscale/i.test(cs.filter)) {
+        el.style.setProperty("filter", "none", "important");
+        el.style.setProperty("-webkit-filter", "none", "important");
+        changed = true;
+      }
+      // Faded-out content (not fully hidden — opacity:0 is usually a real hide).
+      const op = parseFloat(cs.opacity);
+      if (!isNaN(op) && op > 0 && op < 0.6 && (el.textContent || "").trim().length > 20) {
+        el.style.setProperty("opacity", "1", "important");
+        changed = true;
+      }
+      // Reading/selection locks used to discourage copying gated text.
+      if (cs.pointerEvents === "none") { el.style.setProperty("pointer-events", "auto", "important"); changed = true; }
+      if (cs.userSelect === "none") { el.style.setProperty("user-select", "text", "important"); changed = true; }
+      if (el.classList && el.classList.length) {
+        for (const c of [...el.classList]) {
+          if (/blur|obfuscat|paywall|gated|faded/i.test(c)) { el.classList.remove(c); changed = true; }
+        }
+      }
+      if (changed) count++;
+    }
+    // Persistent override so classes re-applied by the site's JS can't re-blur.
+    if (!state.revealStyle) {
+      const st = document.createElement("style");
+      st.setAttribute("data-cfc-zapper", "");
+      st.textContent =
+        '[class*="blur" i],[class*="obfuscat" i],[class*="gated" i],[class*="paywall" i]' +
+        "{filter:none !important;-webkit-filter:none !important;opacity:1 !important;}";
+      document.documentElement.appendChild(st);
+      state.revealStyle = st;
+    }
+    applyScrollUnlock();
+    return count;
+  }
+
+  revealBtn.addEventListener("click", () => {
+    // These paywalls blur many elements across the article, so default to the
+    // whole page. A picked container narrows it only when the user selected one
+    // bigger than a single inline/text node.
+    const sel = state.selected;
+    const scope = sel && sel.querySelectorAll && sel.querySelectorAll("*").length > 3 ? sel : document.body;
+    const n = revealObscured(scope);
+    label.textContent = "Revealed " + n + " element(s) — content un-blurred";
+  });
+
   undoBtn.addEventListener("click", () => {
     const entry = state.undoStack.pop();
     if (entry && entry.parent) {
@@ -1254,7 +1320,7 @@ function zapperStart() {
 
   zapperState = state;
   refreshUi();
-  return { result: "Zapper started — tap an element to select, then Remove" };
+  return { result: "Zapper started — Remove overlays, or Reveal to un-blur in-place content" };
 }
 
 function zapperStop() {
