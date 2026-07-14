@@ -1108,6 +1108,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "start_zapper") {
+    // Element zapper: inject content.js into the active tab and enter
+    // tap-to-remove mode (for dismissing overlays/paywalls by hand)
+    chrome.tabs.query({ active: true, currentWindow: true }, (activeTabs) => {
+      const tid = activeTabs[0]?.id;
+      if (!tid) {
+        sendResponse({ ok: false, error: "No active tab" });
+        return;
+      }
+      executeViaContentScript(tid, "zapper_start", {})
+        .then((result) => {
+          addLog("info", `Zapper started on tab ${tid}`);
+          sendResponse({ ok: !result?.error, ...result });
+        })
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+    });
+    return true;
+  }
+
   // --- Dev tool panel handlers -------------------------------------------------
 
   if (msg.type === "get_network") {

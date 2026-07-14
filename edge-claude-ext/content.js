@@ -169,6 +169,10 @@ async function handleAction(action, params) {
       return { width: window.innerWidth, height: window.innerHeight };
     case "upload_image":
       return uploadImage(params);
+    case "zapper_start":
+      return zapperStart();
+    case "zapper_stop":
+      return zapperStop();
     default:
       return { error: `Unknown action: ${action}` };
   }
@@ -1041,4 +1045,229 @@ function uploadImage(params) {
   } catch (err) {
     return { error: `Upload failed: ${err.message}` };
   }
+}
+
+// --- Element Zapper ------------------------------------------------------------
+// Tap-to-remove mode for dismissing client-side overlays, popups, and paywalls
+// where the content exists in the DOM but is visually blocked. Started from the
+// popup ("Zap Element") via the background's start_zapper handler. Tapping an
+// element selects it (with a smart climb to the enclosing fixed-position overlay
+// root when one covers most of the viewport); toolbar offers Wider / Remove /
+// Undo / Done. Removing anything also unlocks page scroll (sites set
+// overflow:hidden on html/body while an overlay is up). Removed nodes stay on an
+// undo stack so a mis-tap is recoverable until Done.
+
+let zapperState = null;
+
+function zapperStart() {
+  if (zapperState) return { result: "Zapper already active" };
+
+  const MAX_Z = 2147483647;
+  const state = {
+    selected: null,
+    undoStack: [],
+    unlockStyle: null,
+    listeners: [],
+  };
+
+  // Highlight box tracking the selected element (pointer-events:none so it
+  // never interferes with elementFromPoint or taps)
+  const highlight = document.createElement("div");
+  highlight.setAttribute("data-cfc-zapper", "");
+  highlight.style.cssText =
+    "position:fixed;pointer-events:none;z-index:" + MAX_Z + ";display:none;" +
+    "background:rgba(248,81,73,0.25);border:2px solid #f85149;border-radius:4px;" +
+    "box-sizing:border-box;transition:top 0.08s,left 0.08s,width 0.08s,height 0.08s";
+
+  // Floating toolbar — touch-friendly, fixed to bottom of viewport
+  const bar = document.createElement("div");
+  bar.setAttribute("data-cfc-zapper", "");
+  bar.style.cssText =
+    "position:fixed;left:8px;right:8px;bottom:12px;z-index:" + MAX_Z + ";" +
+    "background:#161b22;color:#c9d1d9;border:1px solid #30363d;border-radius:12px;" +
+    "box-shadow:0 4px 24px rgba(0,0,0,0.6);padding:10px 12px;" +
+    "font:13px -apple-system,system-ui,sans-serif;box-sizing:border-box";
+
+  const label = document.createElement("div");
+  label.style.cssText =
+    "font-family:monospace;font-size:11px;color:#8b949e;margin-bottom:8px;" +
+    "white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+  label.textContent = "Tap the overlay or popup you want to remove";
+
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:8px";
+
+  function mkBtn(text, bg) {
+    const b = document.createElement("button");
+    b.setAttribute("data-cfc-zapper", "");
+    b.textContent = text;
+    b.style.cssText =
+      "flex:1;min-height:40px;border:1px solid #30363d;border-radius:8px;" +
+      "background:" + (bg || "#21262d") + ";color:#fff;font:600 13px -apple-system,system-ui,sans-serif";
+    row.appendChild(b);
+    return b;
+  }
+
+  const widerBtn = mkBtn("Wider");
+  const removeBtn = mkBtn("Remove", "#da3633");
+  const undoBtn = mkBtn("Undo");
+  const doneBtn = mkBtn("Done", "#238636");
+
+  bar.appendChild(label);
+  bar.appendChild(row);
+  document.documentElement.appendChild(highlight);
+  document.documentElement.appendChild(bar);
+  state.highlight = highlight;
+  state.bar = bar;
+
+  function describe(el) {
+    let s = "<" + el.tagName.toLowerCase();
+    if (el.id) s += " id=" + el.id;
+    else if (typeof el.className === "string" && el.className.trim()) {
+      s += " ." + el.className.trim().split(/\s+/).slice(0, 2).join(".");
+    }
+    const r = el.getBoundingClientRect();
+    return s + "> " + Math.round(r.width) + "×" + Math.round(r.height);
+  }
+
+  function refreshUi() {
+    if (state.selected && state.selected.isConnected) {
+      const r = state.selected.getBoundingClientRect();
+      highlight.style.display = "block";
+      highlight.style.top = r.top + "px";
+      highlight.style.left = r.left + "px";
+      highlight.style.width = r.width + "px";
+      highlight.style.height = r.height + "px";
+      label.textContent = describe(state.selected);
+    } else {
+      state.selected = null;
+      highlight.style.display = "none";
+      label.textContent = "Tap the overlay or popup you want to remove";
+    }
+    removeBtn.style.opacity = state.selected ? "1" : "0.4";
+    widerBtn.style.opacity = state.selected ? "1" : "0.4";
+    undoBtn.style.opacity = state.undoStack.length ? "1" : "0.4";
+  }
+
+  // Prefer the outermost fixed/sticky (or positioned high-z absolute) ancestor
+  // when it covers most of the viewport — that's the overlay root sites mount
+  // paywalls/modals on. Otherwise keep the exact tapped element.
+  function pickOverlayRoot(el) {
+    let best = el;
+    let cur = el;
+    const viewArea = window.innerWidth * window.innerHeight;
+    while (cur && cur !== document.body && cur !== document.documentElement) {
+      const cs = getComputedStyle(cur);
+      const positioned =
+        cs.position === "fixed" || cs.position === "sticky" ||
+        (cs.position === "absolute" && (parseInt(cs.zIndex, 10) || 0) >= 1);
+      if (positioned) {
+        const r = cur.getBoundingClientRect();
+        if (r.width * r.height >= 0.5 * viewArea) best = cur;
+      }
+      cur = cur.parentElement;
+    }
+    return best;
+  }
+
+  // While an overlay is up, sites lock scroll with overflow:hidden (and
+  // sometimes position:fixed) on html/body — undo that once we zap something.
+  function applyScrollUnlock() {
+    if (state.unlockStyle) return;
+    const st = document.createElement("style");
+    st.setAttribute("data-cfc-zapper", "");
+    st.textContent =
+      "html,body{overflow:auto !important;position:static !important;height:auto !important;}";
+    document.documentElement.appendChild(st);
+    state.unlockStyle = st;
+  }
+
+  function onPointerDown(e) {
+    if (e.target && e.target.closest && e.target.closest("[data-cfc-zapper]")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el || el === document.documentElement || el === document.body) {
+      state.selected = null;
+    } else {
+      state.selected = pickOverlayRoot(el);
+    }
+    refreshUi();
+  }
+
+  // Swallow the rest of the tap gesture so the page never reacts to zap taps
+  function swallow(e) {
+    if (e.target && e.target.closest && e.target.closest("[data-cfc-zapper]")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+  }
+
+  function listen(type, fn, opts) {
+    document.addEventListener(type, fn, opts);
+    state.listeners.push([type, fn, opts]);
+  }
+
+  listen("pointerdown", onPointerDown, { capture: true, passive: false });
+  for (const t of ["pointerup", "mousedown", "mouseup", "click", "touchstart", "touchend", "touchmove"]) {
+    listen(t, swallow, { capture: true, passive: false });
+  }
+  const reposition = () => refreshUi();
+  listen("scroll", reposition, { capture: true, passive: true });
+  window.addEventListener("resize", reposition, { passive: true });
+  state.listeners.push(["__window_resize", reposition, null]);
+
+  widerBtn.addEventListener("click", () => {
+    const p = state.selected && state.selected.parentElement;
+    if (p && p !== document.body && p !== document.documentElement) {
+      state.selected = p;
+      refreshUi();
+    }
+  });
+
+  removeBtn.addEventListener("click", () => {
+    const el = state.selected;
+    if (!el || !el.isConnected) return;
+    state.undoStack.push({ el, parent: el.parentNode, next: el.nextSibling });
+    el.remove();
+    applyScrollUnlock();
+    state.selected = null;
+    refreshUi();
+  });
+
+  undoBtn.addEventListener("click", () => {
+    const entry = state.undoStack.pop();
+    if (entry && entry.parent) {
+      try {
+        entry.parent.insertBefore(entry.el, entry.next && entry.next.parentNode === entry.parent ? entry.next : null);
+      } catch {}
+    }
+    if (!state.undoStack.length && state.unlockStyle) {
+      state.unlockStyle.remove();
+      state.unlockStyle = null;
+    }
+    refreshUi();
+  });
+
+  doneBtn.addEventListener("click", () => zapperStop());
+
+  zapperState = state;
+  refreshUi();
+  return { result: "Zapper started — tap an element to select, then Remove" };
+}
+
+function zapperStop() {
+  const state = zapperState;
+  if (!state) return { result: "Zapper not active" };
+  for (const [type, fn, opts] of state.listeners) {
+    if (type === "__window_resize") window.removeEventListener("resize", fn);
+    else document.removeEventListener(type, fn, opts);
+  }
+  state.bar.remove();
+  state.highlight.remove();
+  // Removed elements stay removed and the scroll unlock persists — that's the
+  // point of zapping. Only the mode UI is torn down.
+  zapperState = null;
+  return { result: `Zapper stopped (${state.undoStack.length} element(s) removed)` };
 }

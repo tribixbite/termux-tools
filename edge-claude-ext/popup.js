@@ -109,6 +109,22 @@ chrome.runtime.onMessage.addListener((msg) => {
 
 // --- Dashboard buttons -------------------------------------------------------
 
+document.getElementById("btn-zap").addEventListener("click", () => {
+  const zapBtn = document.getElementById("btn-zap");
+  zapBtn.textContent = "Starting zapper...";
+  zapBtn.disabled = true;
+  chrome.runtime.sendMessage({ type: "start_zapper" }, (response) => {
+    if (response && response.ok !== false) {
+      // Close the popup so the user can tap the page element immediately
+      window.close();
+    } else {
+      zapBtn.textContent = "Zapper failed: " + (response?.error || "unknown");
+      zapBtn.disabled = false;
+      setTimeout(() => { zapBtn.innerHTML = "&#9889; Zap Element"; }, 3000);
+    }
+  });
+});
+
 document.getElementById("btn-reconnect").addEventListener("click", () => {
   chrome.runtime.sendMessage({ type: "reconnect" }, () => {
     document.getElementById("statusText").textContent = "Reconnecting...";
