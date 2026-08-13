@@ -21,7 +21,7 @@ function pickTmpDir(): string {
   return tmpdir();
 }
 const TMP = pickTmpDir();
-import { patchBuffer, patchFile, keepFromEnv, PATCH_TARGETS } from "./patch";
+import { patchBuffer, patchFile, keepFromEnv, PATCH_TARGETS, RESOLV_FROM, RESOLV_REDIRECT_PATH } from "./patch";
 
 test("patchBuffer blanks targets with equal-length spaces, length preserved", () => {
   const text = `aaa${PATCH_TARGETS[0]}bbb${PATCH_TARGETS[1]}ccc${PATCH_TARGETS[1]}ddd`;
@@ -50,6 +50,28 @@ test("keepFromEnv maps the CCPATCH_KEEP_* vars", () => {
   expect(keepFromEnv({} as NodeJS.ProcessEnv)).toEqual([]);
   expect(keepFromEnv({ CCPATCH_KEEP_NO_COMMIT: "1" } as NodeJS.ProcessEnv)).toEqual([PATCH_TARGETS[0]]);
   expect(keepFromEnv({ CCPATCH_KEEP_NO_COMMENTS: "1" } as NodeJS.ProcessEnv)).toEqual([PATCH_TARGETS[1]]);
+  expect(keepFromEnv({ CCPATCH_KEEP_RESOLV: "1" } as NodeJS.ProcessEnv)).toEqual([RESOLV_FROM]);
+});
+
+test("patchBuffer redirects /etc/resolv.conf -> /sdcard/dns.conf, length preserved", () => {
+  expect(RESOLV_FROM.length).toBe(RESOLV_REDIRECT_PATH.length); // byte-preserving invariant
+  const text = `pre\0${RESOLV_FROM}\0/etc/nsswitch.conf\0post`;
+  const buf = Buffer.from(text, "latin1");
+  const before = buf.length;
+  const res = patchBuffer(buf);
+  expect(buf.length).toBe(before);
+  expect(res.occurrences[RESOLV_FROM]).toBe(1);
+  const out = buf.toString("latin1");
+  expect(out).toContain(RESOLV_REDIRECT_PATH);
+  expect(out).not.toContain(RESOLV_FROM);
+  expect(out).toContain("/etc/nsswitch.conf"); // adjacent string untouched
+});
+
+test("patchBuffer respects CCPATCH_KEEP_RESOLV via keep list", () => {
+  const buf = Buffer.from(RESOLV_FROM, "latin1");
+  const res = patchBuffer(buf, [RESOLV_FROM]);
+  expect(res.occurrences[RESOLV_FROM]).toBe(0);
+  expect(buf.toString("latin1")).toBe(RESOLV_FROM);
 });
 
 test("patchFile writes a .bak-prepatch and patches in place", () => {
