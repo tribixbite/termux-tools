@@ -200,6 +200,41 @@ ln -sf ~/git/termux-tools/scripts/gh-secret-pipeline.ts ~/.local/bin/gh-secret-p
 ln -sf ~/git/termux-tools/scripts/gh-secret-pipeline.ts ~/.local/bin/ghsp
 ```
 
+### F-Droid metadata tooling (`scripts/fdroid-proot.sh`)
+
+Runs `fdroidserver` from the Ubuntu proot container, so F-Droid recipe checks
+work on-device without a Termux Python build. Symlinked as `fdroid`.
+
+```bash
+cd ~/git/fdroiddata-fork
+fdroid lint app.embeddy          # metadata correctness
+fdroid readmeta                  # parses against the schema
+fdroid rewritemeta app.embeddy   # canonical form (CI enforces this)
+fdroid checkupdates --allow-dirty app.embeddy   # validates UpdateCheckData live
+```
+
+- **Why the container:** fdroidserver pulls Pillow, cryptography (via paramiko),
+  lxml and androguard. Termux has no wheels for those and would build every one
+  from sdist; Ubuntu 24.04 aarch64 has manylinux wheels for all of them.
+- **No copying, no `--bind`:** proot-distro binds `/data/data/com.termux` by
+  default, so the container sees Termux `$HOME` at the same absolute path —
+  `fdroid lint` reads the very files you edit here.
+- **`ANDROID_HOME` is deliberately not forwarded.** These are the metadata
+  commands; they need no SDK, so `~/android-sdk`, `~/.gradle` and `~/.android`
+  are never touched.
+- **`fdroid build` is not the goal here.** Reproducible-build verification only
+  means anything on amd64: F-Droid's `fdroid build` job runs on
+  `saas-linux-medium-amd64` in `fdroidserver:buildserver-bookworm`, against a
+  release GitHub Actions also built on amd64. Building on this aarch64 device
+  uses a different aapt2, so its APKs cannot byte-match. Push a branch to your
+  fdroiddata fork to get the real check.
+
+```bash
+proot-distro login ubuntu -- /bin/bash -lc \
+  "python3 -m venv /opt/fdroidserver && /opt/fdroidserver/bin/pip install fdroidserver"
+ln -sf ~/git/termux-tools/scripts/fdroid-proot.sh ~/.local/bin/fdroid
+```
+
 ## Quick Start
 
 ```bash
