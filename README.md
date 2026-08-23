@@ -72,6 +72,44 @@ tools/fix-after-update.sh         # Apply phantom process killer fix
 
 ADB auto-reconnects every 5 minutes via cron.
 
+### Codex CLI DNS patch (`scripts/patch-codex-termux-dns.sh`)
+
+Repairs device-code authentication in the native Codex CLI package on Termux when
+the initial request fails with an error such as:
+
+```text
+Error logging in with device code: error sending request for url
+(https://auth.openai.com/api/accounts/deviceauth/usercode)
+```
+
+The native binary's bundled resolver opens `/etc/resolv.conf`, but Android's
+read-only `/system/etc` does not provide that file to Termux. The script uses the
+existing byte-preserving patcher in `claude-channel/src/patch.ts` to replace the
+16-byte `/etc/resolv.conf` literal with the equal-length `/sdcard/dns.conf` path.
+It creates the resolver file when needed, keeps a one-time `.bak-prepatch` backup,
+and replaces the binary atomically so running mapped processes retain their old
+inode safely.
+
+```bash
+scripts/patch-codex-termux-dns.sh
+codex login --device-auth
+```
+
+The default target is the Bun global installation's aarch64 musl binary. Pass a
+different native binary path as the first argument, or set `CODEX_BINARY`, when
+Codex is installed elsewhere:
+
+```bash
+scripts/patch-codex-termux-dns.sh /path/to/native/codex
+```
+
+Codex package updates replace the native binary, so rerun the script after an
+update if the login error returns. Device-code login must also be enabled in the
+account or workspace settings as described in the
+[official Codex authentication documentation](https://developers.openai.com/codex/auth).
+The binary rewrite itself is a Termux-specific workaround, not an official OpenAI
+installation step.
+
 ### Android Secure Prefs Dumper (`scripts/android-secure-prefs-dump`)
 
 Dumps any Android app's `androidx.security.crypto.EncryptedSharedPreferences`
