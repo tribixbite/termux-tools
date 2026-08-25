@@ -309,6 +309,7 @@ module map, boot sequence, and component details.
 
 | Doc | Description |
 |-----|-------------|
+| [CLAUDE_CODE_TERMUX_SETUP.md](docs/CLAUDE_CODE_TERMUX_SETUP.md) | Brand-new Termux → working, patched, self-updating Claude Code (glibc runtime, `ccx` channels, DNS patch) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, module map, boot sequence |
 | [ADB_WIRELESS_GUIDE.md](docs/ADB_WIRELESS_GUIDE.md) | ADB wireless setup and troubleshooting |
 | [QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md) | Command cheat sheet |
