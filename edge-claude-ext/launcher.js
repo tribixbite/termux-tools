@@ -29,16 +29,24 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
   });
 
-  // Try starting via daemon HTTP API (works when Termux is running)
+  // Try starting via daemon HTTP API (works when Termux is running).
+  // The daemon requires Authorization: Bearer — token is saved via the popup.
   status.textContent = "Trying daemon...";
   try {
+    const { operadToken } = await new Promise((resolve) =>
+      chrome.storage.local.get("operadToken", resolve)
+    );
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 3000);
     const resp = await fetch("http://127.0.0.1:18970/api/bridge", {
       method: "POST",
+      headers: operadToken ? { Authorization: `Bearer ${operadToken}` } : {},
       signal: ctrl.signal,
     });
     clearTimeout(timer);
+    if (resp.status === 401) {
+      status.textContent = "Daemon needs a token — set it in the extension popup (operad token)";
+    }
     if (resp.ok) {
       const data = await resp.json();
       if (data.status === "starting" || data.status === "already_running") {

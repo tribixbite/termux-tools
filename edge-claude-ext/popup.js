@@ -291,6 +291,32 @@ chkInjectAll.addEventListener("change", () => {
   injectModeLabel.textContent = mode;
 });
 
+// --- Operad daemon token -----------------------------------------------------
+// The operad dashboard API requires Authorization: Bearer <token> (operad
+// commit c3e71ce6). Stored here; background.js/launcher.js attach it when
+// calling the daemon's /api/bridge endpoints to auto-start the bridge.
+
+const tokenInput = document.getElementById("operad-token");
+const tokenStatus = document.getElementById("operad-token-status");
+
+chrome.storage.local.get("operadToken", (data) => {
+  if (data.operadToken) {
+    tokenInput.value = data.operadToken;
+    tokenStatus.textContent = "(saved)";
+  }
+});
+
+tokenInput.addEventListener("change", () => {
+  const token = tokenInput.value.trim();
+  if (token) {
+    chrome.storage.local.set({ operadToken: token });
+    tokenStatus.textContent = "(saved)";
+  } else {
+    chrome.storage.local.remove("operadToken");
+    tokenStatus.textContent = "(cleared)";
+  }
+});
+
 // Also update from state pushes
 function updateInjectionMode(state) {
   if (state.cfcInjectionMode) {

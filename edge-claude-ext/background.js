@@ -1392,6 +1392,20 @@ async function stopBridge() {
   return { ok: true, detail: "Bridge stopped" };
 }
 
+/**
+ * Read the operad daemon token from storage. The daemon's /api/* endpoints
+ * require Authorization: Bearer <token> (operad commit c3e71ce6); without it
+ * they return 401 and every launch falls back to the share sheet.
+ * @returns {Promise<Record<string, string>>} headers to spread into fetch opts
+ */
+function operadAuthHeaders() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get("operadToken", (data) => {
+      resolve(data.operadToken ? { Authorization: `Bearer ${data.operadToken}` } : {});
+    });
+  });
+}
+
 async function launchBridge() {
   addLog("info", "Attempting to launch bridge");
 
@@ -1415,14 +1429,19 @@ async function launchBridge() {
   }
 
   // Try starting bridge via tmx daemon HTTP API (always-on, no share sheet needed)
+  const authHeaders = await operadAuthHeaders();
   try {
     const daemonCtrl = new AbortController();
     const daemonTimer = setTimeout(() => daemonCtrl.abort(), 3000);
     const daemonResp = await fetch("http://127.0.0.1:18970/api/bridge", {
       method: "POST",
+      headers: authHeaders,
       signal: daemonCtrl.signal,
     });
     clearTimeout(daemonTimer);
+    if (daemonResp.status === 401) {
+      addLog("warn", "Daemon rejected request (401) — paste `operad token` output into the popup's Daemon Token field");
+    }
     if (daemonResp.ok) {
       const data = await daemonResp.json();
       addLog("info", `Bridge start via daemon: ${data.status}`, data);
@@ -1441,6 +1460,7 @@ async function launchBridge() {
     const tsTimer = setTimeout(() => tsCtrl.abort(), 5000);
     const tsResp = await fetch("http://127.0.0.1:18970/api/bridge/termux-service", {
       method: "POST",
+      headers: authHeaders,
       signal: tsCtrl.signal,
     });
     clearTimeout(tsTimer);

@@ -390,6 +390,16 @@
       <span style="flex:1"></span>
       <span style="font-size:10px;color:#8b949e" id="inject-mode-label">on-demand</span>
     </label>
+    <div class="section-title" style="margin-top:12px">Daemon Token</div>
+    <div style="padding:8px 10px;background:#161b22;border:1px solid #21262d;border-radius:6px">
+      <input type="password" id="operad-token" class="panel-filter" style="width:100%"
+             placeholder="Paste output of: operad token" autocomplete="off">
+      <div style="font-size:10px;color:#8b949e;margin-top:6px">
+        Needed to auto-start the bridge via the operad daemon (its API requires
+        <span style="font-family:monospace">Authorization: Bearer</span> since operad added auth).
+        <span id="operad-token-status" style="font-family:monospace"></span>
+      </div>
+    </div>
   </div>
 
   <!-- Tests panel -->
