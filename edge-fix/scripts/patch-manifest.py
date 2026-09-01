@@ -21,6 +21,29 @@ def android_attr(name):
     return f"{{{ANDROID_NS}}}{name}"
 
 
+# Forward-compat android: attributes that apktool's bundled framework may not
+# recognize, causing "attribute ... not found" recompile failures on newer Edge
+# builds. These are perf/feature hints that older Android ignores, so stripping
+# the attribute (not the element) is safe. Extend as new Edge versions appear.
+STRIP_ATTRIBUTES = [
+    "zygotePreloadNativeLib",  # API 34: app-zygote native lib preload hint
+    "nativeService",           # API 36: native-service declaration hint
+]
+
+
+def strip_unknown_attributes(root):
+    """Drop forward-compat android: attributes apktool's framework can't compile."""
+    removed = 0
+    for elem in root.iter():
+        for attr in STRIP_ATTRIBUTES:
+            qn = android_attr(attr)
+            if qn in elem.attrib:
+                del elem.attrib[qn]
+                print(f"  [x] Stripped attribute: android:{attr} from <{elem.tag}>")
+                removed += 1
+    return removed
+
+
 def read_config(filepath):
     """Read a config file, skip comments and blanks."""
     entries = []
@@ -140,6 +163,9 @@ def main():
     print("\n=== Stripping tracker meta-data ===")
     n_meta = strip_metadata(root, config_dir)
 
+    print("\n=== Stripping forward-compat attributes apktool can't compile ===")
+    n_attrs = strip_unknown_attributes(root)
+
     # Remove @null meta-data entries to avoid apktool compilation issues
     # (apktool compiles @null to @0x00000000 which GMS rejects as invalid)
     # Removing the entries entirely is safer than replacing with "0"
@@ -188,7 +214,8 @@ def main():
     print(f"  Components stripped: {n_comps}")
     print(f"  Queries stripped: {n_queries}")
     print(f"  Meta-data stripped: {n_meta}")
-    print(f"  Total removals: {n_perms + n_comps + n_queries + n_meta}")
+    print(f"  Attributes stripped: {n_attrs}")
+    print(f"  Total removals: {n_perms + n_comps + n_queries + n_meta + n_attrs}")
     print(f"  Backup saved: {backup_path}")
 
     # Validate

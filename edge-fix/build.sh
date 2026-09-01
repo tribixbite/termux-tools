@@ -78,7 +78,9 @@ for bt_dir in "$HOME/android-tools/android-sdk/build-tools/35.0.0" \
               "$HOME/android-tools/android-sdk/build-tools/34.0.0-arm64" \
               "$HOME/android-sdk/build-tools/35.0.0" \
               "$HOME/android-sdk/build-tools/34.0.0" \
-              "$HOME/android-sdk/build-tools/34.0.0-arm64"; do
+              "$HOME/android-sdk/build-tools/34.0.0-arm64" \
+              "$HOME/android-sdk/build-tools/30.0.3" \
+              "$HOME"/android-sdk/build-tools/*; do
     if [ -f "$bt_dir/apksigner" ]; then
         APKSIGNER="$bt_dir/apksigner"
         break
