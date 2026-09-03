@@ -7,12 +7,22 @@
 # Applied to ALL decompiled DEX files during build.
 
 # Huawei HMS — push, analytics, device ID, ads, AGConnect (China market only)
-com/huawei/hms
-com/huawei/agconnect
+# Edge 154: kept wrappers (com/hms/push/EdgeHmsPushHelper, EdgeHmsMessageService,
+# com/adjust/sdk/oaid/HmsSdkClient) reference com/huawei/hms — stripping risks the
+# same NoClassDefFoundError crash as xiaomi below. Disabled for 154; the packages
+# stay dormant (manifest components stripped + telemetry URLs redirected). Re-enable
+# and re-test per version if the whole-class deletion is confirmed safe again.
+# com/huawei/hms
+# com/huawei/agconnect
 
 # Xiaomi Push (China market only)
-com/xiaomi/push
-com/xiaomi/mipush
+# Edge 154: ChromeTabbedActivity.<init> hard-references
+# com/xiaomi/mipush/sdk/PushMessageReceiver — stripping these packages causes
+# NoClassDefFoundError → instant crash on launch (confirmed via Pixel logcat
+# 2026-09-03). Was "safe to strip" in 146. Kept now; their manifest receivers
+# are still stripped and telemetry URLs redirected, so they stay dormant.
+# com/xiaomi/push
+# com/xiaomi/mipush
 
 # --- UNSAFE — do NOT strip (hard references from Edge core code) ---
 # com/tencent/matrix — CRASH: UmaUtils.<clinit> → AppMethodBeat (no try/catch)

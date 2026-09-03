@@ -21,14 +21,17 @@ def android_attr(name):
     return f"{{{ANDROID_NS}}}{name}"
 
 
-# Forward-compat android: attributes that apktool's bundled framework may not
-# recognize, causing "attribute ... not found" recompile failures on newer Edge
-# builds. These are perf/feature hints that older Android ignores, so stripping
-# the attribute (not the element) is safe. Extend as new Edge versions appear.
-STRIP_ATTRIBUTES = [
-    "zygotePreloadNativeLib",  # API 34: app-zygote native lib preload hint
-    "nativeService",           # API 36: native-service declaration hint
-]
+# Forward-compat android: attributes that apktool's framework can't compile
+# ("attribute ... not found") on newer Edge builds. The CORRECT fix is to install
+# a matching framework so apktool recognizes them:
+#     apktool if ~/android-sdk/platforms/android-36/android.jar
+# DO NOT strip android:nativeService — Edge 154 declares its sandboxed renderer
+# services (NativeOnlySandboxedProcessService0/1) as native-only with NO Java
+# class; stripping the attribute makes Android look for a Java class that doesn't
+# exist -> ClassNotFoundException -> instant crash of every renderer (confirmed
+# via Pixel logcat 2026-09-03). Keep this list EMPTY unless an attribute is truly
+# a droppable hint AND no framework knows it; prefer updating the apktool framework.
+STRIP_ATTRIBUTES = []
 
 
 def strip_unknown_attributes(root):
