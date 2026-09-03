@@ -166,6 +166,21 @@ def main():
     print("\n=== Stripping forward-compat attributes apktool can't compile ===")
     n_attrs = strip_unknown_attributes(root)
 
+    # Make Chromium read /data/local/tmp/chrome-command-line (which carries
+    # --load-extension for the CFC bridge and the memory/GPU flags). Chromium
+    # gates that on BuildInfo.isDebugAndroid(), which returns
+    # (ApplicationInfo.flags & FLAG_DEBUGGABLE) != 0 — so debuggable=true is a
+    # version-robust replacement for the fragile isDebugAndroid() smali patch
+    # (whose target classes moved/were minified in Edge 154). Tradeoff: also
+    # allows JDWP attach (acceptable on a personal device; CDP is already open).
+    print("\n=== Enabling command-line flag reading (android:debuggable) ===")
+    app_elem = root.find("application")
+    if app_elem is not None:
+        app_elem.set(android_attr("debuggable"), "true")
+        print("  [x] Set android:debuggable=true on <application>")
+    else:
+        print("  ERROR: <application> not found — cannot set debuggable!")
+
     # Remove @null meta-data entries to avoid apktool compilation issues
     # (apktool compiles @null to @0x00000000 which GMS rejects as invalid)
     # Removing the entries entirely is safer than replacing with "0"

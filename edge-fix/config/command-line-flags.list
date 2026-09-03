@@ -5,7 +5,12 @@
 # Memory optimization for mobile:
 #   --process-per-site: share renderer across same-site tabs (vs per-tab)
 #   --renderer-process-limit=4: hard cap on concurrent renderer processes
-#   --js-flags: cap V8 old-space per renderer to prevent heap bloat
+#   --js-flags: cap V8 old-space per renderer (raised 256->1024 so heavy WebGL/3D
+#     pages with large JS-side buffers don't OOM; Chrome has no such cap, which is
+#     why heavy 3D rendered there but not in Edge)
+#   --ignore-gpu-blocklist: force GPU acceleration even if Edge blocklists this
+#     device's GPU (prime suspect for 3D working in Chrome but not Edge; verify the
+#     actual failure via chrome://gpu / CDP console before assuming)
 #
 # REMOVED (caused content removal on pages + insecure):
 #   --enable-low-end-device-mode: triggers aggressive OOM intervention that
@@ -23,7 +28,8 @@
 --process-per-site
 --renderer-process-limit=4
 --disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
---js-flags=--max-old-space-size=256
+--js-flags=--max-old-space-size=1024
+--ignore-gpu-blocklist
 --load-extension=/data/local/tmp/cfc-ext
 --enable-features=EdgePasskeyAndroidCredentialProvider,EdgeAndroidPasskeyAuthSupport
 --host-resolver-rules="MAP clientservices.googleapis.com 127.0.0.1, MAP prod.rewardsplatform.microsoft.com 127.0.0.1, MAP api.webxtsvc.microsoft.com 127.0.0.1"
