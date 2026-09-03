@@ -28,11 +28,12 @@
 --process-per-site
 --renderer-process-limit=4
 --disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
---js-flags=--max-old-space-size=1024
+--js-flags=--max-old-space-size=4096
 --ignore-gpu-blocklist
+--force-gpu-mem-available-mb=2048
 --load-extension=/data/local/tmp/cfc-ext
 --enable-features=EdgePasskeyAndroidCredentialProvider,EdgeAndroidPasskeyAuthSupport
---host-resolver-rules="MAP clientservices.googleapis.com 127.0.0.1, MAP prod.rewardsplatform.microsoft.com 127.0.0.1, MAP api.webxtsvc.microsoft.com 127.0.0.1"
+--host-resolver-rules="MAP clientservices.googleapis.com 127.0.0.1, MAP prod.rewardsplatform.microsoft.com 127.0.0.1, MAP api.webxtsvc.microsoft.com 127.0.0.1, MAP mobile.events.data.microsoft.com 127.0.0.1, MAP *.pipe.aria.microsoft.com 127.0.0.1, MAP pipe.int.trafficmanager.net 127.0.0.1, MAP *.adjust.com 127.0.0.1, MAP *.adjust.io 127.0.0.1, MAP in.appcenter.ms 127.0.0.1, MAP www.google-analytics.com 127.0.0.1, MAP pagead2.googlesyndication.com 127.0.0.1, MAP test-exp-s2s.msedge.net 127.0.0.1, MAP *.xmpush.xiaomi.com 127.0.0.1, MAP resolver.msg.xiaomi.net 127.0.0.1, MAP *.chat.xiaomi.net 127.0.0.1, MAP res.getmicrosoftkey.com 127.0.0.1"
 #
 # Passkey support:
 #   EdgePasskeyAndroidCredentialProvider: enables Android Credential Manager API
