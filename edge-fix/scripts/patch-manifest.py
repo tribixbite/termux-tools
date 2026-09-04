@@ -176,6 +176,9 @@ def main():
     # version-robust replacement for the fragile isDebugAndroid() smali patch
     # (whose target classes moved/were minified in Edge 154). Tradeoff: also
     # allows JDWP attach (acceptable on a personal device; CDP is already open).
+    # (Ruled out 2026-09-03: debuggable does NOT affect the dark-theme bug — that
+    # was the APKEditor MERGE reprocessing resources.arsc. Install the SPLIT
+    # bundle, not the merged APK, to keep the dark theme working.)
     print("\n=== Enabling command-line flag reading (android:debuggable) ===")
     app_elem = root.find("application")
     if app_elem is not None:

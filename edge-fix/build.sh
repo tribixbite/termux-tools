@@ -525,10 +525,15 @@ done
 cp "${SIGNED_DIR}/base.apk" "$OUTPUT_APK"
 
 # ─── 6. Merge splits into a single installable APK (optional) ───
-# A merged single APK installs with any installer (no split juggling) and is the
-# easiest distribution format for end users. Requires tools/APKEditor.jar.
-# Merge combines the patched base + splits, strips signatures (-clean-meta),
-# then we re-sign the whole with the same stable keystore.
+# A merged single APK installs with any installer (no split juggling).
+# ⚠️  WARNING (confirmed 2026-09-04, Edge 154): the APKEditor MERGE rebuilds the
+# combined resources.arsc across base+splits, and the reprocessed table BREAKS
+# Edge's DayNight theme — Appearance=Dark renders as LIGHT chrome. The merge also
+# previously dropped the sandboxed-service class. PREFER installing the SPLIT
+# bundle instead:
+#   adb install-multiple -r output/signed/base.apk output/signed/split_*.apk
+# (or SAI with a zip of those). Only use the merged APK when splits aren't an
+# option, and expect the light-theme regression.
 APKEDITOR_JAR="$TOOLS_DIR/APKEditor.jar"
 MERGED_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy-merged.apk"
 if [ -f "$APKEDITOR_JAR" ]; then
