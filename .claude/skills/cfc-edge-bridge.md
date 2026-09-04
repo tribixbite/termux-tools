@@ -40,6 +40,17 @@ Both work. Our `--mcp` relay is more reliable (no native host crash bugs).
 
 ## Setup
 
+### 0. Provision a target device (Edge + extension + flags + CDP)
+
+`edge-fix/setup-cfc-device.sh <adb-serial>` installs the slimmed **split** 154
+build (dark-theme-safe — never the merged APK), pushes the unpacked extension to
+`/data/local/tmp/cfc-ext`, writes the command-line flags (`--load-extension` +
+max V8/GPU memory + telemetry DNS null-routing), and sets `debug_app` so Edge
+reads them. debuggable=true in the build exposes `chrome_devtools_remote` (CDP).
+A device's extension connects to a bridge on **its own** `localhost:18963`; to
+use one host bridge for a remote device, `adb reverse tcp:18963 tcp:18963` on
+that device (the bridge drives one Edge's CDP at a time).
+
 ### 1. Register MCP server (one-time)
 
 ```bash
@@ -285,3 +296,38 @@ The built-in `claude-in-chrome` MCP has known crash bugs (`[...MB,"inherit"]` nu
 - **Edge IntentDispatcher**: Use `com.google.android.apps.chrome.IntentDispatcher` (not `com.microsoft.ruby.Main`) for VIEW intents.
 - **Playwright MCP on Termux**: `process.platform === "android"` under Node.js causes Playwright to reject the platform. Use `bun` to run the MCP server — bun reports `process.platform === "linux"`.
 - **Delegate browser tools to subagents**: `browser_evaluate` and `browser_snapshot` return full page snapshots (~50-70KB). Always delegate to subagents with focused prompts to avoid wasting main context tokens.
+
+### Extension wedges permanently if a tab closes mid-tool (2026-09-02)
+
+If a tab is closed (by Edge/Android) while a `navigate`/`get_page_text` is in flight, the
+MV2 background page's FIFO `busy` flag never clears. Symptom: `/health` reports
+`clients: 1` and the bridge logs `HTTP /tool: ... busy=false pending=0` for every request,
+but the extension NEVER replies — *every* tool times out, including `tabs_context_mcp`
+with `tab=0`.
+
+- **Restarting the bridge does NOT fix it.** The stuck state lives in the extension; the
+  WS reconnects within ~4s and stays just as wedged.
+- **Only a full Edge restart clears it.** On this device that needs a human: `am force-stop`
+  is `SecurityException: requires android.permission.FORCE_STOP_PACKAGES` from the Termux
+  uid (10364), there is no root (`su` is the Termux stub), and `adb` on this box points at a
+  *different* device (Pixel 8 Pro) — verify with `adb shell getprop ro.product.model` vs
+  local `getprop ro.product.model` (SM-S938U1) before trying to force-stop over adb.
+- Ask the user to swipe-kill Edge Canary, then relaunch with `am start`.
+
+**Avoidance:** stay on ONE long-lived tab for a whole scrape run. Do not use a second tab
+that has been idle (its content script is stale — `navigate` to it times out and that
+first timeout is what jams the queue for everything after it).
+
+### linkedin.com blocks `javascript_tool` entirely (strict CSP)
+
+LinkedIn's `script-src` has no `unsafe-eval` and no wildcard, so MAIN-world `<script>`
+injection fails and only the restricted DOM-property fallback works (`document.title`,
+`location.href`, `querySelectorAll(...).length`). Consequences:
+
+- The Voyager REST API via `fetch()` from the page is **not** reachable — no `/voyager/api/*`
+  shortcuts, no bulk JSON.
+- Every CSP failure returns the full ~1.5k-token policy string in the error. Do not probe
+  with `javascript_tool` on LinkedIn; use `get_page_text` / `read_page` instead.
+- `read_page` with `filter: "interactive"` is the way to recover `href`s (profile URLs,
+  and the `/mwlite/messaging/compose/?recipient=<URN>` + `/mwlite/connections/shared?vieweeId=<id>`
+  links that expose a member's URN / numeric id).

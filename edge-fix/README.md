@@ -30,12 +30,97 @@ Modular pipeline to strip telemetry, tracking, and analytics from Microsoft Edge
 - App Center crash reporting, ECS experiment flags
 - Google Analytics, OAID advertising config, token share config
 
+## From scratch on a new phone (full reproduction)
+
+End-to-end: build the slimmed dark-mode Edge Canary and provision it with the CFC
+bridge extension + CDP. Runs entirely on-device in Termux (no PC).
+
+### 0. Prerequisites (one-time)
+
+```bash
+pkg install apktool zipalign openjdk-17 python3 android-tools   # adb, apksigner-adjacent
+# apksigner comes from Android SDK build-tools; any recent version works:
+ls ~/android-sdk/build-tools/*/apksigner   # e.g. 30.0.3
+# standalone baksmali/smali v3.0.9 fat jars (avoid apktool's buggy round-trip):
+ls tools/{baksmali,smali}-3.0.9-fat.jar
+# APKEditor is only needed for the (discouraged) merged APK:
+ls tools/APKEditor.jar
+```
+
+Two Termux gotchas the build depends on:
+
+- **apktool / apksigner are `#!/bin/bash` wrapper scripts.** Under a plain Termux
+  shell they run fine (libtermux-exec rewrites the shebang). If you invoke the
+  build from an automation harness that strips `LD_PRELOAD`, prefix it:
+  `LD_PRELOAD=$PREFIX/lib/libtermux-exec.so bash -c './build.sh …'`.
+- **apktool must know the APK's `compileSdk` attributes.** Edge 154 declares
+  `android:nativeService` (API 37). Install a matching framework once, or the
+  manifest recompile fails with `attribute … not found`:
+  ```bash
+  apktool if ~/android-sdk/platforms/android-37/android.jar   # match Edge's compileSdk
+  # (if you lack android-37, pull a device framework: adb pull /system/framework/framework-res.apk, then: apktool if framework-res.apk)
+  ```
+
+### 1. Get the stock Edge Canary bundle
+
+Download the Canary from APKMirror/APKPure (a zip of `base.apk`, `chrome.apk`,
+`config.en.apk`, `on_demand.apk`). Rename the splits to the `split_*` names
+`build.sh` expects, add an `info.json`, and zip into a `.apks`:
+
+```bash
+mkdir -p work/154-src && unzip -o com.microsoft.emmx.canary.zip -d work/154-src
+cd work/154-src
+cp chrome.apk split_chrome.apk; cp config.en.apk split_config.en.apk; cp on_demand.apk split_on_demand.apk
+V=$($PREFIX/bin/aapt2 dump badging base.apk | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
+echo "{\"version_name\":\"$V\"}" > info.json
+zip -0 -j ../Edge_Canary_$V.apks base.apk split_* info.json
+cd ../..
+```
+
+### 2. Build (slim + patch + sign)
+
+```bash
+LD_PRELOAD=$PREFIX/lib/libtermux-exec.so bash -c './build.sh work/Edge_Canary_<version>.apks'
+```
+
+Cross-version drift is expected and non-fatal (obfuscated names move): `[!] Not
+found` lines just skip that strip. If it crashes on launch after install, the
+usual causes are documented in `../.claude/memory` and this repo's history:
+vendor-SDK class strips (xiaomi/huawei) that newer Edge hard-references, or a
+stripped `android:nativeService` attribute. The current `config/` is tuned to
+avoid both on 154.
+
+### 3. Install the SPLIT bundle + set up CFC
+
+```bash
+# provisions ONE device: split install + CFC extension + flags + debug_app
+./setup-cfc-device.sh <adb-serial>
+```
+
+`setup-cfc-device.sh` installs the splits (never the merged APK), pushes the
+unpacked CFC extension to `/data/local/tmp/cfc-ext`, writes the Chromium
+command-line flags (max V8/GPU memory for WebGL + telemetry DNS null-routing +
+`--load-extension`), and sets `debug_app` so Edge reads them. Then set
+**Settings → Appearance → Dark**.
+
+For the CFC bridge itself (WebSocket server + MCP relay + CRX build) see the
+`cfc-edge-bridge.md` skill. The bridge is a Termux process on `localhost:18963`;
+a device's extension reaches a bridge running on the same host, or over
+`adb reverse tcp:18963 tcp:18963` to a bridge on your build host.
+
 ## Install (pre-built)
 
-The build produces two install formats in `output/`:
+> ⚠️ **Install the SPLIT bundle, NOT the merged APK.** The merged single APK
+> (`*-privacy-merged.apk`, produced by the APKEditor merge) **breaks Edge's dark
+> theme** — Appearance=Dark renders as a light chrome — because the merge rebuilds
+> and renumbers the combined `resources.arsc`, which breaks DayNight resolution.
+> The merge also previously dropped a sandboxed-renderer service class. Only use
+> the merged APK if you truly can't do a split install, and expect light chrome.
 
-- `EdgeCanary-VERSION-privacy-merged.apk` — a **single APK** (base + splits combined). Easiest: installs with any installer, no split juggling.
-- `EdgeCanary-VERSION-privacy.apk` + `signed/split_*.apk` — the split bundle.
+The build produces these in `output/`:
+
+- `output/signed/{base,split_chrome,split_config.en,split_on_demand}.apk` — the **split bundle** (use this).
+- `EdgeCanary-VERSION-privacy-merged.apk` — single APK (convenient but breaks dark mode; see warning).
 
 ### First install (signature mismatch — wipes Edge data)
 
@@ -45,13 +130,8 @@ data**.
 
 ```bash
 adb uninstall com.microsoft.emmx.canary
-
-# Single merged APK (recommended):
-adb install output/EdgeCanary-VERSION-privacy-merged.apk
-
-# …or the split bundle:
 adb install-multiple \
-  output/EdgeCanary-VERSION-privacy.apk \
+  output/signed/base.apk \
   output/signed/split_chrome.apk \
   output/signed/split_config.en.apk \
   output/signed/split_on_demand.apk
@@ -64,9 +144,7 @@ Android accepts an update because the signatures match — bookmarks, logins, an
 settings are preserved. Do **not** uninstall first:
 
 ```bash
-adb install -r output/EdgeCanary-VERSION-privacy-merged.apk   # merged, or
-adb install-multiple -r \
-  output/EdgeCanary-VERSION-privacy.apk output/signed/split_*.apk
+adb install-multiple -r output/signed/base.apk output/signed/split_*.apk
 ```
 
 This is why `edge-fix.keystore` must be kept stable across builds.
@@ -188,6 +266,7 @@ The pipeline copies the original APK and replaces only the patched files (DEX + 
 
 ## Known limitations
 
-- **classes4.dex is unpatched** — contains interfaces with static methods that cause `IncompatibleClassChangeError` after baksmali/smali round-trip. Binary string replacement also fails (breaks DEX string table sort order). Three URLs remain active: Chrome variations seed, crash reporter (already invalid domain), rewards API.
+- **The merged single APK breaks the dark theme.** APKEditor's merge rebuilds the combined `resources.arsc` across base+splits, and the reprocessed table breaks Edge's DayNight resolution (Dark → light chrome). It also previously dropped a sandboxed-service class. **Install the split bundle** (`adb install-multiple` or SAI) — see the warning under _Install_.
+- **classes4.dex is unpatched** — contains interfaces with static methods that cause `IncompatibleClassChangeError` after baksmali/smali round-trip. Binary string replacement also fails (breaks DEX string table sort order). Three URLs remain active: Chrome variations seed, crash reporter (already invalid domain), rewards API. (`org/chromium/base/CommandLine` + `BuildInfo.isDebugAndroid` live here and are obfuscated in 154, so the flag-reading patch uses `android:debuggable=true` instead — which does **not** affect the theme.)
 - **Chromium UMA metrics** — baked into native `.so` libs with no Java entry point.
 - **User-configurable telemetry** — account sync, search suggestions, Copilot features are controlled via Edge settings at runtime.

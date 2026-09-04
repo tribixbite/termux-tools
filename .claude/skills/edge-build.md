@@ -2,6 +2,12 @@
 
 Rebuild Edge Canary with telemetry, trackers, and enterprise bloat stripped. Takes a stock `.apks` bundle (exported via AppManager), decompiles targeted components, patches manifest + DEX + native libs, reassembles, signs, and installs via ADB split-install.
 
+> **Full from-scratch reproduction (get APK → build → install splits → CFC) lives in `edge-fix/README.md`.** Key rules that bite every rebuild:
+> - **Install the SPLIT bundle, never the merged APK** — the APKEditor merge breaks the dark theme (rebuilds `resources.arsc`). Use `edge-fix/setup-cfc-device.sh <serial>` or `adb install-multiple -r output/signed/base.apk output/signed/split_*.apk`.
+> - **Invoke under `LD_PRELOAD=$PREFIX/lib/libtermux-exec.so bash -c './build.sh …'`** when run from an automation harness (apktool/apksigner are `#!/bin/bash` wrappers; the harness strips LD_PRELOAD).
+> - **Match apktool's framework to Edge's compileSdk** before building a new version: `apktool if ~/android-sdk/platforms/android-<NN>/android.jar` (Edge 154 = 37; needs `android:nativeService`). Otherwise the manifest recompile fails "attribute not found".
+> - Cross-version `[!] Not found` strip lines are normal (obfuscated names move). Don't strip vendor push SDK classes (xiaomi/huawei) that newer Edge hard-references, and never strip `android:nativeService` — both crash on launch.
+
 ## Overview
 
 The pipeline neutralizes 56+ manifest components, 23 DEX methods, 30+ telemetry URLs, and strips ~36MB of unused native libraries. Telemetry endpoints are redirected to `127.0.0.1:18971` (the local telemetry sink on the tmx dashboard). The entire build runs on-device in Termux (no PC required).

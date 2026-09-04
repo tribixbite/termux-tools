@@ -1,5 +1,16 @@
 # Edge Canary — Merge Split APKs into Single APK
 
+> ⚠️ **AVOID the merged APK — it breaks Edge's dark theme (confirmed Edge 154, 2026-09-04).**
+> APKEditor's merge rebuilds and renumbers the combined `resources.arsc` across
+> base+splits, and the reprocessed resource table breaks Edge's DayNight
+> resolution: Appearance=Dark renders as a **light** chrome. The merge has also
+> dropped a sandboxed-renderer service class (crash). **Prefer the split install**
+> (`adb install-multiple -r output/signed/base.apk output/signed/split_*.apk`, or
+> SAI with a zip of those). Only merge when a split install is truly impossible,
+> and expect the light-theme regression. Bisection proof: a split install and the
+> merged APK built from byte-identical base+splits differ only by the merge, yet
+> the split renders dark and the merged renders light.
+
 Merge the 4 split APKs produced by `build.sh` into a single installable `.apk` file. The merged APK can be installed on any arm64 device with a simple `adb install` instead of `adb install-multiple`.
 
 ## Prerequisites
