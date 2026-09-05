@@ -110,6 +110,28 @@ account or workspace settings as described in the
 The binary rewrite itself is a Termux-specific workaround, not an official OpenAI
 installation step.
 
+### Google Antigravity CLI (`scripts/install-antigravity-termux.sh`)
+
+Installs or upgrades Google's `agy` CLI on Termux without changing the system
+Python or package-manager state. Google distributes Antigravity as a glibc-linked
+Go binary; the generated launcher runs it through the already-installed Proot and
+Termux glibc runtime, removes the incompatible bionic `LD_PRELOAD`, and preserves
+the downloaded binary unchanged. Downloads are verified against Google's SHA-512
+release manifest and the executable is replaced atomically.
+
+```bash
+scripts/install-antigravity-termux.sh
+agy --version
+agy --help
+```
+
+The binary is stored under `~/.local/lib/antigravity/`, with the Termux launcher
+at `~/.local/bin/agy`. Authentication and settings remain under
+`~/.gemini/antigravity-cli/` across upgrades.
+
+Run `agy` interactively once to complete Google OAuth. Commands that require the
+agent service, such as `agy models`, remain unavailable until that sign-in.
+
 ### Android Secure Prefs Dumper (`scripts/android-secure-prefs-dump`)
 
 Dumps any Android app's `androidx.security.crypto.EncryptedSharedPreferences`

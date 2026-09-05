@@ -43,6 +43,7 @@ PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
 DOWNLOAD_BASE_URL="https://antigravity-cli-auto-updater-974169037036.us-central1.run.app"
 INSTALL_DIR="$HOME/.local/lib/antigravity"   # holds the (unpatched) glibc binary
 BIN_DIR="$HOME/.local/bin"                    # holds the proot launcher named 'agy'
+CURL_BIN="$PREFIX/bin/curl"                   # bypass any exported shell wrapper
 
 # --- option parsing -------------------------------------------------------------
 while [ "$#" -gt 0 ]; do
@@ -74,13 +75,14 @@ ok "Platform: $platform (Termux/bionic -> glibc build, run via proot)"
 
 # --- 2. dependency checks -------------------------------------------------------
 command -v proot >/dev/null 2>&1 || die "'proot' is required. Install it with: pkg install proot"
+[ -x "$CURL_BIN" ] || die "curl missing at $CURL_BIN"
 SYS_LOADER="$PREFIX/glibc/lib/$loader_name"
 [ -f "$SYS_LOADER" ] || die "glibc loader missing at $SYS_LOADER. Install the glibc runtime with: pkg install glibc-runner"
 ok "Dependencies present (proot + glibc loader)"
 
 # --- 3. fetch + parse the release manifest --------------------------------------
 log "Querying release manifest for $platform ..."
-manifest_json="$(curl -fsSL "$DOWNLOAD_BASE_URL/manifests/$platform.json")" \
+manifest_json="$("$CURL_BIN" -fsSL "$DOWNLOAD_BASE_URL/manifests/$platform.json")" \
     || die "could not download the release manifest (check your connection/firewall)"
 
 # POSIX JSON value reader (the manifest is one key:value per line; no jq needed).
@@ -93,10 +95,15 @@ ok "Latest version: ${version:-unknown}"
 
 # --- 4. download + checksum-verify ----------------------------------------------
 STAGING="$(mktemp -d "$PREFIX/tmp/agy-install.XXXXXX")"
-trap 'rm -rf "$STAGING"' EXIT
+installed_tmp=""
+cleanup() {
+    rm -rf "$STAGING"
+    [ -z "$installed_tmp" ] || rm -f "$installed_tmp"
+}
+trap cleanup EXIT
 payload="$STAGING/payload"
 log "Downloading release package ..."
-curl -fsSL -o "$payload" "$url" || die "download failed from $url"
+"$CURL_BIN" -fsSL -o "$payload" "$url" || die "download failed from $url"
 actual_hash="$(sha512sum "$payload" | cut -d' ' -f1)"
 [ "$actual_hash" = "$sha512" ] || die "checksum mismatch -- refusing to install (expected $sha512, got $actual_hash)"
 ok "Downloaded and SHA-512 verified"
@@ -109,8 +116,11 @@ case "$url" in
                src_bin="$STAGING/antigravity" ;;
     *)         src_bin="$payload" ;;
 esac
-cp -f "$src_bin" "$BINARY"      # installed as-is -- never patchelf'd (see header)
-chmod +x "$BINARY"
+installed_tmp="$INSTALL_DIR/.antigravity.new.$$"
+cp "$src_bin" "$installed_tmp"  # installed as-is -- never patchelf'd (see header)
+chmod +x "$installed_tmp"
+mv -f "$installed_tmp" "$BINARY" # atomic: running processes keep their old inode
+installed_tmp=""
 ok "Binary installed: $BINARY"
 
 # --- 6. write the proot launcher ------------------------------------------------
@@ -132,6 +142,10 @@ LOADER_NAME="$loader_name"
 [ -f "\$SYS_LOADER" ] || { echo "agy: glibc loader missing at \$SYS_LOADER -- run: pkg install glibc-runner" >&2; exit 1; }
 command -v proot >/dev/null 2>&1 || { echo "agy: 'proot' not installed -- run: pkg install proot" >&2; exit 1; }
 
+# Termux exports libtermux-exec.so through LD_PRELOAD. It is a bionic library and
+# cannot be loaded by this glibc process (the loader otherwise reports an invalid
+# libc.so / missing LIBC symbol before Antigravity starts).
+unset LD_PRELOAD
 exec proot -b "\$SYS_LOADER:/lib/\$LOADER_NAME" "\$BINARY" "\$@"
 EOF
 chmod +x "$WRAPPER"
@@ -141,7 +155,8 @@ ok "Launcher installed: $WRAPPER"
 # NOTE: we deliberately do NOT run antigravity's own `install` subcommand: it copies
 # os.Executable() to ~/.local/bin/agy, which would overwrite our proot launcher with
 # the raw (unrunnable-on-bionic) glibc binary. We configure PATH ourselves below.
-reported="$("$WRAPPER" --version 2>/dev/null | head -1 || true)"
+version_output="$("$WRAPPER" --version 2>/dev/null || true)"
+reported="${version_output%%$'\n'*}"
 [ -n "$reported" ] || die "post-install check failed: '$WRAPPER --version' produced no output"
 ok "Verified: agy --version -> $reported"
 [ -z "$version" ] || [ "$reported" = "$version" ] || log "note: reported version ($reported) differs from manifest ($version)"
