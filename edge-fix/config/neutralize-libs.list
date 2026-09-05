@@ -1,17 +1,20 @@
 # Files containing System.loadLibrary calls for telemetry native libs
 # All loadLibrary invoke-static instructions in these files will be replaced with nop
 # Format: smali_path
+# Prefix a path with ? only for a version-dependent class. Unmarked entries
+# are required and fail the build if the class is absent. A present class with
+# no remaining loadLibrary call is already clean and succeeds.
 
 # -- Citrix logging (ctxlog, log4cpp) in static initializer --
-smali/w760.smali
+?smali/w760.smali
 
 # -- KOOM heap analysis native libs (koom-fast-dump, koom-strip-dump, kwai-android-base) --
 smali_classes2/com/kwai/koom/base/CommonConfig$Builder$build$6.smali
 
 # -- Tencent Matrix trace-canary in static initializers --
-smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali
-smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali
-smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali
+?smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali
+?smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali
+?smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali
 
 # -- OneAuth (cross-app token sharing, enterprise SSO) --
 # In classes4.dex — can't round-trip safely (interface static method bugs).
@@ -19,9 +22,9 @@ smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali
 # smali_classes4/org/chromium/chrome/authentication/oneauth/OneAuthAPI.smali
 
 # -- Citrix CoreSdkCrypto + fullsslsdk (enterprise VPN/SSL proxy) --
-smali/com/citrix/sdk/crypto/helper/CryptoHelper.smali
-smali/com/citrix/mvpn/MAM/Android/AuthSSO/proxy/Helper.smali
-smali/mj60.smali
+?smali/com/citrix/sdk/crypto/helper/CryptoHelper.smali
+?smali/com/citrix/mvpn/MAM/Android/AuthSSO/proxy/Helper.smali
+?smali/mj60.smali
 
 # -- Microsoft Information Protection (MIP) SDK --
 # KEPT: .so files retained (JNI Init() called from SyncServiceImpl via classes4)
@@ -34,7 +37,7 @@ smali_classes2/com/microsoft/bing/speechlib/OpusEncoder.smali
 
 # -- MSAOAID (Adjust SDK advertising ID, device fingerprinting) --
 smali/com/adjust/sdk/oaid/AdjustOaid.smali
-smali_classes3/k1p.smali
+?smali_classes3/k1p.smali
 smali/com/bun/miitmdid/core/CertChecker.smali
 
 # -- ARCore (augmented reality, WebXR) --

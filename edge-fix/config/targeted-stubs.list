@@ -1,5 +1,7 @@
 # Targeted method stubs: stub only specific methods, not entire classes
 # Format: smali_path|method_name
+# Prefix a path with ? only when the class/method is known to be
+# version-dependent. Unmarked entries are required and fail the build if absent.
 # The method body is replaced with a safe return default while the rest
 # of the class remains untouched.
 
@@ -25,13 +27,14 @@ smali_classes3/com/microsoft/foundation/onedswrapper/libraryloader/SystemNativeL
 smali_classes3/com/microsoft/foundation/onedswrapper/TelemetryLoggerProvider.smali|initializeOneDs
 
 # -- Microsoft applications telemetry (C++ bridge via JNI) --
+# Removed from Edge 154; patch it when older versions still include the bridge.
 # LogManager.initialize bootstraps the native telemetry engine
-smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|initialize
+?smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|initialize
 # LogManager.flush/upload sends queued telemetry
-smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flush
-smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flushAndTeardown
-smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|uploadNow
-smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|setTransmitProfile
+?smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flush
+?smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|flushAndTeardown
+?smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|uploadNow
+?smali_classes2/com/microsoft/applications/telemetry/LogManager.smali|setTransmitProfile
 
 # -- Adjust SDK (attribution/tracking) --
 # Adjust.trackEvent sends tracking events to Adjust servers
@@ -60,6 +63,7 @@ smali/com/adjust/sdk/Adjust.smali|gdprForgetMe
 # -- Tencent Matrix trace-canary (native methods require libtrace-canary.so) --
 # Since we NOP the loadLibrary("trace-canary"), must also stub the methods
 # that call native functions, otherwise UnsatisfiedLinkError
-smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali|onAlive
-smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali|onAlive
-smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali|onAlive
+# These classes are absent in Edge 154 but remain patch targets for older builds.
+?smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali|onAlive
+?smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali|onAlive
+?smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali|onAlive

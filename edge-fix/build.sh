@@ -70,6 +70,7 @@ for cmd in apktool zipalign keytool python3 java; do
         exit 1
     fi
 done
+ZIPALIGN="$(command -v zipalign)"
 
 # Check for apksigner
 APKSIGNER=""
@@ -124,21 +125,24 @@ done
 echo ""
 
 # Extract version from info.json (if present in .apks bundle)
-VERSION=$(python3 -c "
-import json, os
-info = '$EXTRACTED_DIR/info.json'
-if os.path.isfile(info):
-    with open(info) as f:
-        print(json.load(f).get('version_name', 'unknown'))
-else:
-    print('unknown')
-" 2>/dev/null || echo "unknown")
+VERSION="$(python3 -c 'import json, pathlib, sys
+info = pathlib.Path(sys.argv[1])
+print(json.loads(info.read_text()).get("version_name", "unknown") if info.is_file() else "unknown")
+' "$EXTRACTED_DIR/info.json" 2>/dev/null || echo "unknown")"
 
 BASE_APK="$EXTRACTED_DIR/base.apk"
 if [ ! -f "$BASE_APK" ]; then
     echo "ERROR: base.apk not found in extracted bundle"
     exit 1
 fi
+
+# Clear every version-specific destination before the build can create it.
+# This prevents a successful build without APKEditor from leaving an older
+# merged APK available to an installer.
+OUTPUT_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy.apk"
+MERGED_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy-merged.apk"
+mkdir -p "$OUTPUT_DIR"
+rm -f "$OUTPUT_APK" "$OUTPUT_APK.idsig" "$MERGED_APK" "$MERGED_APK.idsig"
 
 # ─── 2. Patch manifest ───
 # Strategy: decode manifest with apktool (no smali), patch the XML, recompile
@@ -150,7 +154,12 @@ rm -rf "$MANIFEST_WORK"
 
 # Decode manifest + resources only (skip smali to save time/space)
 echo "  Decoding manifest..."
-apktool d -s -f -o "$MANIFEST_WORK" "$BASE_APK" 2>&1 | grep -E "^I:" | head -5
+if ! APKTOOL_LOG="$(apktool d -s -f -o "$MANIFEST_WORK" "$BASE_APK" 2>&1)"; then
+    printf '%s\n' "$APKTOOL_LOG" >&2
+    echo "ERROR: apktool failed to decode the manifest" >&2
+    exit 1
+fi
+awk '/^I:/{ if (++count <= 5) print }' <<< "$APKTOOL_LOG"
 
 # Patch the decoded XML manifest
 echo "  Patching..."
@@ -182,9 +191,9 @@ echo ""
 #   b) System.loadLibrary neutralization (config/neutralize-libs.list)
 #   c) Telemetry URL replacement (config/replace-urls.list)
 #
-# Note: Some DEX files (e.g. classes4.dex) contain interfaces with static
-# methods that cause IncompatibleClassChangeError after baksmali/smali
-# round-trip. These are patched via binary string replacement in Step 3b.
+# DEX files are not round-tripped solely for optional URL replacements. The
+# DEX containing Chromium CommandLine is an exception because warning
+# suppression is required; its complete tree is assembled and byte-checked.
 echo "=== Step 3/5: Patching DEX ==="
 
 DEX_WORK="$WORK_DIR/dex-patch"
@@ -216,6 +225,7 @@ declare -A DEX_NEEDS_PATCH
 # From targeted-stubs.list
 if [ -f "$TARGETED_STUBS" ]; then
     while IFS='|' read -r smali_path _method; do
+        smali_path="${smali_path#\?}"
         dex=$(smali_to_dex "$smali_path")
         [ -n "$dex" ] && DEX_NEEDS_PATCH["$dex"]=1
     done < <(read_config "$TARGETED_STUBS")
@@ -224,6 +234,7 @@ fi
 # From neutralize-libs.list
 if [ -f "$NEUTRALIZE_LIBS" ]; then
     while IFS= read -r smali_path; do
+        smali_path="${smali_path#\?}"
         dex=$(smali_to_dex "$smali_path")
         [ -n "$dex" ] && DEX_NEEDS_PATCH["$dex"]=1
     done < <(read_config "$NEUTRALIZE_LIBS")
@@ -235,6 +246,8 @@ fi
 # No need to add DEX files to the round-trip set just for URL replacement.
 
 # Process each DEX file that needs patching
+CMDLINE_PATCHED=0
+CMDLINE_DEX=""
 for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
     echo "  Processing $dex_name..."
 
@@ -256,26 +269,57 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
     # (a) Apply targeted method stubs
     if [ -f "$TARGETED_STUBS" ]; then
         while IFS='|' read -r smali_path method_name; do
+            optional=0
+            if [[ "$smali_path" == \?* ]]; then
+                optional=1
+                smali_path="${smali_path#\?}"
+            fi
             [ "$(smali_to_dex "$smali_path")" != "$dex_name" ] && continue
             full_path="$DEX_WORK/$smali_path"
             if [ ! -f "$full_path" ]; then
-                echo "    [!] Not found: $smali_path"
-                continue
+                if [ "$optional" -eq 1 ]; then
+                    echo "    [i] Optional target absent in this version: $smali_path"
+                    continue
+                fi
+                echo "ERROR: required patch target not found: $smali_path" >&2
+                exit 1
             fi
-            python3 "$SCRIPT_DIR/scripts/stub-method.py" "$full_path" "$method_name"
+            if python3 "$SCRIPT_DIR/scripts/stub-method.py" "$full_path" "$method_name"; then
+                :
+            else
+                patch_status=$?
+                if [ "$optional" -eq 1 ] && [ "$patch_status" -eq 2 ]; then
+                    echo "    [i] Optional method absent in this version: $smali_path|$method_name"
+                    continue
+                fi
+                echo "ERROR: required method patch failed: $smali_path|$method_name" >&2
+                exit "$patch_status"
+            fi
         done < <(read_config "$TARGETED_STUBS")
     fi
 
     # (b) Neutralize System.loadLibrary calls
     if [ -f "$NEUTRALIZE_LIBS" ]; then
         while IFS= read -r smali_path; do
+            optional=0
+            if [[ "$smali_path" == \?* ]]; then
+                optional=1
+                smali_path="${smali_path#\?}"
+            fi
             [ "$(smali_to_dex "$smali_path")" != "$dex_name" ] && continue
             full_path="$DEX_WORK/$smali_path"
             if [ ! -f "$full_path" ]; then
-                echo "    [!] Not found: $smali_path"
-                continue
+                if [ "$optional" -eq 1 ]; then
+                    echo "    [i] Optional target absent in this version: $smali_path"
+                    continue
+                fi
+                echo "ERROR: required patch target not found: $smali_path" >&2
+                exit 1
             fi
-            python3 "$SCRIPT_DIR/scripts/neutralize-loadlibrary.py" "$full_path"
+            if ! python3 "$SCRIPT_DIR/scripts/neutralize-loadlibrary.py" "$full_path"; then
+                echo "ERROR: required loadLibrary patch failed: $smali_path" >&2
+                exit 1
+            fi
         done < <(read_config "$NEUTRALIZE_LIBS")
     fi
 
@@ -322,6 +366,15 @@ for dex_name in "${!DEX_NEEDS_PATCH[@]}"; do
         done < <(read_config "$STRIP_CLASSES")
     fi
 
+    # Patch command-line behavior while this exact DEX tree is still mutable.
+    # It must happen before assembly so the emitted DEX contains the changes.
+    if [ "$CMDLINE_PATCHED" -eq 0 ] &&
+            [ -f "$SMALI_OUT/org/chromium/base/CommandLine.smali" ]; then
+        python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$SMALI_OUT"
+        CMDLINE_PATCHED=1
+        CMDLINE_DEX="$dex_name"
+    fi
+
     # Recompile with smali v3.0.9
     echo "    smali: recompiling..."
     java -jar "$SMALI_JAR" a "$SMALI_OUT" -o "$DEX_WORK/${dex_name%.dex}-patched.dex" 2>&1
@@ -333,80 +386,51 @@ done
 
 # NOTE: Binary DEX patching (patch-dex-strings.py) is available but disabled.
 # Replacing strings in the DEX binary breaks the sorted string_id table, causing
-# the ART verifier to reject the entire DEX file. DEX files that can't survive
-# baksmali/smali round-trip (interfaces with static methods) are left unpatched.
-# URLs in those files (classes4.dex) are documented in replace-urls.list.
+# the ART verifier to reject the entire DEX file. URL-only targets in DEX files
+# outside the configured round-trip set are left unchanged; these exceptions
+# are documented in replace-urls.list.
 
-# ─── 3c. Patch Chromium CommandLine to read flags on release builds ───
-# BuildInfo.isDebugAndroid() gates command-line flag file reading. We patch it
-# to return true so flags in /data/local/tmp/<pkg>-command-line are read without
-# requiring android:debuggable=true (which would expose the app to JDWP attacks).
-# The class may be in any DEX — scan all decompiled dirs, or decompile additional
-# DEX files if needed.
-echo "  Patching Chromium BuildInfo.isDebugAndroid()..."
-CMDLINE_PATCHED=0
-
-# First check already-decompiled DEX directories
-if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK" 2>/dev/null; then
-    CMDLINE_PATCHED=1
-fi
-
-# If not found in already-decompiled DEXes, extract and scan remaining ones.
-# BuildInfo.smali is typically in classes4.dex. Note: classes4 has interface
-# static methods that break full round-trip, but BuildInfo itself is simple
-# enough to survive targeted decompile → patch → recompile.
+# ─── 3c. Locate CommandLine in any remaining DEX ───
+# Each candidate is searched in isolation. If it contains CommandLine, patch
+# that exact smali tree and immediately assemble the same tree.
 if [ "$CMDLINE_PATCHED" -eq 0 ]; then
-    # List all DEX files in base.apk
-    ALL_DEXES=$(unzip -l "$BASE_APK" "classes*.dex" 2>/dev/null | grep -oP 'classes\d*\.dex' || true)
-    for extra_name in $ALL_DEXES; do
+    while IFS= read -r extra_name; do
+        [ -z "$extra_name" ] && continue
+
         # Skip already-processed DEXes
         [ -f "$DEX_WORK/$extra_name" ] && continue
 
-        echo "    Scanning $extra_name for BuildInfo..."
-        unzip -o "$BASE_APK" "$extra_name" -d "$DEX_WORK" > /dev/null 2>&1 || continue
+        echo "  Scanning $extra_name for Chromium CommandLine..."
+        unzip -o "$BASE_APK" "$extra_name" -d "$DEX_WORK" > /dev/null
 
         case "$extra_name" in
             classes.dex) extra_smali="smali" ;;
             classes*.dex) extra_smali="smali_${extra_name%.dex}" ;;
-            *) continue ;;
         esac
 
         java -jar "$BAKSMALI_JAR" d "$DEX_WORK/$extra_name" -o "$DEX_WORK/$extra_smali" 2>&1
 
-        if python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK"; then
-            # Recompile only the patched DEX — not the entire class set.
-            # If classes4.dex has interface static method issues, smali will
-            # report errors but the patched BuildInfo class is unaffected.
-            java -jar "$SMALI_JAR" a "$DEX_WORK/$extra_smali" -o "$DEX_WORK/${extra_name%.dex}-patched.dex" 2>&1 || {
-                echo "    [!] smali recompile failed for $extra_name"
-                echo "    Falling back to single-class recompile..."
-                # Extract just BuildInfo.smali into a temp dir and recompile that
-                BUILDINFO_DIR="$DEX_WORK/buildinfo-only"
-                mkdir -p "$BUILDINFO_DIR"
-                find "$DEX_WORK/$extra_smali" -path "*/org/chromium/base/BuildInfo.smali" \
-                    -exec cp --parents {} "$BUILDINFO_DIR/" \;
-                # Use baksmali to get the original DEX, then inject the patched class
-                # Actually, simpler: just decompile BuildInfo alone and recompile
-                rm -rf "$BUILDINFO_DIR"
-                echo "    [!] Single-class recompile not implemented — using debuggable fallback"
-                CMDLINE_PATCHED=0
-                continue
-            }
-            echo "    $extra_name: patched for command-line flags"
-            CMDLINE_PATCHED=1
-            break
+        if [ ! -f "$DEX_WORK/$extra_smali/org/chromium/base/CommandLine.smali" ]; then
+            rm -rf "$DEX_WORK/$extra_smali" "$DEX_WORK/$extra_name"
+            continue
         fi
 
-        # Clean up if not the target
-        rm -rf "$DEX_WORK/$extra_smali" "$DEX_WORK/$extra_name"
-    done
+        python3 "$SCRIPT_DIR/scripts/patch-commandline.py" "$DEX_WORK/$extra_smali"
+        echo "    smali: recompiling..."
+        java -jar "$SMALI_JAR" a "$DEX_WORK/$extra_smali" \
+            -o "$DEX_WORK/${extra_name%.dex}-patched.dex" 2>&1
+        CMDLINE_PATCHED=1
+        CMDLINE_DEX="$extra_name"
+        echo "    $extra_name: command-line behavior patched before assembly"
+        break
+    done < <(unzip -Z1 "$BASE_APK" | awk '/^classes([0-9]+)?\.dex$/')
 fi
 
 if [ "$CMDLINE_PATCHED" -eq 0 ]; then
-    echo "  [!] WARNING: Could not patch BuildInfo.isDebugAndroid()"
-    echo "  Command-line flags in /data/local/tmp/ may not be read."
-    echo "  Workaround: set android:debuggable=true in manifest (less secure)"
+    echo "ERROR: required Chromium CommandLine warning patch was not applied" >&2
+    exit 1
 fi
+echo "  [x] Command-line patch assembled from $CMDLINE_DEX"
 echo ""
 
 # ─── 4. Assemble output APK ───
@@ -414,9 +438,6 @@ echo ""
 # manifest), strip META-INF (old signatures). This preserves all original
 # resources, native libs, and unmodified DEX files byte-for-byte.
 echo "=== Step 4/5: Assembling patched APK ==="
-
-OUTPUT_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy.apk"
-mkdir -p "$OUTPUT_DIR"
 
 # Start from original base.apk
 cp "$BASE_APK" "$OUTPUT_APK"
@@ -455,17 +476,43 @@ zip -d "$OUTPUT_APK" "assets/org/scilab/forge/jlatexmath/*" > /dev/null 2>&1 || 
 # Replace patched manifest
 zip -j "$OUTPUT_APK" "$PATCHED_MANIFEST" > /dev/null
 
+# Verify the ZIP contains the exact compiled manifest bytes.
+EMITTED_MANIFEST="$WORK_DIR/emitted-AndroidManifest.xml"
+unzip -p "$OUTPUT_APK" AndroidManifest.xml > "$EMITTED_MANIFEST"
+if ! cmp -s "$PATCHED_MANIFEST" "$EMITTED_MANIFEST"; then
+    echo "ERROR: assembled APK does not contain the patched manifest" >&2
+    exit 1
+fi
+rm -f "$EMITTED_MANIFEST"
+
 # Replace patched DEX files
+PATCHED_DEX_COUNT=0
 if [ -d "$DEX_WORK" ]; then
     for patched_dex in "$DEX_WORK"/*-patched.dex; do
         [ -f "$patched_dex" ] || continue
         # e.g., classes2-patched.dex → classes2.dex
         dex_basename="$(basename "$patched_dex" | sed 's/-patched//')"
-        # zip expects the entry name, so we rename temporarily
+        # zip expects the original entry name, so use a temporary copy.
         cp "$patched_dex" "$DEX_WORK/$dex_basename"
         (cd "$DEX_WORK" && zip -j "$OUTPUT_APK" "$dex_basename") > /dev/null
-        echo "  Replaced: $dex_basename"
+
+        # Compare emitted bytes to the assembled DEX, not merely its filename.
+        emitted_dex="$DEX_WORK/emitted-$dex_basename"
+        unzip -p "$OUTPUT_APK" "$dex_basename" > "$emitted_dex"
+        if ! cmp -s "$patched_dex" "$emitted_dex"; then
+            echo "ERROR: assembled APK contains the wrong $dex_basename bytes" >&2
+            exit 1
+        fi
+        rm -f "$emitted_dex"
+        PATCHED_DEX_COUNT=$((PATCHED_DEX_COUNT + 1))
+        echo "  Replaced and verified: $dex_basename"
     done
+fi
+
+if [ "$PATCHED_DEX_COUNT" -eq 0 ] ||
+        [ ! -f "$DEX_WORK/${CMDLINE_DEX%.dex}-patched.dex" ]; then
+    echo "ERROR: required patched DEX output is missing" >&2
+    exit 1
 fi
 
 echo "  Assembled: $(ls -lh "$OUTPUT_APK" | awk '{print $5}')"
@@ -490,6 +537,47 @@ if [ ! -f "$KEYSTORE" ]; then
         -dname "CN=EdgeFix, OU=Privacy, O=EdgeFix, L=NA, S=NA, C=US" 2>/dev/null
 fi
 
+# Prefer 16 KiB native-library alignment with build-tools that support -P.
+# Older Termux zipalign builds only expose legacy -p; keep them usable but make
+# the compatibility limitation explicit and still validate their output.
+ZIPALIGN_HELP="$("$ZIPALIGN" 2>&1 || true)"
+if grep -q -- '-P' <<< "$ZIPALIGN_HELP"; then
+    ZIPALIGN_PAGE_ARGS=(-P 16)
+    ZIPALIGN_DESCRIPTION="16 KiB"
+else
+    ZIPALIGN_PAGE_ARGS=(-p)
+    ZIPALIGN_DESCRIPTION="legacy 4 KiB"
+    echo "  [!] WARNING: $ZIPALIGN lacks -P; native libraries cannot be validated for 16 KiB pages"
+fi
+
+BASE_CERT_DIGEST=""
+
+verify_signed_apk() {
+    local apk="$1"
+    local verify_log
+    local cert_digest
+
+    "$ZIPALIGN" -c "${ZIPALIGN_PAGE_ARGS[@]}" -v 4 "$apk" > /dev/null
+    if ! verify_log="$("$APKSIGNER" verify --verbose --print-certs "$apk" 2>&1)"; then
+        printf '%s\n' "$verify_log" >&2
+        echo "ERROR: APK signature verification failed: $apk" >&2
+        exit 1
+    fi
+
+    cert_digest="$(awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' <<< "$verify_log")"
+    if [ -z "$cert_digest" ]; then
+        echo "ERROR: could not read signer certificate digest: $apk" >&2
+        exit 1
+    elif [ -z "$BASE_CERT_DIGEST" ]; then
+        BASE_CERT_DIGEST="$cert_digest"
+    elif [ "$cert_digest" != "$BASE_CERT_DIGEST" ]; then
+        echo "ERROR: APK signer differs from signed base: $apk" >&2
+        exit 1
+    fi
+
+    echo "  [x] Verified signature + $ZIPALIGN_DESCRIPTION alignment: $(basename "$apk")"
+}
+
 # Sign a single APK: zipalign (page-aligned for native libs) → apksigner
 sign_apk() {
     local input_apk="$1"
@@ -497,12 +585,13 @@ sign_apk() {
     local aligned="${WORK_DIR}/${output_name}.aligned"
     local signed="${SIGNED_DIR}/${output_name}"
 
-    zipalign -f -p 4 "$input_apk" "$aligned"
+    "$ZIPALIGN" -f "${ZIPALIGN_PAGE_ARGS[@]}" 4 "$input_apk" "$aligned"
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" \
         --ks-pass "pass:${KEY_PASS}" --key-pass "pass:${KEY_PASS}" \
         --out "$signed" "$aligned" 2>&1
     rm -f "$aligned"
+    verify_signed_apk "$signed"
     echo "  [x] $output_name ($(ls -lh "$signed" | awk '{print $5}'))"
 }
 
@@ -535,7 +624,6 @@ cp "${SIGNED_DIR}/base.apk" "$OUTPUT_APK"
 # (or SAI with a zip of those). Only use the merged APK when splits aren't an
 # option, and expect the light-theme regression.
 APKEDITOR_JAR="$TOOLS_DIR/APKEditor.jar"
-MERGED_APK="$OUTPUT_DIR/EdgeCanary-${VERSION}-privacy-merged.apk"
 if [ -f "$APKEDITOR_JAR" ]; then
     echo ""
     echo "=== Step 6/6: Merging splits into single APK ==="
@@ -551,11 +639,13 @@ if [ -f "$APKEDITOR_JAR" ]; then
     java -jar "$APKEDITOR_JAR" m -i "$MERGE_WORK/input" \
         -o "$MERGE_WORK/merged-unsigned.apk" -clean-meta -f 2>&1 | tail -3
     # Re-sign the merged APK with the stable keystore
-    zipalign -f -p 4 "$MERGE_WORK/merged-unsigned.apk" "$MERGE_WORK/merged-aligned.apk"
+    "$ZIPALIGN" -f "${ZIPALIGN_PAGE_ARGS[@]}" 4 \
+        "$MERGE_WORK/merged-unsigned.apk" "$MERGE_WORK/merged-aligned.apk"
     "$APKSIGNER" sign \
         --ks "$KEYSTORE" --ks-key-alias "$KEY_ALIAS" \
         --ks-pass "pass:${KEY_PASS}" --key-pass "pass:${KEY_PASS}" \
         --out "$MERGED_APK" "$MERGE_WORK/merged-aligned.apk" 2>&1
+    verify_signed_apk "$MERGED_APK"
     rm -rf "$MERGE_WORK"
     echo "  [x] Merged single APK: $(ls -lh "$MERGED_APK" | awk '{print $5}')"
 else
@@ -572,36 +662,13 @@ echo "║  Output: $OUTPUT_APK"
 echo "║  Version: $VERSION (privacy patched)"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
-echo "What was neutralized:"
-echo "  Manifest (56 removals):"
-echo "    - Tracking permissions (AD_ID, ADSERVICES, SMS, QUERY_ALL_PACKAGES)"
-echo "    - Device ID vendor queries (MSA, Samsung, Coolpad, OPPO)"
-echo "    - Adjust SDK content provider (auto-initialization)"
-echo "    - Huawei HMS/AGConnect (8 components)"
-echo "    - Xiaomi Push (6 components)"
-echo "    - Google DataTransport/Firebase (6 components)"
-echo "    - KOOM heap monitoring service"
-echo "    - Citrix MITM proxy (4 components)"
-echo "    - @null meta-data entries (prevents apktool compile issues)"
-echo "  DEX targeted stubs (23 methods across 3 DEX files):"
-echo "    - OneAuth.registerTokenSharing() (cross-app token leaking)"
-echo "    - Intune MAM handlers (onHandleIntent, onStartCommand, onReceive, onCreate)"
-echo "    - OneDS SystemNativeLibraryLoader.loadLibrary() + TelemetryLoggerProvider.initializeOneDs()"
-echo "    - MS LogManager initialize/flush/flushAndTeardown/uploadNow/setTransmitProfile"
-echo "    - Adjust SDK: trackEvent/onResume/onPause/trackAdRevenue/trackPlayStoreSubscription"
-echo "    -   getAdid/getAttribution/getGoogleAdId/setPushToken/gdprForgetMe"
-echo "    - Tencent Matrix tracer onAlive() x3"
-echo "  DEX native lib neutralization:"
-echo "    - Citrix ctxlog/log4cpp loadLibrary calls → nop"
-echo "    - KOOM heap dump loadLibrary calls → nop"
-echo "    - Tencent Matrix trace-canary loadLibrary calls → nop"
-echo "  DEX telemetry URL replacement (30+ endpoints → 127.0.0.1):"
-echo "    - Microsoft OneCollector + ARIA collectors (9 regional endpoints)"
-echo "    - Adjust SDK (.com + .io variants, 8 domains)"
-echo "    - App Center crash reporting, ECS experiment flags"
-echo "    - Google Analytics, Chrome variations seed"
-echo "    - OAID advertising config, Rewards activity tracking"
-echo "    - Token share config, crash report upload endpoint"
+echo "Verified build results:"
+echo "  - Configured manifest removals are absent from the compiled manifest"
+echo "  - $PATCHED_DEX_COUNT patched DEX entries match their assembled bytes"
+echo "  - Required method and loadLibrary patches completed; optional misses were reported"
+echo "  - CommandLine.wasFlagsLoadedFromFile() returns false in $CMDLINE_DEX"
+echo "  - Version-dependent telemetry URLs were redirected wherever present"
+echo "  - All APK signatures match and pass $ZIPALIGN_DESCRIPTION alignment checks"
 echo ""
 
 # Build install command
@@ -611,11 +678,10 @@ for split in "$SIGNED_DIR"/split_*.apk; do
 done
 
 if [ -f "$MERGED_APK" ]; then
-    echo "Install — single merged APK (easiest, any installer):"
-    echo "  adb install $MERGED_APK"
-    echo ""
+    echo "Optional merged APK (known to break Edge dark theme):"
+    echo "  $MERGED_APK"
 fi
-echo "Install — split bundle:"
+echo "Install — verified split bundle (recommended):"
 echo "  $INSTALL_CMD"
 echo ""
 echo "First install from THIS keystore requires uninstalling the original"
@@ -624,8 +690,12 @@ echo "  adb uninstall com.microsoft.emmx.canary   # then install above"
 echo ""
 echo "In-place UPDATE (NO data wipe) — only if already on a build from this"
 echo "same keystore. Android allows the update because signatures match:"
-echo "  adb install -r $MERGED_APK            # merged, or"
 echo "  adb install-multiple -r $OUTPUT_APK <splits...>"
+if [ -f "$MERGED_APK" ]; then
+    echo ""
+    echo "Merged update (only if split install is impossible; dark theme will break):"
+    echo "  adb install -r $MERGED_APK"
+fi
 echo ""
 echo "To reapply to a new release:"
 echo "  ./build.sh /path/to/new/Edge_Canary_xxx.apks"

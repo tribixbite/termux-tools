@@ -133,6 +133,70 @@ def strip_metadata(root, config_dir):
     return removed
 
 
+def validate_manifest(root, config_dir):
+    """Return semantic errors found after applying the manifest config."""
+    errors = []
+    app_elem = root.find("application")
+
+    for perm in read_config(os.path.join(config_dir, "strip-permissions.list")):
+        for tag in ("uses-permission", "uses-permission-sdk-23"):
+            if any(
+                elem.get(android_attr("name")) == perm
+                for elem in root.findall(tag)
+            ):
+                errors.append(f"permission remains: {perm}")
+
+    if app_elem is None:
+        errors.append("application element is missing")
+    else:
+        for entry in read_config(os.path.join(config_dir, "strip-components.list")):
+            parts = entry.split("|", 1)
+            if len(parts) != 2:
+                errors.append(f"invalid component config entry: {entry}")
+                continue
+            comp_type, comp_name = parts
+            if any(
+                elem.tag == comp_type
+                and elem.get(android_attr("name")) == comp_name
+                for elem in list(app_elem)
+            ):
+                errors.append(f"component remains: {comp_type}|{comp_name}")
+
+        if app_elem.get(android_attr("debuggable")) != "true":
+            errors.append("application is not android:debuggable=true")
+
+    query_names = {
+        elem.get(android_attr("name"))
+        for queries_elem in root.findall("queries")
+        for elem in list(queries_elem)
+        if elem.tag == "package"
+    }
+    for package in read_config(os.path.join(config_dir, "strip-queries.list")):
+        if package in query_names:
+            errors.append(f"package query remains: {package}")
+
+    metadata_parents = [root]
+    if app_elem is not None:
+        metadata_parents.append(app_elem)
+    metadata_names = {
+        elem.get(android_attr("name"))
+        for parent in metadata_parents
+        for elem in list(parent)
+        if elem.tag == "meta-data"
+    }
+    for name in read_config(os.path.join(config_dir, "strip-metadata.list")):
+        if name in metadata_names:
+            errors.append(f"meta-data remains: {name}")
+
+    for elem in root.iter("meta-data"):
+        if elem.get(android_attr("value")) == "@null":
+            errors.append(
+                f"@null meta-data remains: {elem.get(android_attr('name'), '???')}"
+            )
+
+    return errors
+
+
 def main():
     if len(sys.argv) < 3:
         print(f"Usage: {sys.argv[0]} <manifest.xml> <config-dir>")
@@ -239,12 +303,19 @@ def main():
     print(f"  Total removals: {n_perms + n_comps + n_queries + n_meta + n_attrs}")
     print(f"  Backup saved: {backup_path}")
 
-    # Validate
+    # Validate both XML syntax and the configured postconditions.
     try:
-        ET.parse(manifest_path)
-        print("  XML validation: PASS")
+        validated_root = ET.parse(manifest_path).getroot()
     except ET.ParseError as e:
-        print(f"  WARNING: XML validation issue: {e}")
+        print(f"  ERROR: XML validation issue: {e}")
+        sys.exit(1)
+
+    validation_errors = validate_manifest(validated_root, config_dir)
+    if validation_errors:
+        for error in validation_errors:
+            print(f"  ERROR: Manifest validation failed: {error}")
+        sys.exit(1)
+    print("  XML + semantic validation: PASS")
 
 
 if __name__ == "__main__":

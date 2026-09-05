@@ -103,15 +103,10 @@ echo ""
 if [ "$DO_INSTALL" -eq 1 ]; then
     echo ""
     echo "=== Installing (in-place, no data wipe) ==="
-    MERGED="$SCRIPT_DIR/output/EdgeCanary-${VERSION}-privacy-merged.apk"
-    BASE="$SCRIPT_DIR/output/EdgeCanary-${VERSION}-privacy.apk"
-    if [ -f "$MERGED" ]; then
-        echo "  adb install -r <merged>"
-        "${ADB[@]}" install -r "$MERGED"
-    else
-        mapfile -t SPLITS < <(ls "$SCRIPT_DIR"/output/signed/split_*.apk 2>/dev/null)
-        echo "  adb install-multiple -r <base + ${#SPLITS[@]} splits>"
-        "${ADB[@]}" install-multiple -r "$BASE" "${SPLITS[@]}"
-    fi
+    BASE="$SCRIPT_DIR/output/signed/base.apk"
+    mapfile -t SPLITS < <(find "$SCRIPT_DIR/output/signed" -maxdepth 1 \
+        -type f -name 'split_*.apk' -print | sort)
+    echo "  adb install-multiple -r <base + ${#SPLITS[@]} splits>"
+    "${ADB[@]}" install-multiple -r "$BASE" "${SPLITS[@]}"
     echo "  [x] Updated $PKG on $SERIAL — Edge data preserved."
 fi

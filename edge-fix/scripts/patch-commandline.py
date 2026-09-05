@@ -1,17 +1,18 @@
 #!/data/data/com.termux/files/usr/bin/python3
 """
-patch-commandline.py — Patch Chromium's CommandLine class to read flags on release builds.
+patch-commandline.py — Patch Chromium command-line behavior.
 
 Chromium only reads /data/local/tmp/<pkg>-command-line when the app has
-android:debuggable=true (checked via BuildInfo.isDebugAndroid()). Setting
-debuggable exposes the app to JDWP attacks, so instead we patch the smali
-to always return true from the debug check method.
+android:debuggable=true (checked via BuildInfo.isDebugAndroid()). The manifest
+patch provides that version-robust gate. This helper also patches the Java gate
+where available and suppresses Chromium's repeated bad-flags prompt.
 
-Scans baksmali output for org/chromium/base/CommandLine.smali and patches
-the method that gates file-based command line reading.
+Patches org/chromium/base/CommandLine.smali in one decompiled DEX tree. The
+build passes one exact tree at a time so this script can never modify a DEX
+other than the one which will immediately be assembled.
 
-Usage: python3 patch-commandline.py <smali-root-dir>
-       smali-root-dir contains smali_classes*/ from baksmali
+Usage: python3 patch-commandline.py <smali-dir>
+       smali-dir is one baksmali output tree (for example smali_classes4)
 """
 
 import sys
@@ -20,18 +21,27 @@ import re
 import glob
 
 
+def find_smali_class(smali_root: str, filename: str) -> str | None:
+    """Find a Chromium base class in one tree or a legacy parent root."""
+    relative = os.path.join("org", "chromium", "base", filename)
+    direct = os.path.join(smali_root, relative)
+    if os.path.isfile(direct):
+        return direct
+
+    # Retain compatibility for direct/manual use with a parent containing
+    # smali* directories. build.sh intentionally passes an exact tree.
+    matches = glob.glob(os.path.join(smali_root, "smali*", relative))
+    return matches[0] if len(matches) == 1 else None
+
+
 def find_commandline_smali(smali_root: str) -> str | None:
-    """Find CommandLine.smali across all DEX class dirs."""
-    pattern = os.path.join(smali_root, "smali*/org/chromium/base/CommandLine.smali")
-    matches = glob.glob(pattern)
-    return matches[0] if matches else None
+    """Find CommandLine.smali in the requested DEX tree."""
+    return find_smali_class(smali_root, "CommandLine.smali")
 
 
 def find_buildinfo_smali(smali_root: str) -> str | None:
-    """Find BuildInfo.smali — contains isDebugAndroid() check."""
-    pattern = os.path.join(smali_root, "smali*/org/chromium/base/BuildInfo.smali")
-    matches = glob.glob(pattern)
-    return matches[0] if matches else None
+    """Find BuildInfo.smali — may contain isDebugAndroid()."""
+    return find_smali_class(smali_root, "BuildInfo.smali")
 
 
 def patch_is_debug_android(filepath: str) -> bool:
@@ -103,6 +113,78 @@ def patch_is_debug_android(filepath: str) -> bool:
     return patched
 
 
+def patch_flags_loaded_warning(filepath: str) -> bool:
+    """Patch CommandLine.wasFlagsLoadedFromFile() to return false.
+
+    The command-line file is still read normally. This only prevents Chromium's
+    native ShowBadFlagsPrompt() code from displaying the per-tab snackbar.
+    """
+    with open(filepath, "r") as f:
+        content = f.read()
+
+    lines = content.split("\n")
+    output: list[str] = []
+    patched = False
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+
+        if (
+            line.strip().startswith(".method ")
+            and "wasFlagsLoadedFromFile" in line
+            and line.strip().endswith(")Z")
+        ):
+            output.append(line)
+            i += 1
+            in_annotation = False
+
+            # Preserve method annotations such as @CalledByNative, but discard
+            # the original executable body.
+            while i < len(lines) and not lines[i].strip().startswith(".end method"):
+                stripped = lines[i].strip()
+
+                if stripped.startswith(".annotation"):
+                    in_annotation = True
+                    output.append(lines[i])
+                elif stripped.startswith(".end annotation"):
+                    output.append(lines[i])
+                    in_annotation = False
+                elif in_annotation:
+                    output.append(lines[i])
+                elif stripped.startswith(".param") or stripped.startswith(".end param"):
+                    output.append(lines[i])
+
+                i += 1
+
+            output.extend(
+                [
+                    "    .locals 1",
+                    "",
+                    "    # Patched by edge-fix: suppress command-line-file warning",
+                    "    const/4 v0, 0x0",
+                    "    return v0",
+                    "",
+                ]
+            )
+
+            if i < len(lines):
+                output.append(lines[i])
+
+            patched = True
+            i += 1
+            continue
+
+        output.append(line)
+        i += 1
+
+    if patched:
+        with open(filepath, "w") as f:
+            f.write("\n".join(output))
+
+    return patched
+
+
 def patch_commandline_init(filepath: str) -> bool:
     """Alternative: patch CommandLine.initFromFile to skip the debug check.
 
@@ -133,43 +215,42 @@ def patch_commandline_init(filepath: str) -> bool:
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print(f"Usage: {sys.argv[0]} <smali-root-dir>")
+        print(f"Usage: {sys.argv[0]} <smali-dir>")
         sys.exit(1)
 
     smali_root = sys.argv[1]
 
-    # Strategy 1: Patch BuildInfo.isDebugAndroid() to return true
+    cmdline = find_commandline_smali(smali_root)
+    if not cmdline:
+        print("  [!] CommandLine.smali not found in this DEX tree")
+        sys.exit(1)
+
+    print(f"  Found CommandLine: {os.path.relpath(cmdline, smali_root)}")
+
+    # The manifest sets android:debuggable=true as the version-robust flag-file
+    # gate. Patch the Java gate too when this Chromium version exposes it, but
+    # do not require BuildInfo: Edge 154 moved/removed that method.
     buildinfo = find_buildinfo_smali(smali_root)
     if buildinfo:
         print(f"  Found BuildInfo: {os.path.relpath(buildinfo, smali_root)}")
         if patch_is_debug_android(buildinfo):
             print("  [x] Patched isDebugAndroid() → always returns true")
-            print("  CommandLine flags file will be read on release builds")
-            return
         else:
-            print("  [!] isDebugAndroid() method not found in BuildInfo")
-
-    # Strategy 2: Patch CommandLine.initFromFile() conditional
-    cmdline = find_commandline_smali(smali_root)
-    if cmdline:
-        print(f"  Found CommandLine: {os.path.relpath(cmdline, smali_root)}")
+            print("  [i] BuildInfo.isDebugAndroid() absent; manifest gate remains active")
+    else:
         if patch_commandline_init(cmdline):
             print("  [x] Patched CommandLine.initFromFile() debug check")
-            print("  CommandLine flags file will be read on release builds")
-            return
         else:
-            print("  [!] Could not find debug check pattern in CommandLine")
+            print("  [i] No Java debug gate found; manifest gate remains active")
 
-    # Neither found
-    if not buildinfo and not cmdline:
-        print("  [!] Neither BuildInfo.smali nor CommandLine.smali found")
-        print("  Chromium base classes may be in an un-baksmali'd DEX (classes4+)")
-        print("  Fallback: set android:debuggable=true in manifest")
+    # This patch is required: Chromium's native bad-flags prompt calls this
+    # method for every tab and otherwise displays a repeated snackbar.
+    if not patch_flags_loaded_warning(cmdline):
+        print("  [!] CommandLine.wasFlagsLoadedFromFile() not found")
         sys.exit(1)
 
-    print("  [!] Could not patch command-line flag reading")
-    print("  Fallback: set android:debuggable=true in manifest")
-    sys.exit(1)
+    print("  [x] Patched wasFlagsLoadedFromFile() → always returns false")
+    print("  Command-line flags remain active; repeated warning is suppressed")
 
 
 if __name__ == "__main__":

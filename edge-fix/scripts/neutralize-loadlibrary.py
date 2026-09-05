@@ -53,7 +53,12 @@ def main() -> None:
     filepath = sys.argv[1]
     count = neutralize(filepath)
     filename = filepath.split("/")[-1]
-    print(f"    [x] Neutralized {count} loadLibrary call(s) in {filename}")
+    if count:
+        print(f"    [x] Neutralized {count} loadLibrary call(s) in {filename}")
+    else:
+        # The required postcondition is that no loader calls remain. Accept an
+        # already-patched input so rebuilding edge-fix output is idempotent.
+        print(f"    [=] No System.loadLibrary calls remain in {filename}")
 
 
 if __name__ == "__main__":

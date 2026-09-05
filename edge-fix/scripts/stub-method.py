@@ -135,6 +135,9 @@ def main() -> None:
 
     count = stub_method(filepath, target_method)
     filename = filepath.split("/")[-1]
+    if count == 0:
+        print(f"    No patchable '{target_method}' method in {filename}", file=sys.stderr)
+        sys.exit(2)
     print(f"    [x] Stubbed {count} '{target_method}' method(s) in {filename}")
 
 

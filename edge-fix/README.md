@@ -83,10 +83,11 @@ cd ../..
 LD_PRELOAD=$PREFIX/lib/libtermux-exec.so bash -c './build.sh work/Edge_Canary_<version>.apks'
 ```
 
-Cross-version drift is expected and non-fatal (obfuscated names move): `[!] Not
-found` lines just skip that strip. If it crashes on launch after install, the
-usual causes are documented in `../.claude/memory` and this repo's history:
-vendor-SDK class strips (xiaomi/huawei) that newer Edge hard-references, or a
+Cross-version drift is expected (obfuscated names move). Targets prefixed with
+`?` in the config are explicitly optional and may be skipped; every other target
+is required and aborts the build if it cannot be patched. If it crashes on launch
+after install, the usual causes are documented in `../.claude/memory` and this
+repo's history: vendor-SDK class strips (xiaomi/huawei) that newer Edge hard-references, or a
 stripped `android:nativeService` attribute. The current `config/` is tuned to
 avoid both on 154.
 
@@ -230,8 +231,8 @@ config/
   strip-queries.list              # <queries> package names (device-ID probes)
   strip-metadata.list             # <meta-data> names to remove
   # DEX surgery (read by build.sh)
-  targeted-stubs.list             # per-method stubs (smali_path|method_name)
-  neutralize-libs.list            # files with loadLibrary calls to NOP
+  targeted-stubs.list             # required/optional per-method stubs
+  neutralize-libs.list            # required/optional loadLibrary calls to NOP
   replace-urls.list               # telemetry URLs to redirect to 127.0.0.1
   strip-classes.list              # whole smali package trees to delete
   # APK assembly
@@ -246,7 +247,7 @@ scripts/
   stub-method.py                  # replace method body with safe return default
   neutralize-loadlibrary.py       # replace System.loadLibrary with nop
   replace-strings.py              # replace const-string/annotation URL values
-  patch-commandline.py            # patch BuildInfo.isDebugAndroid() → true
+  patch-commandline.py            # enable flags + suppress per-tab warning
   patch-dex-strings.py            # binary DEX string replacement (disabled)
   push-flags.sh                   # push command-line flags to /data/local/tmp
   push-extension.sh               # sideload the CFC extension over ADB
@@ -257,16 +258,27 @@ tools/
 ```
 
 Pipeline steps: (1) extract `.apks`, (2) patch manifest, (3) patch DEX
-(method stubs, loadLibrary NOPs, URL redirects, class stripping, `BuildInfo`
-command-line gate), (4) assemble — copy original APK and replace only the
-patched DEX + manifest, strip unused libs/assets, (5) sign all APKs, (6) merge
-splits into a single installable APK and re-sign.
+(method stubs, loadLibrary NOPs, URL redirects, class stripping, Chromium
+command-line behavior), (4) assemble — copy original APK and replace only the
+patched DEX + manifest, strip unused libs/assets, (5) sign and verify all APKs,
+(6) optionally merge splits into a single installable APK and re-sign.
 
-The pipeline copies the original APK and replaces only the patched files (DEX + manifest), preserving all resources, native libs, and unmodified DEX files byte-for-byte.
+Every DEX is patched before that exact smali tree is assembled. The build
+verifies that the manifest and patched DEX bytes inserted into the APK match
+their generated files, then checks ZIP alignment, signatures, and signer
+equality across the base and splits.
+
+DEX config entries are required by default and fail the build when their class,
+method, or loadLibrary call is absent. Prefix a path with `?` only for a
+known version-dependent target; optional misses are reported in the build log.
 
 ## Known limitations
 
 - **The merged single APK breaks the dark theme.** APKEditor's merge rebuilds the combined `resources.arsc` across base+splits, and the reprocessed table breaks Edge's DayNight resolution (Dark → light chrome). It also previously dropped a sandboxed-service class. **Install the split bundle** (`adb install-multiple` or SAI) — see the warning under _Install_.
-- **classes4.dex is unpatched** — contains interfaces with static methods that cause `IncompatibleClassChangeError` after baksmali/smali round-trip. Binary string replacement also fails (breaks DEX string table sort order). Three URLs remain active: Chrome variations seed, crash reporter (already invalid domain), rewards API. (`org/chromium/base/CommandLine` + `BuildInfo.isDebugAndroid` live here and are obfuscated in 154, so the flag-reading patch uses `android:debuggable=true` instead — which does **not** affect the theme.)
+- **classes4.dex gets only the required command-line warning patch.** Edge 154
+  keeps `org/chromium/base/CommandLine` there, so that DEX is round-tripped and
+  byte-checked. URL-only targets in the same DEX remain unchanged because binary
+  DEX string replacement breaks string-table ordering. Device-test new Edge
+  versions because older smali toolchains had interface-static-method issues.
 - **Chromium UMA metrics** — baked into native `.so` libs with no Java entry point.
 - **User-configurable telemetry** — account sync, search suggestions, Copilot features are controlled via Edge settings at runtime.
