@@ -77,6 +77,52 @@ It never silently installs base Edge (no Play/APKMirror API — you tap Install)
 and never touches the signing keystore. Non-interactive launches (e.g. spawned
 by `termux-url-opener`) skip the prompts and just print a one-line hint.
 
+## Codex user configuration
+
+Codex uses the existing stdio relay without running `--setup`. Configure
+`~/.codex/config.toml` (absolute Termux paths avoid inherited PATH problems):
+
+```toml
+[mcp_servers.cfc-bridge]
+command = "/data/data/com.termux/files/usr/bin/node"
+args = ["/data/data/com.termux/files/home/git/termux-tools/bridge/dist/cli.js", "--mcp"]
+startup_timeout_sec = 15
+tool_timeout_sec = 60
+```
+
+Verification on 2026-09-05: relay 1.5.1 initialized, advertised 18 tools, and
+read `tabs_context_mcp` from the running bridge 1.12.1 with one extension client.
+An initial browser request timed out; a subsequent end-to-end request succeeded.
+Browser focus and tabs were not changed. CDP reported disconnected, so this
+checks the extension relay, not every CDP-dependent tool.
+
+<!-- TODO: Fix cmdSetup registration: it currently writes ~/.claude/settings.json,
+which the project specification documents as the wrong MCP registration file.
+Use the explicit Codex configuration above; do not run --setup for Codex. -->
+
+## PAL alongside CFC (2026-09-05)
+
+The sibling `../pal-mcp-server` clone already matched upstream HEAD `7afc7c1`
+and latest release 9.8.2. Codex now launches its existing
+`.pal_venv/bin/python` with the absolute `server.py` path, replacing the uvx Git
+installation and invalid non-Termux PATH override. No system packages changed.
+User credentials remain in private configuration, never in this repository.
+
+PAL's existing model registries now include Astra (`gpt-6-astra`), Sol
+(`gpt-5.6-sol`), Gemini Pro (`gemini-3.1-pro-preview`), Gemini Flash
+(`gemini-3.8-flash`), and Fable (`anthropic/claude-fable-5.1`). Both Codex and
+PAL's private `.env` select `astra` by default and restrict provider lists to
+these five models. OpenAI uses Responses; Fable uses OpenRouter. Gemini aliases
+are `pro3.1` and `flash3.8`; upstream historical aliases remain unchanged.
+
+Both MCP servers initialized through their configured commands; PAL advertised
+exactly five models and all five answered synthetic chat requests from an empty
+temporary directory with no files, images, or conversation history attached.
+Model metadata was loaded through PAL's typed registry classes. The existing
+cryptography 46.0.5 wheel produces a platform warning from `pip check`, but its
+native SHA-256 operation and the HTTPS model calls work. No runtime dependency
+upgrade was needed. Test-only pytest packages were added to PAL's virtualenv.
+
 ## Important
 
 The bridge **must be running before** starting a Claude Code session. MCP tools are registered at session startup — if the bridge is down, the tools won't appear.
@@ -131,3 +177,15 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 ## License
 
 MIT
+
+### Validation completion (2026-09-05)
+
+PAL's final non-integration suite passed: **866 passed, 4 skipped, 16 deselected**
+with two AsyncMock warnings. Scoped mypy passed the four updated test files.
+The expanded Gemini catalog changes automatic fast/balanced selection to 3.8
+Flash; test expectations were updated after the original-catalog comparison
+passed all 61 tests in the affected files.
+
+Gemini currently uses provider-default thinking. PAL's legacy numeric
+thinking-budget controls are not enabled for these Gemini 3.x entries.
+<!-- TODO: Add tested Gemini 3.x thinking-level mapping in PAL. -->
