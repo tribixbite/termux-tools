@@ -78,6 +78,8 @@ command -v proot >/dev/null 2>&1 || die "'proot' is required. Install it with: p
 [ -x "$CURL_BIN" ] || die "curl missing at $CURL_BIN"
 SYS_LOADER="$PREFIX/glibc/lib/$loader_name"
 [ -f "$SYS_LOADER" ] || die "glibc loader missing at $SYS_LOADER. Install the glibc runtime with: pkg install glibc-runner"
+RESOLV_CONF="$PREFIX/etc/resolv.conf"
+[ -r "$RESOLV_CONF" ] || die "resolver configuration missing at $RESOLV_CONF"
 ok "Dependencies present (proot + glibc loader)"
 
 # --- 3. fetch + parse the release manifest --------------------------------------
@@ -137,16 +139,21 @@ set -euo pipefail
 BINARY="$BINARY"
 SYS_LOADER="$SYS_LOADER"
 LOADER_NAME="$loader_name"
+RESOLV_CONF="$RESOLV_CONF"
 
 [ -x "\$BINARY" ]     || { echo "agy: binary missing at \$BINARY -- re-run install-antigravity-termux.sh" >&2; exit 1; }
 [ -f "\$SYS_LOADER" ] || { echo "agy: glibc loader missing at \$SYS_LOADER -- run: pkg install glibc-runner" >&2; exit 1; }
 command -v proot >/dev/null 2>&1 || { echo "agy: 'proot' not installed -- run: pkg install proot" >&2; exit 1; }
+[ -r "\$RESOLV_CONF" ] || { echo "agy: resolver configuration missing at \$RESOLV_CONF" >&2; exit 1; }
 
 # Termux exports libtermux-exec.so through LD_PRELOAD. It is a bionic library and
 # cannot be loaded by this glibc process (the loader otherwise reports an invalid
 # libc.so / missing LIBC symbol before Antigravity starts).
 unset LD_PRELOAD
-exec proot -b "\$SYS_LOADER:/lib/\$LOADER_NAME" "\$BINARY" "\$@"
+exec proot \
+    -b "\$SYS_LOADER:/lib/\$LOADER_NAME" \
+    -b "\$RESOLV_CONF:/etc/resolv.conf" \
+    "\$BINARY" "\$@"
 EOF
 chmod +x "$WRAPPER"
 ok "Launcher installed: $WRAPPER"

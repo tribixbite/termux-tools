@@ -115,9 +115,10 @@ installation step.
 Installs or upgrades Google's `agy` CLI on Termux without changing the system
 Python or package-manager state. Google distributes Antigravity as a glibc-linked
 Go binary; the generated launcher runs it through the already-installed Proot and
-Termux glibc runtime, removes the incompatible bionic `LD_PRELOAD`, and preserves
-the downloaded binary unchanged. Downloads are verified against Google's SHA-512
-release manifest and the executable is replaced atomically.
+Termux glibc runtime, binds Termux's resolver configuration, removes the
+incompatible bionic `LD_PRELOAD`, and preserves the downloaded binary unchanged.
+Downloads are verified against Google's SHA-512 release manifest and the
+executable is replaced atomically.
 
 ```bash
 scripts/install-antigravity-termux.sh
