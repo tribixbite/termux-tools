@@ -1,106 +1,79 @@
-// Launch bridge — tries daemon API first, falls back to navigator.share() → Termux.
-// Browser intent: URIs add CATEGORY_BROWSABLE which Termux doesn't declare,
-// so navigator.share() (native OS share, no BROWSABLE) is the only path
-// when the daemon isn't running.
-
+// The background owns daemon startup and connection polling. Sharing stays in
+// this tab's click handler so Android receives a fresh user activation.
 const btn = document.getElementById("share-btn");
 const status = document.getElementById("status");
-const setupHint = document.getElementById("setup-hint");
+let connected = false;
+let waitingTimer;
 
-// Listen for state updates from background.js (single source of truth for polling)
+/** Mark a confirmed connection; late startup callbacks must not overwrite it. */
+function showConnected() {
+  if (connected) return;
+  connected = true;
+  clearTimeout(waitingTimer);
+  status.textContent = "Bridge connected";
+  btn.textContent = "Already Running";
+  btn.disabled = true;
+  setTimeout(() => window.close(), 1000);
+}
+
+/** Keep manual recovery available if startup never establishes a connection. */
+function waitForConnection() {
+  if (connected) return;
+  clearTimeout(waitingTimer);
+  status.textContent = "Waiting for bridge to connect...";
+  btn.textContent = "Starting...";
+  btn.disabled = true;
+  waitingTimer = setTimeout(() => {
+    if (connected) return;
+    status.textContent = "Bridge didn't respond — share to Termux or use the command below";
+    btn.textContent = "Share to Termux";
+    btn.disabled = false;
+  }, 15000);
+}
+
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === "state_update") {
-    if (msg.state === "connected") {
-      status.textContent = "Bridge connected";
-      // Auto-close launcher tab after successful connection
-      setTimeout(() => window.close(), 1000);
-    }
-  }
+  if (msg.type === "state_update" && msg.state === "connected") showConnected();
 });
 
-// On load: try daemon API first — may start bridge without share sheet
-(async () => {
-  // Check if already connected
-  chrome.runtime.sendMessage({ type: "get_state" }, (resp) => {
-    if (resp?.state === "connected") {
-      status.textContent = "Bridge is already connected";
-      btn.textContent = "Already Running";
-      btn.disabled = true;
-    }
-  });
-
-  // Try starting via daemon HTTP API (works when Termux is running).
-  // The daemon requires Authorization: Bearer — token is saved via the popup.
-  status.textContent = "Trying daemon...";
-  try {
-    const { operadToken } = await new Promise((resolve) =>
-      chrome.storage.local.get("operadToken", resolve)
-    );
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 3000);
-    const resp = await fetch("http://127.0.0.1:18970/api/bridge", {
-      method: "POST",
-      headers: operadToken ? { Authorization: `Bearer ${operadToken}` } : {},
-      signal: ctrl.signal,
-    });
-    clearTimeout(timer);
-    if (resp.status === 401) {
-      status.textContent = "Daemon needs a token — set it in the extension popup (operad token)";
-    }
-    if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === "starting" || data.status === "already_running") {
-        status.textContent = `Bridge ${data.status} via daemon — waiting for connection...`;
-        btn.textContent = "Starting...";
-        btn.disabled = true;
-        // Tell background to start polling
-        chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
-        // Auto-close timeout
-        setTimeout(() => {
-          if (status.textContent.includes("waiting")) {
-            status.textContent = "Bridge didn't respond — try share button below";
-            btn.textContent = "Share to Termux";
-            btn.disabled = false;
-          }
-        }, 12000);
-        return; // Daemon handled it
-      }
-    }
-  } catch {
-    // Daemon not reachable — Termux may not be running
+btn.disabled = true;
+status.textContent = "Checking bridge...";
+chrome.runtime.sendMessage({ type: "get_state" }, (state) => {
+  const stateError = chrome.runtime.lastError;
+  if (!stateError && state?.state === "connected") {
+    showConnected();
+    return;
   }
-
-  // Daemon didn't work — show share button
-  status.textContent = "Tap below to share to Termux and start the bridge";
-})();
+  if (connected) return;
+  status.textContent = "Trying daemon...";
+  chrome.runtime.sendMessage({ type: "launch_bridge" }, (response) => {
+    const launchError = chrome.runtime.lastError;
+    if (connected) return;
+    if (!launchError && response?.ok) {
+      waitForConnection();
+      return;
+    }
+    status.textContent = "Choose Share to Termux, then select Termux in the share sheet";
+    btn.disabled = false;
+  });
+});
 
 btn.addEventListener("click", async () => {
   btn.textContent = "Opening share sheet...";
   btn.disabled = true;
-
+  clearTimeout(waitingTimer);
   try {
+    // This exact URL matches both installed and generated termux-url-opener
+    // handlers (*cfcbridge*/start*). Share only text to avoid merged payloads.
     await navigator.share({ text: "https://cfcbridge.example.com/start" });
-    // User picked a target (hopefully Termux)
-    status.textContent = "Shared — waiting for bridge to start...";
-    btn.textContent = "Share to Termux";
-    btn.disabled = false;
-
-    // Notify background.js to start polling (it's the single source of truth)
+    if (connected) return;
+    waitForConnection();
     chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
-
-    // Simple local timeout — background handles the actual polling
-    setTimeout(() => {
-      if (status.textContent.includes("waiting")) {
-        status.textContent = "Bridge didn't start — try again or start manually in Termux";
-      }
-    }, 15000);
-  } catch (e) {
+  } catch (error) {
+    if (connected) return;
     btn.textContent = "Share to Termux";
     btn.disabled = false;
-    if (e.name === "AbortError") {
-      status.textContent = "Cancelled — tap to try again";
-    } else {
-      status.textContent = "Error: " + e.message;
-    }
+    status.textContent = error.name === "AbortError"
+      ? "Cancelled — tap to try again"
+      : "Sharing unavailable — use the command below: " + error.message;
   }
 });

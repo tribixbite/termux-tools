@@ -132,54 +132,16 @@ document.getElementById("btn-reconnect").addEventListener("click", () => {
   });
 });
 
-document.getElementById("btn-launch-bridge").addEventListener("click", async () => {
-  const launchBtn = document.getElementById("btn-launch-bridge");
-  launchBtn.textContent = "Starting...";
-  launchBtn.disabled = true;
-
-  // Tier 1 & 2: Try daemon API + TermuxService (handled in background.js launchBridge)
-  const response = await new Promise((resolve) => {
-    chrome.runtime.sendMessage({ type: "launch_bridge" }, (r) => resolve(r));
-  });
-
-  if (response?.ok && response.method !== "needs_deeplink") {
-    // Daemon or TermuxService handled it
-    launchBtn.textContent = `Starting via ${response.method}...`;
-    setTimeout(() => {
-      launchBtn.disabled = false;
-      launchBtn.textContent = "Launch Bridge";
-    }, 5000);
-    return;
-  }
-
-  // Tier 3: Try navigator.share() directly from popup context
-  try {
-    await navigator.share({
-      title: "Start CFC Bridge",
-      text: "termux-start-bridge",
-      url: "https://termux.party/start-bridge",
-    });
-    // Share completed — user chose Termux
-    launchBtn.textContent = "Waiting for bridge...";
-    chrome.runtime.sendMessage({ type: "bridge_launch_initiated" });
-    setTimeout(() => {
-      launchBtn.disabled = false;
-      launchBtn.textContent = "Launch Bridge";
-    }, 12000);
-    return;
-  } catch {
-    // navigator.share() failed or was cancelled — fall through to tier 4
-  }
-
-  // Tier 4: Last resort — open launcher page in active tab
-  launchBtn.disabled = false;
-  launchBtn.textContent = "Launch Bridge";
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs[0]) {
-      chrome.tabs.update(tabs[0].id, { url: chrome.runtime.getURL("launcher.html") });
-    } else {
-      chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") });
+document.getElementById("btn-launch-bridge").addEventListener("click", () => {
+  // Use a persistent tab: daemon requests can outlive the popup and consume the
+  // user-activation window required by navigator.share(). The launcher gives
+  // the fallback its own fresh tap and never replaces the user's current page.
+  chrome.tabs.create({ url: chrome.runtime.getURL("launcher.html") }, () => {
+    if (chrome.runtime.lastError) {
+      document.getElementById("statusText").textContent = chrome.runtime.lastError.message;
+      return;
     }
+    window.close();
   });
 });
 

@@ -1,3 +1,24 @@
+# Bridge startup repair — 2026-09-27
+
+- Fixed the custom extension launch path: popup opens a separate launcher tab;
+  launcher uses background startup (health, authenticated daemon, Termux service).
+- Share fallback runs directly on a fresh tap and uses the existing handler's
+  `https://cfcbridge.example.com/start` text payload. The former popup payload
+  (`termux.party/start-bridge`) did not match the installed handler.
+- Connection events win over late callbacks; cancellation restores the button;
+  startup timeout leaves manual recovery available.
+- Validation: 8 Bun VM regression tests / 18 assertions passed (temporary harness
+  at `$TMPDIR/bridge-start-check/launcher.test.ts`); TypeScript compiler with
+  `--allowJs --noEmit` passed (syntax/compiler validation, not full checkJs);
+  `bun run build:crx` passed, producing `dist/claude-code-bridge-v1.12.1.crx`.
+- ADB rediscovered at port 33839. No browser tabs/settings were changed. The
+  installed extension could not be validated through its debug target; no claim
+  of on-device end-to-end success. No version bump or publication performed.
+- TODO: Install the locally built CRX in Edge and verify native share-to-Termux
+  startup with the daemon unavailable, then confirm automatic reconnection.
+- Existing edits in bridge CLI/build/dist, bridge server, compat, migration script,
+  and the untracked edge-fix file are outside this repair and remain untouched.
+
 # Current Working Session - 2025-11-14
 
 ## Latest Work: Fixed Tasker XML Format - Comprehensive MCP Verification

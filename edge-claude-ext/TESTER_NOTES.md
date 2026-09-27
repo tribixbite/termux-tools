@@ -1,3 +1,15 @@
+STARTUP REGRESSION CHECKS (2026-09-27):
+- Launch Bridge opens a separate launcher tab, preserving the current page.
+- An existing connection closes the launcher without requesting daemon startup.
+- Daemon startup uses background.js, including its authenticated service fallback.
+- If startup fails, tap Share to Termux and choose Termux. The text payload must
+  be https://cfcbridge.example.com/start to match the installed URL opener.
+- Cancel sharing: the button becomes available and no share-success poll starts.
+- If sharing is unsupported, the launcher shows the manual command fallback.
+- If no connection arrives within 15 seconds, manual sharing becomes available.
+- A connection arriving before the daemon callback must keep the connected state.
+- TODO: Repeat native share and reconnection checks with the rebuilt CRX installed.
+
 Browser-side component of a two-part system. Connects to a local WebSocket server on the same device (127.0.0.1:18963). No external servers contacted.
 
 FULL TEST (requires Node.js 18+):
