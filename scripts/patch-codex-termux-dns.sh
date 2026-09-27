@@ -102,18 +102,19 @@ trap - EXIT
 echo "Patched atomically: $CODEX_BINARY"
 
 # Codex prepends its bundled tools to PATH. The upstream musl rg needs an
-# interpreter Android lacks; use the installed bionic build after each update.
+# interpreter Android lacks; copy the installed bionic build after each update.
+# External symlinks are rejected when Codex stages its app-server daemon package.
 bundled_rg="$(dirname -- "$CODEX_BINARY")/../codex-path/rg"
 native_rg="${PREFIX:-/data/data/com.termux/files/usr}/bin/rg"
 if [ -f "$bundled_rg" ] && [ -x "$native_rg" ]; then
   "$native_rg" --version >/dev/null
-  if [ ! -L "$bundled_rg" ]; then
-    if [ ! -e "$bundled_rg.bak-prepatch" ]; then
+  if [ -L "$bundled_rg" ] || ! cmp -s -- "$native_rg" "$bundled_rg"; then
+    if [ ! -L "$bundled_rg" ] && [ ! -e "$bundled_rg.bak-prepatch" ]; then
       cp -p -- "$bundled_rg" "$bundled_rg.bak-prepatch"
     fi
     temporary_rg_dir="$(mktemp -d "$(dirname -- "$bundled_rg")/.codex-rg.XXXXXX")"
     trap 'rm -f -- "$temporary_rg_dir/rg"; rmdir -- "$temporary_rg_dir"' EXIT
-    ln -s -- "$native_rg" "$temporary_rg_dir/rg"
+    cp -p -- "$native_rg" "$temporary_rg_dir/rg"
     mv -Tf -- "$temporary_rg_dir/rg" "$bundled_rg"
     rmdir -- "$temporary_rg_dir"
     trap - EXIT

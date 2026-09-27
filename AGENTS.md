@@ -29,6 +29,13 @@ More-specific repository instructions always take precedence.
   prepended `codex-path/rg` with the native Termux binary as well as DNS. Preserve
   mapped executables by rename before a package manager replaces their contents.
 
+- Codex daemon staging rejects external package symlinks (`package link escapes
+  its root`): copy native `rg` atomically into `codex-path/rg`, never symlink it.
+- Codex 0.157.1's daemon socket root is hardcoded `/tmp/codex-daemon-<uid>` and
+  ignores TMPDIR; Android returns EACCES. `codex features disable daemon_auto_start`
+  enables normal foreground startup without changing sandbox/approval settings.
+  Verify interactive startup after upgrades, not only `--version` and login.
+
 ## Long-running commands
 
 - A long command can return a live session identifier rather than its final exit status. Poll

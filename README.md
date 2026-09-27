@@ -109,7 +109,7 @@ account or workspace settings as described in the
 [official Codex authentication documentation](https://developers.openai.com/codex/auth).
 The binary rewrite itself is a Termux-specific workaround, not an official OpenAI
 installation step. The patcher also replaces Codex's bundled `codex-path/rg` with
-an atomic symlink to Termux's native ripgrep when available, keeping the upstream
+an atomic regular-file copy of Termux's native ripgrep when available, keeping the upstream
 binary as `rg.bak-prepatch`. Codex prepends this directory to PATH; the bundled
 Linux interpreter is unavailable on Android.
 
@@ -143,6 +143,29 @@ Linux interpreter is unavailable on Android.
   A compatible Linux host/VM is the practical route to the
   [official Linux sandbox](https://learn.chatgpt.com/docs/sandboxing); Proot path
   translation is not equivalent security isolation.
+
+#### Daemon startup correction: 2026-09-27
+
+The initial ripgrep symlink repair caused `package link escapes its root` when
+normal interactive startup staged the daemon package. The patcher now copies
+native ripgrep atomically into the package instead; it repairs existing symlinks
+and skips unchanged regular files. Version/login checks alone did not exercise
+this installation path.
+
+After that fix, daemon installation succeeded but startup failed creating
+`/tmp/codex-daemon-10364` with `EACCES`. The version-matched upstream
+`codex-rs/uds/src/daemon_directory.rs` deliberately uses a fixed `/tmp` root,
+ignoring `TMPDIR`, `HOME`, and `CODEX_HOME`. This is separate from the sandbox
+failure. Applied the supported setting:
+
+```bash
+codex features disable daemon_auto_start
+```
+
+Normal interactive launch was verified in a PTY without `--no-daemon`; foreground
+mode opened with the configured model and project. Shared background-daemon
+features remain unavailable on this host. Sandbox and approval settings were
+not changed. Explicit `codex --no-daemon` remains a per-launch alternative.
 
 <!-- TODO: Validate sandboxed execution on a compatible Linux host/VM; native
 Android namespace restrictions remain unresolved. Verify durable CFC daemon and
