@@ -108,7 +108,45 @@ update if the login error returns. Device-code login must also be enabled in the
 account or workspace settings as described in the
 [official Codex authentication documentation](https://developers.openai.com/codex/auth).
 The binary rewrite itself is a Termux-specific workaround, not an official OpenAI
-installation step.
+installation step. The patcher also replaces Codex's bundled `codex-path/rg` with
+an atomic symlink to Termux's native ripgrep when available, keeping the upstream
+binary as `rg.bak-prepatch`. Codex prepends this directory to PATH; the bundled
+Linux interpreter is unavailable on Android.
+
+#### Verified update: 2026-09-27
+
+- Updated Bun's global `@openai/codex` from **0.153.4 to 0.157.1**, the registry's
+  stable `latest` at the time. Staged the release with Bun first, patched it, and
+  checked `--version` before updating the global package with
+  `env -u BUN_BINARY_PATH bun add --global --ignore-scripts --exact @openai/codex@0.157.1`.
+- Before updating a running installation, preserve the native `codex` and
+  `codex-code-mode-host` inodes by renaming them within their directory; never
+  truncate mapped executables. Previous packages for this update are backed up
+  under `$PREFIX/tmp/codex-update-20260927/previous/`.
+- Reapplied this script after installation. Verified the installed binary differs
+  from its new upstream backup **only in two DNS path substitutions**, with equal
+  size. `codex --version`, `codex login status`, native `rg --version`, shell syntax,
+  patcher reapplication, six patch regression tests (26 assertions), and the
+  shared patch module's TypeScript check passed. Existing ChatGPT login survived.
+- CFC's existing HTTP configuration required an already-running daemon. Restored
+  the documented stdio configuration in `bridge/README.md`, started the existing
+  daemon with Node, and verified MCP discovery and a read-only browser-context
+  call. Start the daemon with `node bridge/dist/cli.js` before browser use and open
+  Edge Canary. The extension disconnected when Edge stopped/backgrounded during
+  testing; registration alone does not guarantee a live browser connection.
+- **Sandbox remains unavailable on this Android host.** `/proc/sys/kernel/overflowuid`
+  is denied, `unshare -Ur true` returns `EINVAL`, and mount namespace creation
+  returns `EPERM`. Codex 0.157.1's sandbox fails with permission denied; its deprecated
+  Landlock option also refuses filesystem-restricted execution without bubblewrap.
+  Installing another bubblewrap binary cannot supply the missing kernel/SELinux
+  permissions. No security settings or Codex approval defaults were weakened.
+  A compatible Linux host/VM is the practical route to the
+  [official Linux sandbox](https://learn.chatgpt.com/docs/sandboxing); Proot path
+  translation is not equivalent security isolation.
+
+<!-- TODO: Validate sandboxed execution on a compatible Linux host/VM; native
+Android namespace restrictions remain unresolved. Verify durable CFC daemon and
+browser-extension availability across device backgrounding and reboot. -->
 
 ### Google Antigravity CLI (`scripts/install-antigravity-termux.sh`)
 

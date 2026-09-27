@@ -21,6 +21,14 @@ More-specific repository instructions always take precedence.
   `required file not found`. Treat that as a tool failure, not as an empty search. Try the
   Termux-native binary if present; otherwise use `git grep`, `grep`, or `find`.
 
+- Codex 0.157.1 still cannot sandbox on this host: user namespace creation returns
+  `EINVAL`, mount namespace creation returns `EPERM`, and the legacy Landlock flag
+  requires bubblewrap for app-server socket isolation. Do not present Proot or a
+  disabled sandbox as an equivalent fix.
+- After Codex updates, rerun `scripts/patch-codex-termux-dns.sh`: it now repairs the
+  prepended `codex-path/rg` with the native Termux binary as well as DNS. Preserve
+  mapped executables by rename before a package manager replaces their contents.
+
 ## Long-running commands
 
 - A long command can return a live session identifier rather than its final exit status. Poll

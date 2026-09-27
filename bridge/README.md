@@ -100,6 +100,25 @@ checks the extension relay, not every CDP-dependent tool.
 which the project specification documents as the wrong MCP registration file.
 Use the explicit Codex configuration above; do not run --setup for Codex. -->
 
+### Rechecked with Codex 0.157.1 (2026-09-27)
+
+The user configuration had changed to HTTP `http://127.0.0.1:18963/mcp`, but its
+local daemon was down, so CFC tools were absent from the session. Started the
+existing built daemon with Node and restored the stdio configuration above;
+stdio discovery works without a connected browser. The existing HTTP transport
+also passed initialization and advertised 18 tools when the daemon was running.
+Both configured stdio servers then initialized successfully: CFC advertised 18
+tools and PAL 9.8.2 advertised 18 tools; no provider inference was needed.
+A read-only `tabs_context_mcp` call succeeded through the live Edge Canary
+extension after an initial disconnect. Starting app focus was restored afterward.
+The extension disconnected again when Edge stopped/backgrounded; open Edge for
+browser calls. Restart Codex to load the changed MCP transport. Existing bridge
+source/build edits were preserved and were not included in this documentation
+commit. No new daemon boot service was installed.
+
+<!-- TODO: Verify CFC daemon startup and extension connection across backgrounding
+and device reboot; tool registration is verified, persistent availability is not. -->
+
 ## PAL alongside CFC (2026-09-05)
 
 The sibling `../pal-mcp-server` clone already matched upstream HEAD `7afc7c1`
