@@ -171,6 +171,58 @@ not changed. Explicit `codex --no-daemon` remains a per-launch alternative.
 Android namespace restrictions remain unresolved. Verify durable CFC daemon and
 browser-extension availability across device backgrounding and reboot. -->
 
+### Native temporary-directory policy (2026-09-27)
+
+Use native configuration and builds; PRoot is not the preferred solution for this
+host. Both `~/.bashrc` and `~/.profile` now export the same values for new shells:
+
+```bash
+export TMPDIR=/data/data/com.termux/files/usr/tmp
+export TMP="$TMPDIR"
+export TEMP="$TMPDIR"
+```
+
+Login-shell Python and interactive-shell Node checks passed; Bun also reports
+this directory. Existing processes keep their old environment. Service launchers
+that bypass shell startup files must supply these variables themselves. Java
+programs may additionally need `-Djava.io.tmpdir=/data/data/com.termux/files/usr/tmp`.
+
+There is no universal native userspace setting for programs that deliberately
+ignore these variables. This host's real `/tmp` is a writable tmpfs owned by
+`shell:shell`, mode 0771, labeled `shell_data_file`; it is not an app-writable
+Termux directory. Android policy prohibits app-domain writes to that directory
+label, so an ADB chmod alone is not a sound fix. No global mount, mode, ownership,
+or SELinux policy was changed.
+
+Codex's distributed ARM64 binary is statically linked, so LD_PRELOAD cannot
+intercept its filesystem calls. A native rebuild needs a platform-specific
+constant in `codex-rs/uds/src/daemon_directory.rs`: use the fixed
+`/data/data/com.termux/files/usr/tmp` root for Android and retain `/tmp` elsewhere.
+Keep its existing UID-derived directory, 0700 permissions, ownership checks, and
+symlink rejection. Both daemon listeners and sandbox exclusions must use the
+same shared function. Do not replace it with an environment-selected directory:
+upstream explicitly requires this privileged socket root to be independent of
+HOME, TMPDIR, CODEX_HOME, and command settings.
+
+The configured TUR repository offers native Codex **0.122.0-1**, older than the
+installed **0.157.1**, so it was not installed. Its build recipe also builds V8;
+with only about 9.2 GiB free and existing load around 11, no full native build was
+started. The current CLI remains configured for foreground mode. A temporary
+PRoot daemon test was stopped and its leftover supervisor terminated; no PRoot
+launcher or service was installed.
+
+The shared daemon enables the `codex agents` overview, shared live sessions that
+can outlive a terminal client, and managed remote-control/SSH workflows. Disabling
+its automatic startup does not remove ordinary chat, saved-session resume/fork,
+MCP tools, or in-session subagent work. Foreground work still needs its owning
+process kept alive.
+
+<!-- TODO: Build and validate current native Codex with the fixed Android socket
+root on a host with enough build capacity. Verify daemon start/stop, interactive
+attachment, socket ownership/mode, child-tool execution, and sandbox path
+consistency before restoring daemon_auto_start. Do not weaken socket validation
+or promise that a temp-path fix resolves Android's separate namespace limits. -->
+
 ### Google Antigravity CLI (`scripts/install-antigravity-termux.sh`)
 
 Installs or upgrades Google's `agy` CLI on Termux without changing the system

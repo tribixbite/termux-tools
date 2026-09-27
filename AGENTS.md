@@ -36,6 +36,15 @@ More-specific repository instructions always take precedence.
   enables normal foreground startup without changing sandbox/approval settings.
   Verify interactive startup after upgrades, not only `--version` and login.
 
+- Prefer native temp-directory configuration/build fixes over PRoot. Export
+  TMPDIR, TMP, and TEMP consistently; this host's Node and Bun currently preserve
+  TMPDIR (verify instead of assuming a launcher strips it).
+- Codex's static binary ignores LD_PRELOAD. Its daemon socket root is deliberately
+  environment-independent; a native Android patch must change the shared fixed
+  root for both listeners and sandbox exclusions, retaining UID/mode/symlink checks.
+- `/tmp` here is tmpfs labeled `shell_data_file`, not merely a missing directory.
+  Android forbids app-domain writes to that label; ADB chmod is not a global fix.
+
 ## Long-running commands
 
 - A long command can return a live session identifier rather than its final exit status. Poll
