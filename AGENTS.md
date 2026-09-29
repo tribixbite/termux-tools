@@ -66,3 +66,15 @@ More-specific repository instructions always take precedence.
   authorize push, tag, release, issue, or merge-request actions.
 - When a repository or user requires a model attribution, make it the final paragraph of every
   commit message and verify it with `git log -1 --format=%B`.
+
+## Browser bridge painting sessions
+
+- A bridge that stops answering `/health` can be blocked in a synchronous ADB
+  probe of another connected phone. Inspect direct children of its server PID;
+  terminating the exact hung read-only `adb ... shell pidof` child restored service
+  without restarting the browser. Rediscover the local wireless port and verify
+  its Edge PID before forwarding `chrome_devtools_remote` to port 9223.
+- Hidden Android browser tabs can pause timers/promises while synchronous CDP
+  evaluations still execute. A CDP timeout does not prove the action failed: read
+  state before retrying painting or other mutations. Export the actual canvas to
+  PNG rather than relying only on background-tab autosave.

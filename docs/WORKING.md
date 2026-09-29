@@ -1,3 +1,28 @@
+# Brush painting through the installed extension — 2026-09-29
+
+- User confirmed installation of the repaired extension. Used its CFC bridge to
+  open JS Paint (`https://jspaint.app/#local:5dcee3f47891e`, tab 949068318).
+- Created **The Quiet Watch**: lone wolf on a cliff, dusk sky, hazy layered valley,
+  winding river, and low moon. Applied JS Paint's native circle-brush methods
+  through the bridge; no generated/imported image replaced the canvas.
+- Exported and visually inspected `output/the-quiet-watch.png`: 1200 × 800,
+  399,017 bytes. Kept the painted canvas open and fitted it to the mobile viewport.
+- Bridge startup was already running, so this session verifies browser automation
+  with the installed extension, not the cold-start/share fallback itself.
+- Recovered a stalled bridge by terminating its exact hung read-only ADB child
+  (`adb -s 192.168.0.170:5555 shell pidof com.microsoft.emmx.canary`, PID 17402).
+  Rediscovered this phone at `127.0.0.1:32911` and forwarded its browser socket to
+  port 9223. Removed failed local ADB connections created during diagnosis.
+- Hidden JS Paint tabs paused timer/promise work. Synchronous brush batches worked;
+  long CDP evaluations sometimes timed out after painting had completed, so checked
+  brush counters/canvas before continuing. PNG export is the durable deliverable;
+  browser autosave after tab closure was not independently verified.
+- TODO: Verify the extension's cold-start/share fallback separately. Harden bridge
+  device probes against hanging on another connected phone (existing dirty bridge
+  files were deliberately not modified in this artwork task).
+- Validation: decoded exported PNG header, confirmed dimensions/file-size limits,
+  visually inspected final canvas. No source-code changes requiring typecheck.
+
 # Bridge startup repair — 2026-09-27
 
 - Fixed the custom extension launch path: popup opens a separate launcher tab;
