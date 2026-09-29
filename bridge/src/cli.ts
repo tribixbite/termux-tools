@@ -766,6 +766,35 @@ const MCP_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "pen_stroke",
+    description: "Draw a trusted pen stroke with per-point pressure, tilt and rotation. Coordinates are viewport CSS pixels. Requires BRIDGE_ADB_SERIAL and CDP. Specify exactly one extension tabId (refresh tabs first) or exact CDP targetId. Never falls back to mouse input. Do not replay a failed stroke without inspecting the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "integer", minimum: 0, description: "Extension tab ID, resolved only when its URL uniquely matches a page." },
+        targetId: { type: "string", minLength: 1, description: "Exact CDP page target ID (alternative to tabId)." },
+        points: {
+          type: "array", minItems: 1, maxItems: 512,
+          items: {
+            type: "object",
+            properties: {
+              x: { type: "number", minimum: 0, maximum: 100000 },
+              y: { type: "number", minimum: 0, maximum: 100000 },
+              pressure: { type: "number", minimum: 0, maximum: 1 },
+              tiltX: { type: "number", minimum: -90, maximum: 90, default: 0 },
+              tiltY: { type: "number", minimum: -90, maximum: 90, default: 0 },
+              twist: { type: "number", minimum: 0, maximum: 359, default: 0 },
+              timeMs: { type: "number", minimum: 0, maximum: 20000, description: "Nondecreasing milliseconds from stroke start; defaults to sample index × 8." },
+            },
+            required: ["x", "y", "pressure"],
+          },
+        },
+      },
+      required: ["points"],
+      oneOf: [{ required: ["tabId"], not: { required: ["targetId"] } }, { required: ["targetId"], not: { required: ["tabId"] } }],
+    },
+  },
+  {
     name: "javascript_tool",
     description: "Execute JavaScript in the page context. Returns the last expression result.",
     inputSchema: {
@@ -975,10 +1004,10 @@ async function callBridgeTool(
   params: Record<string, unknown>,
 ): Promise<{ result?: unknown; error?: string }> {
   try {
-    const resp = await fetch(TOOL_URL, {
+    const resp = await fetch(method === "pen_stroke" ? `${BRIDGE_URL}/pen-stroke` : TOOL_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
+      headers: { "Content-Type": "application/json", ...(process.env.BRIDGE_TOKEN ? { Authorization: `Bearer ${process.env.BRIDGE_TOKEN}` } : {}) },
+      body: JSON.stringify(method === "pen_stroke" ? params : { method, params }),
       signal: AbortSignal.timeout(TOOL_TIMEOUT_MS),
     });
     if (!resp.ok) {

@@ -11,6 +11,10 @@ var __esm = (fn, res) => function __init() {
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
@@ -36,9 +40,9 @@ var init_import_meta_shim = __esm({
   }
 });
 
-// node_modules/ws/lib/constants.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "node_modules/ws/lib/constants.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/constants.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -60,9 +64,9 @@ var require_constants = __commonJS({
   }
 });
 
-// node_modules/ws/lib/buffer-util.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "node_modules/ws/lib/buffer-util.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/buffer-util.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { EMPTY_BUFFER } = require_constants();
@@ -136,9 +140,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// node_modules/ws/lib/limiter.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "node_modules/ws/lib/limiter.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/limiter.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var kDone = Symbol("kDone");
@@ -187,9 +191,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// node_modules/ws/lib/permessage-deflate.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var zlib = require("zlib");
@@ -571,9 +575,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// node_modules/ws/lib/validation.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/validation.js
 var require_validation = __commonJS({
-  "node_modules/ws/lib/validation.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/validation.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { isUtf8 } = require("buffer");
@@ -773,9 +777,9 @@ var require_validation = __commonJS({
   }
 });
 
-// node_modules/ws/lib/receiver.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "node_modules/ws/lib/receiver.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/receiver.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Writable } = require("stream");
@@ -1366,9 +1370,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// node_modules/ws/lib/sender.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "node_modules/ws/lib/sender.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/sender.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Duplex } = require("stream");
@@ -1855,9 +1859,9 @@ var require_sender = __commonJS({
   }
 });
 
-// node_modules/ws/lib/event-target.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "node_modules/ws/lib/event-target.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/event-target.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { kForOnEventAttribute, kListener } = require_constants();
@@ -2085,9 +2089,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// node_modules/ws/lib/extension.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "node_modules/ws/lib/extension.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/extension.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -2239,9 +2243,9 @@ var require_extension = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "node_modules/ws/lib/websocket.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3126,9 +3130,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// node_modules/ws/lib/stream.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "node_modules/ws/lib/stream.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/stream.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var WebSocket3 = require_websocket();
@@ -3225,9 +3229,9 @@ var require_stream = __commonJS({
   }
 });
 
-// node_modules/ws/lib/subprotocol.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "node_modules/ws/lib/subprotocol.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/subprotocol.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -3271,9 +3275,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// node_modules/ws/lib/websocket-server.js
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "node_modules/ws/lib/websocket-server.js"(exports2, module2) {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3665,10 +3669,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// node_modules/ws/wrapper.mjs
+// ../../../../../home/git/termux-tools/bridge/node_modules/ws/wrapper.mjs
 var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "node_modules/ws/wrapper.mjs"() {
+  "../../../../../home/git/termux-tools/bridge/node_modules/ws/wrapper.mjs"() {
     init_import_meta_shim();
     import_stream = __toESM(require_stream(), 1);
     import_receiver = __toESM(require_receiver(), 1);
@@ -3950,7 +3954,12 @@ var init_compat = __esm({
 
 // ../claude-chrome-bridge.ts
 var claude_chrome_bridge_exports = {};
+__export(claude_chrome_bridge_exports, {
+  sendPenPoints: () => sendPenPoints,
+  validatePenPoints: () => validatePenPoints
+});
 function getAdbSerial() {
+  if (process.env.BRIDGE_ADB_SERIAL) return process.env.BRIDGE_ADB_SERIAL;
   const now = Date.now();
   if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
   _adbSerialTs = now;
@@ -4017,6 +4026,89 @@ function encodeNativeMessage(json) {
   const header = Buffer.alloc(4);
   header.writeUInt32LE(body.length, 0);
   return Buffer.concat([header, body]);
+}
+function validatePenPoints(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 512) {
+    throw new Error("points must contain 1\u2013512 pen samples");
+  }
+  let previousTime = 0;
+  return value.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`points[${index}] must be an object`);
+    }
+    const p = item;
+    const number = (key, min, max, fallback) => {
+      const v = p[key] === void 0 ? fallback : p[key];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) {
+        throw new Error(`points[${index}].${key} must be finite and within ${min}\u2026${max}`);
+      }
+      return v;
+    };
+    const point = {
+      x: number("x", 0, 1e5),
+      y: number("y", 0, 1e5),
+      pressure: number("pressure", 0, 1),
+      tiltX: number("tiltX", -90, 90, 0),
+      tiltY: number("tiltY", -90, 90, 0),
+      twist: number("twist", 0, 359, 0),
+      timeMs: number("timeMs", 0, 2e4, index * 8)
+    };
+    if (point.timeMs < previousTime) throw new Error("Sample times must be nondecreasing");
+    previousTime = point.timeMs;
+    return point;
+  });
+}
+async function sendPenPoints(points, send) {
+  const start = performance.now();
+  let last = points[0];
+  let pressed = false;
+  let failure;
+  try {
+    for (let index = 0; index < points.length; index++) {
+      const point = points[index];
+      const delay = point.timeMs - (performance.now() - start);
+      if (delay > 0) await new Promise((resolve3) => setTimeout(resolve3, delay));
+      if (performance.now() - start > 25e3) throw new Error("Pen stroke exceeded 25 seconds; remaining samples cancelled");
+      last = point;
+      pressed = true;
+      await send({
+        type: index === 0 ? "mousePressed" : "mouseMoved",
+        x: point.x,
+        y: point.y,
+        force: point.pressure,
+        tiltX: point.tiltX,
+        tiltY: point.tiltY,
+        twist: point.twist,
+        pointerType: "pen",
+        button: "left",
+        buttons: 1,
+        clickCount: 1
+      });
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (pressed) {
+      try {
+        await send({
+          type: "mouseReleased",
+          x: last.x,
+          y: last.y,
+          force: 0,
+          tiltX: last.tiltX,
+          tiltY: last.tiltY,
+          twist: last.twist,
+          pointerType: "pen",
+          button: "left",
+          buttons: 0,
+          clickCount: 1
+        });
+      } catch (error) {
+        failure = new Error(`${failure ? String(failure) + "; " : ""}Pen release failed: ${String(error)}`);
+      }
+    }
+  }
+  if (failure) throw failure;
 }
 function crc32(data) {
   let crc = 4294967295;
@@ -4812,6 +4904,7 @@ var init_claude_chrome_bridge = __esm({
     CDP_TARGET_CACHE_TTL_MS = 1e4;
     CDP_TIMEOUT_MS = 15e3;
     CdpManager = class {
+      penBusy = false;
       ws = null;
       edgePid = null;
       state = "disconnected";
@@ -4862,7 +4955,7 @@ var init_claude_chrome_bridge = __esm({
           let versionData = null;
           if (existingForward) {
             try {
-              const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+              const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3e3) });
               versionData = await resp.json();
               log("debug", `CDP: reusing existing ADB forward on port ${CDP_PORT}`);
             } catch {
@@ -4876,7 +4969,7 @@ var init_claude_chrome_bridge = __esm({
               );
               if (fwdResult.exitCode !== 0) continue;
               try {
-                const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+                const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3e3) });
                 versionData = await resp.json();
                 log("info", `CDP: Edge version \u2014 ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
                 break;
@@ -5193,6 +5286,33 @@ var init_claude_chrome_bridge = __esm({
         }
         return { error: "Screenshot not available (CDP Page.captureScreenshot failed and ADB screencap failed)" };
       }
+      /** Draw on an exact target; never guess the active page or downgrade to mouse. */
+      async penStroke(params) {
+        const points = validatePenPoints(params.points);
+        const hasTarget = typeof params.targetId === "string" && params.targetId.length > 0;
+        const hasTab = typeof params.tabId === "number" && Number.isSafeInteger(params.tabId) && params.tabId >= 0;
+        if (hasTarget === hasTab) throw new Error("Specify exactly one targetId or tabId");
+        if (!process.env.BRIDGE_ADB_SERIAL) throw new Error("Set BRIDGE_ADB_SERIAL to the intended device before using pen_stroke");
+        if (!this.isAvailable()) throw new Error("CDP unavailable; pen strokes require a connected browser");
+        if (this.penBusy) throw new Error("Another pen stroke is in progress; retry after it finishes");
+        this.penBusy = true;
+        try {
+          await this.refreshTargets();
+          const candidates = this.cachedTargets.filter((t) => t.type === "page" && (hasTarget ? t.targetId === params.targetId : t.url === this.tabUrlCache.get(params.tabId)));
+          if (candidates.length !== 1) throw new Error("Pen target missing or ambiguous; refresh tabs or supply an exact CDP targetId");
+          const targetId = candidates[0].targetId;
+          let sessionId = this.sessionMap.get(targetId);
+          if (!sessionId) {
+            const attached = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true });
+            sessionId = attached.sessionId;
+            this.sessionMap.set(targetId, sessionId);
+          }
+          await sendPenPoints(points, (event) => this.sendCommand("Input.dispatchMouseEvent", event, sessionId));
+          return { samples: points.length, targetId };
+        } finally {
+          this.penBusy = false;
+        }
+      }
       /** Dispatch a computer tool action via CDP Input domain */
       async dispatchComputerAction(action, params, tabId) {
         if (!this.isAvailable()) return { error: "CDP not available" };
@@ -5406,6 +5526,8 @@ var init_claude_chrome_bridge = __esm({
           state: this.state,
           edgePid: this.edgePid,
           port: CDP_PORT,
+          deviceSerial: process.env.BRIDGE_ADB_SERIAL ?? null,
+          penBusy: this.penBusy,
           targets: this.cachedTargets.filter((t) => t.type === "page").length
         };
       }
@@ -5475,9 +5597,12 @@ var init_claude_chrome_bridge = __esm({
       /** Check if an ADB forward for our CDP port already exists */
       checkExistingForward() {
         try {
-          const result = runSync(adb("forward", "--list"));
+          const result = runSync(adb("forward", "--list"), { timeoutMs: 3e3 });
           const lines = result.stdout.toString().trim().split("\n");
-          return lines.some((l) => l.includes(`tcp:${CDP_PORT}`));
+          return lines.some((line) => {
+            const [serial, local] = line.trim().split(/\s+/);
+            return serial === getAdbSerial() && local === `tcp:${CDP_PORT}`;
+          });
         } catch {
           return false;
         }
@@ -5488,14 +5613,14 @@ var init_claude_chrome_bridge = __esm({
        * Returns NaN if Edge is not running or both methods fail.
        */
       getEdgePid() {
-        try {
+        if (!process.env.BRIDGE_ADB_SERIAL) try {
           const local = runSync(["pidof", "com.microsoft.emmx.canary"]);
           const pid = parseInt(local.stdout.toString().trim().split(/\s+/)[0], 10);
           if (!isNaN(pid)) return pid;
         } catch {
         }
         try {
-          const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
+          const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"), { timeoutMs: 3e3 });
           const pid = parseInt(remote.stdout.toString().trim().split(/\s+/)[0], 10);
           if (!isNaN(pid)) return pid;
         } catch {
@@ -5606,6 +5731,28 @@ var init_claude_chrome_bridge = __esm({
             }),
             { headers: { "Content-Type": "application/json" } }
           );
+        }
+        if (url.pathname === "/pen-stroke" && req.method === "POST") {
+          const origin = req.headers.get("origin");
+          if (origin && origin !== url.origin) return new Response("Forbidden origin", { status: 403 });
+          if (BRIDGE_TOKEN && req.headers.get("authorization") !== `Bearer ${BRIDGE_TOKEN}`) {
+            return new Response("Unauthorized", { status: 401 });
+          }
+          if (!req.headers.get("content-type")?.startsWith("application/json")) {
+            return new Response("Expected application/json", { status: 415 });
+          }
+          try {
+            const raw = await req.text();
+            if (Buffer.byteLength(raw) > 262144) return new Response("Stroke too large", { status: 413 });
+            const params = JSON.parse(raw);
+            if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("Expected a stroke object");
+            lastToolName = "pen_stroke";
+            lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
+            const result = await cdpManager.penStroke(params);
+            return Response.json({ result });
+          } catch (error) {
+            return Response.json({ error: error.message }, { status: 400 });
+          }
         }
         if (url.pathname === "/shutdown" && req.method === "POST") {
           log("info", "Shutdown requested via HTTP");
@@ -6706,6 +6853,37 @@ var MCP_TOOLS = [
     }
   },
   {
+    name: "pen_stroke",
+    description: "Draw a trusted pen stroke with per-point pressure, tilt and rotation. Coordinates are viewport CSS pixels. Requires BRIDGE_ADB_SERIAL and CDP. Specify exactly one extension tabId (refresh tabs first) or exact CDP targetId. Never falls back to mouse input. Do not replay a failed stroke without inspecting the canvas.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tabId: { type: "integer", minimum: 0, description: "Extension tab ID, resolved only when its URL uniquely matches a page." },
+        targetId: { type: "string", minLength: 1, description: "Exact CDP page target ID (alternative to tabId)." },
+        points: {
+          type: "array",
+          minItems: 1,
+          maxItems: 512,
+          items: {
+            type: "object",
+            properties: {
+              x: { type: "number", minimum: 0, maximum: 1e5 },
+              y: { type: "number", minimum: 0, maximum: 1e5 },
+              pressure: { type: "number", minimum: 0, maximum: 1 },
+              tiltX: { type: "number", minimum: -90, maximum: 90, default: 0 },
+              tiltY: { type: "number", minimum: -90, maximum: 90, default: 0 },
+              twist: { type: "number", minimum: 0, maximum: 359, default: 0 },
+              timeMs: { type: "number", minimum: 0, maximum: 2e4, description: "Nondecreasing milliseconds from stroke start; defaults to sample index \xD7 8." }
+            },
+            required: ["x", "y", "pressure"]
+          }
+        }
+      },
+      required: ["points"],
+      oneOf: [{ required: ["tabId"], not: { required: ["targetId"] } }, { required: ["targetId"], not: { required: ["tabId"] } }]
+    }
+  },
+  {
     name: "javascript_tool",
     description: "Execute JavaScript in the page context. Returns the last expression result.",
     inputSchema: {
@@ -6890,10 +7068,10 @@ function mcpSend(response) {
 }
 async function callBridgeTool(method, params) {
   try {
-    const resp = await fetch(TOOL_URL, {
+    const resp = await fetch(method === "pen_stroke" ? `${BRIDGE_URL}/pen-stroke` : TOOL_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params }),
+      headers: { "Content-Type": "application/json", ...process.env.BRIDGE_TOKEN ? { Authorization: `Bearer ${process.env.BRIDGE_TOKEN}` } : {} },
+      body: JSON.stringify(method === "pen_stroke" ? params : { method, params }),
       signal: AbortSignal.timeout(TOOL_TIMEOUT_MS)
     });
     if (!resp.ok) {

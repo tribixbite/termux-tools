@@ -1,3 +1,25 @@
+# Pen-stroke bridge upgrade — 2026-09-29
+
+- Added typed per-point pressure, tilt X/Y, twist and timing validation, a
+  CDP-backed `/pen-stroke` endpoint, and discoverable MCP `pen_stroke` tool.
+- Requires explicit `BRIDGE_ADB_SERIAL`, exact target/unique cached tab URL,
+  rejects overlapping pen requests, releases after input failures, and never
+  downgrades pen input to a mouse or guesses the first browser page.
+- Device pinning now applies to PID lookup and forward reuse. DevTools discovery
+  has bounded fetch timeouts; Edge temporarily exposed an unresponsive plain
+  socket while its PID-specific socket worked.
+- Validation: 16 regression tests / 20 assertions passed, full source typecheck
+  passed using isolated Node/Bun/WS declarations, bundle build passed. Live
+  endpoint test on SM-S938U1 / Edge 154 preserved trusted pressure .15/.55/.95,
+  tilt and twist; invalid input, missing target and overlapping stroke checks
+  passed. MCP tools/list advertises pen_stroke.
+- Main bridge restarted with BRIDGE_ADB_SERIAL=192.168.0.190:39351; health confirms
+  CDP connected and extension connected. No version bump or release.
+- Staged only this task's source changes; generated the staged bundle separately
+  from staged sources so earlier transport/screenshot edits remain uncommitted.
+- Painting in progress in a new Magma board. TODO: complete pressure/angle brush
+  validation and export the new wolf scene.
+
 # S Pen input feasibility — 2026-09-29
 
 - Target explicitly supplied by user: `192.168.0.190:39351`, model `SM-S938U1`.

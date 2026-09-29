@@ -208,3 +208,35 @@ passed all 61 tests in the affected files.
 Gemini currently uses provider-default thinking. PAL's legacy numeric
 thinking-budget controls are not enabled for these Gemini 3.x entries.
 <!-- TODO: Add tested Gemini 3.x thinking-level mapping in PAL. -->
+
+## Pressure-sensitive pen strokes
+
+`pen_stroke` sends trusted Chromium pen events with per-sample pressure, tilt X/Y,
+barrel rotation, and timing. Start the bridge with an explicit device:
+
+```sh
+BRIDGE_ADB_SERIAL=192.168.0.190:39351 node bridge/dist/cli.js
+```
+
+Refresh `tabs_context_mcp` and pass a unique `tabId`, or supply an exact CDP page
+`targetId`. Coordinates are viewport CSS pixels, not physical screen pixels.
+
+```json
+{"targetId":"CDP_PAGE_TARGET_ID","points":[
+  {"x":120,"y":180,"pressure":0.15,"tiltX":-30,"tiltY":15,"twist":20,"timeMs":0},
+  {"x":180,"y":190,"pressure":0.85,"tiltX":30,"tiltY":10,"twist":60,"timeMs":100}
+]}
+```
+
+The same payload is accepted by `POST /pen-stroke` on the local bridge. When
+`BRIDGE_TOKEN` is configured, send `Authorization: Bearer <token>`. The MCP relay
+forwards its configured token automatically. Reconnect MCP clients to discover
+the new tool; the browser extension does not need reinstalling.
+
+Limits: 1–512 samples, pressure 0–1, tilt −90…90 degrees, twist 0–359 degrees,
+nondecreasing `timeMs` up to 20,000. Omitted tilt/twist default to zero; omitted
+times default to sample index × 8 ms. Strokes are validated before input, reject
+overlapping pen requests, and attempt zero-pressure release after failures.
+A failed stroke can be partially painted: inspect before retrying. Closed or
+ambiguous targets fail; pen input never falls back to the first page or a mouse.
+This is browser input, not Android-wide S Pen emulation.

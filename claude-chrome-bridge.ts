@@ -67,6 +67,8 @@ let _adbSerialTs = 0;
 const ADB_SERIAL_TTL_MS = 30_000; // re-check every 30s
 
 function getAdbSerial(): string {
+  // Explicit selection must never fall back to another connected phone.
+  if (process.env.BRIDGE_ADB_SERIAL) return process.env.BRIDGE_ADB_SERIAL;
   const now = Date.now();
   if (now - _adbSerialTs < ADB_SERIAL_TTL_MS) return _adbSerial;
   _adbSerialTs = now;
@@ -270,7 +272,92 @@ const CDP_TIMEOUT_MS = 15_000;
  *
  * Falls back gracefully when ADB is unavailable — extension DOM evaluator handles it.
  */
+/** One pen sample in viewport CSS pixels; time is relative to stroke start. */
+export interface PenPoint {
+  x: number;
+  y: number;
+  pressure: number;
+  tiltX: number;
+  tiltY: number;
+  twist: number;
+  timeMs: number;
+}
+
+/** Validate the complete stroke before sending any input to the browser. */
+export function validatePenPoints(value: unknown): PenPoint[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 512) {
+    throw new Error("points must contain 1–512 pen samples");
+  }
+  let previousTime = 0;
+  return value.map((item: unknown, index: number) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new Error(`points[${index}] must be an object`);
+    }
+    const p = item as Record<string, unknown>;
+    const number = (key: string, min: number, max: number, fallback?: number): number => {
+      const v = p[key] === undefined ? fallback : p[key];
+      if (typeof v !== "number" || !Number.isFinite(v) || v < min || v > max) {
+        throw new Error(`points[${index}].${key} must be finite and within ${min}…${max}`);
+      }
+      return v;
+    };
+    const point: PenPoint = {
+      x: number("x", 0, 100000), y: number("y", 0, 100000),
+      pressure: number("pressure", 0, 1),
+      tiltX: number("tiltX", -90, 90, 0), tiltY: number("tiltY", -90, 90, 0),
+      twist: number("twist", 0, 359, 0), timeMs: number("timeMs", 0, 20000, index * 8),
+    };
+    if (point.timeMs < previousTime) throw new Error("Sample times must be nondecreasing");
+    previousTime = point.timeMs;
+    return point;
+  });
+}
+
+/** Send a trusted CDP pen stroke, with best-effort release even on failed moves. */
+export async function sendPenPoints(
+  points: readonly PenPoint[],
+  send: (params: Record<string, unknown>) => Promise<unknown>,
+): Promise<void> {
+  const start = performance.now();
+  let last = points[0];
+  let pressed = false;
+  let failure: unknown;
+  try {
+    for (let index = 0; index < points.length; index++) {
+      const point = points[index];
+      const delay = point.timeMs - (performance.now() - start);
+      if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      if (performance.now() - start > 25000) throw new Error("Pen stroke exceeded 25 seconds; remaining samples cancelled");
+      last = point;
+      // Mark pressed before awaiting: a timed-out press may already have landed.
+      pressed = true;
+      await send({
+        type: index === 0 ? "mousePressed" : "mouseMoved",
+        x: point.x, y: point.y, force: point.pressure,
+        tiltX: point.tiltX, tiltY: point.tiltY, twist: point.twist,
+        pointerType: "pen", button: "left", buttons: 1, clickCount: 1,
+      });
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    if (pressed) {
+      try {
+        await send({
+          type: "mouseReleased", x: last.x, y: last.y, force: 0,
+          tiltX: last.tiltX, tiltY: last.tiltY, twist: last.twist,
+          pointerType: "pen", button: "left", buttons: 0, clickCount: 1,
+        });
+      } catch (error) {
+        failure = new Error(`${failure ? String(failure) + "; " : ""}Pen release failed: ${String(error)}`);
+      }
+    }
+  }
+  if (failure) throw failure;
+}
+
 class CdpManager {
+  private penBusy = false;
   private ws: WebSocket | null = null;
   private edgePid: number | null = null;
   private state: "disconnected" | "connecting" | "connected" = "disconnected";
@@ -329,7 +416,7 @@ class CdpManager {
       if (existingForward) {
         // Verify the existing forward is still working
         try {
-          const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+          const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3000) });
           versionData = await resp.json() as Record<string, string>;
           log("debug", `CDP: reusing existing ADB forward on port ${CDP_PORT}`);
         } catch {
@@ -345,7 +432,7 @@ class CdpManager {
           );
           if (fwdResult.exitCode !== 0) continue;
           try {
-            const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+            const resp = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, { signal: AbortSignal.timeout(3000) });
             versionData = await resp.json() as Record<string, string>;
             log("info", `CDP: Edge version — ${versionData["Browser"] ?? "unknown"}, pkg: ${versionData["Android-Package"] ?? "unknown"} (socket: ${socketName})`);
             break;
@@ -728,6 +815,36 @@ class CdpManager {
     return { error: "Screenshot not available (CDP Page.captureScreenshot failed and ADB screencap failed)" };
   }
 
+  /** Draw on an exact target; never guess the active page or downgrade to mouse. */
+  async penStroke(params: Record<string, unknown>): Promise<{ samples: number; targetId: string }> {
+    const points = validatePenPoints(params.points);
+    const hasTarget = typeof params.targetId === "string" && params.targetId.length > 0;
+    const hasTab = typeof params.tabId === "number" && Number.isSafeInteger(params.tabId) && params.tabId >= 0;
+    if (hasTarget === hasTab) throw new Error("Specify exactly one targetId or tabId");
+    if (!process.env.BRIDGE_ADB_SERIAL) throw new Error("Set BRIDGE_ADB_SERIAL to the intended device before using pen_stroke");
+    if (!this.isAvailable()) throw new Error("CDP unavailable; pen strokes require a connected browser");
+    if (this.penBusy) throw new Error("Another pen stroke is in progress; retry after it finishes");
+    this.penBusy = true;
+    try {
+      await this.refreshTargets();
+      const candidates = this.cachedTargets.filter((t) => t.type === "page" && (
+        hasTarget ? t.targetId === params.targetId : t.url === this.tabUrlCache.get(params.tabId as number)
+      ));
+      if (candidates.length !== 1) throw new Error("Pen target missing or ambiguous; refresh tabs or supply an exact CDP targetId");
+      const targetId = candidates[0].targetId;
+      let sessionId = this.sessionMap.get(targetId);
+      if (!sessionId) {
+        const attached = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true }) as { sessionId: string };
+        sessionId = attached.sessionId;
+        this.sessionMap.set(targetId, sessionId);
+      }
+      await sendPenPoints(points, (event) => this.sendCommand("Input.dispatchMouseEvent", event, sessionId));
+      return { samples: points.length, targetId };
+    } finally {
+      this.penBusy = false;
+    }
+  }
+
   /** Dispatch a computer tool action via CDP Input domain */
   async dispatchComputerAction(action: string, params: Record<string, unknown>, tabId?: number): Promise<{ result?: string; error?: string }> {
     if (!this.isAvailable()) return { error: "CDP not available" };
@@ -909,11 +1026,13 @@ class CdpManager {
   }
 
   /** Get status info for /health endpoint */
-  getStatus(): { state: string; edgePid: number | null; port: number; targets: number } {
+  getStatus(): { state: string; edgePid: number | null; port: number; targets: number; deviceSerial: string | null; penBusy: boolean } {
     return {
       state: this.state,
       edgePid: this.edgePid,
       port: CDP_PORT,
+      deviceSerial: process.env.BRIDGE_ADB_SERIAL ?? null,
+      penBusy: this.penBusy,
       targets: this.cachedTargets.filter((t) => t.type === "page").length,
     };
   }
@@ -988,9 +1107,12 @@ class CdpManager {
   /** Check if an ADB forward for our CDP port already exists */
   private checkExistingForward(): boolean {
     try {
-      const result = runSync(adb("forward", "--list"));
+      const result = runSync(adb("forward", "--list"), { timeoutMs: 3000 });
       const lines = result.stdout.toString().trim().split("\n");
-      return lines.some((l: string) => l.includes(`tcp:${CDP_PORT}`));
+      return lines.some((line: string) => {
+        const [serial, local] = line.trim().split(/\s+/);
+        return serial === getAdbSerial() && local === `tcp:${CDP_PORT}`;
+      });
     } catch {
       return false;
     }
@@ -1002,8 +1124,8 @@ class CdpManager {
    * Returns NaN if Edge is not running or both methods fail.
    */
   private getEdgePid(): number {
-    // Try local pidof first (faster, no ADB dependency)
-    try {
+    // A pinned remote device must not inherit the host phone's Edge PID.
+    if (!process.env.BRIDGE_ADB_SERIAL) try {
       const local = runSync(["pidof", "com.microsoft.emmx.canary"]);
       const pid = parseInt(local.stdout.toString().trim().split(/\s+/)[0], 10);
       if (!isNaN(pid)) return pid;
@@ -1011,7 +1133,7 @@ class CdpManager {
 
     // Fall back to ADB
     try {
-      const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"));
+      const remote = runSync(adb("shell", "pidof", "com.microsoft.emmx.canary"), { timeoutMs: 3000 });
       const pid = parseInt(remote.stdout.toString().trim().split(/\s+/)[0], 10);
       if (!isNaN(pid)) return pid;
     } catch { /* ADB not available */ }
@@ -1834,6 +1956,30 @@ const server: BridgeServer = createBridgeServer({
         }),
         { headers: { "Content-Type": "application/json" } }
       );
+    }
+
+    // Pen input is local-only and CDP-backed; no extension re-install is needed.
+    if (url.pathname === "/pen-stroke" && req.method === "POST") {
+      const origin = req.headers.get("origin");
+      if (origin && origin !== url.origin) return new Response("Forbidden origin", { status: 403 });
+      if (BRIDGE_TOKEN && req.headers.get("authorization") !== `Bearer ${BRIDGE_TOKEN}`) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (!req.headers.get("content-type")?.startsWith("application/json")) {
+        return new Response("Expected application/json", { status: 415 });
+      }
+      try {
+        const raw = await req.text();
+        if (Buffer.byteLength(raw) > 262144) return new Response("Stroke too large", { status: 413 });
+        const params: unknown = JSON.parse(raw);
+        if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("Expected a stroke object");
+        lastToolName = "pen_stroke";
+        lastToolTime = new Date().toISOString();
+        const result = await cdpManager.penStroke(params as Record<string, unknown>);
+        return Response.json({ result });
+      } catch (error) {
+        return Response.json({ error: (error as Error).message }, { status: 400 });
+      }
     }
 
     // Shutdown endpoint — POST to gracefully stop the bridge
