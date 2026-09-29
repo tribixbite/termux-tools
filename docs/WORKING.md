@@ -1,3 +1,32 @@
+# S Pen input feasibility — 2026-09-29
+
+- Target explicitly supplied by user: `192.168.0.190:39351`, model `SM-S938U1`.
+- Read-only `getevent -lp`: `sec_e-pen` at `/dev/input/event12` reports pressure
+  0–4095, tilt X/Y −63…63, hover distance and stylus button. No barrel-rotation
+  axis appeared in this device capability listing.
+- Confirmed the previous painting used explicit JS Paint brush settings, not
+  stylus pressure or tilt input. Current bridge mouse drag code omits pen fields.
+- **Executed pen-emulation proof:** Edge Canary `154.0.4251.0`, temporary blank
+  CDP target, `Input.dispatchMouseEvent` with `pointerType: "pen"`. Observed
+  trusted pointerdown/move/up events. Pressure 0.15 / 0.55 / 0.95 arrived within
+  float tolerance, tilt (−30,15) / (0,30) / (40,−20) and twist 20 / 45 / 80 arrived
+  intact. Pointerup pressure was zero. Probe passed; closed target, removed only
+  the temporary port-19224 forward, restored original Termux activity.
+- Probe harness: `$TMPDIR/pen-probe/probe.ts`. Browser input, not Android-wide
+  injection or a physical digitizer emulator. No drawing app pressure response
+  was tested in this probe.
+- App research: Magma documents pressure and tilt-controlled brush settings;
+  Kleki documents pressure-driven size/opacity; Krita documents tilt sensors.
+  Sources: https://help.magma.com/en/articles/6871478-brush,
+  https://www.kleki.com/help/,
+  https://docs.krita.org/en/reference_manual/brushes/brush_settings/tablet_sensors.html.
+- Stock `input stylus motionevent` on this phone accepts action/X/Y only; its
+  displayed `--axis` options belong to scroll, not adjustable pen strokes.
+- TODO: Add a typed pen-stroke action to the bridge (per-point time, coordinates,
+  pressure, tilt, twist), pin the target device explicitly, and verify rendered
+  pressure/tilt brushes in Magma. Native Android injection needs a separate
+  shell-privileged MotionEvent helper and receiver-side testing.
+
 # Brush painting through the installed extension — 2026-09-29
 
 - User confirmed installation of the repaired extension. Used its CFC bridge to

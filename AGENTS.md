@@ -78,3 +78,9 @@ More-specific repository instructions always take precedence.
   evaluations still execute. A CDP timeout does not prove the action failed: read
   state before retrying painting or other mutations. Export the actual canvas to
   PNG rather than relying only on background-tab autosave.
+
+- Verified on SM-S938U1 / Edge Canary 154: CDP `Input.dispatchMouseEvent` with
+  `pointerType: "pen"`, `force`, `tiltX`, `tiltY`, and `twist` delivers trusted
+  browser PointerEvents preserving these values. A temporary blank target can
+  test this without touching artwork; close it and restore the original app.
+  This proves browser injection only, not Android-wide or physical S Pen emulation.
