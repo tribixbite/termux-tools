@@ -72,6 +72,22 @@ tools/fix-after-update.sh         # Apply phantom process killer fix
 
 ADB auto-reconnects every 5 minutes via cron.
 
+### Codex channel manager (`cdx`)
+
+For routine Codex updates, use the ccx companion in [claude-channel](claude-channel/README.md#codex-channels-cdx):
+
+```bash
+cdx update       # stage latest with Termux DNS/ripgrep fixes
+codex-next       # try the staged release
+cdx promote      # make it the normal codex command
+cdx status
+```
+
+`cdx rollback` returns to a retained stable release. Updates use isolated Bun
+installs and never overwrite running binaries. Scheduling is opt-in; updates only
+change next. Installed on 2026-10-01 with stable 0.157.1 and next 0.159.3. The older
+manual patch script below remains available for the unmanaged Bun installation.
+
 ### Codex CLI DNS patch (`scripts/patch-codex-termux-dns.sh`)
 
 Repairs device-code authentication in the native Codex CLI package on Termux when

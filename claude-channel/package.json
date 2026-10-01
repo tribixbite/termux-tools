@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "description": "Manage Claude Code as pinned next/stable channels on Termux",
   "bin": {
-    "ccx": "./dist/cli.js"
+    "ccx": "./dist/cli.js",
+    "cdx": "./dist/codex-cli.js"
   },
   "files": ["dist/", "README.md"],
   "engines": {
