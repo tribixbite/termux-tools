@@ -239,6 +239,24 @@ attachment, socket ownership/mode, child-tool execution, and sandbox path
 consistency before restoring daemon_auto_start. Do not weaken socket validation
 or promise that a temp-path fix resolves Android's separate namespace limits. -->
 
+### Foreground remote-control test (2026-10-02)
+
+`codex-next remote-control` on 0.159.3 exits before remote control becomes ready.
+A native `strace -f -e trace=file,bind,listen` reproduction confirmed that the
+initial `/tmp/codex-rc-*` creation fails, but its fallback under `$PREFIX/tmp`
+succeeds. A later startup step still creates `/tmp/codex-daemon-10364` with mode
+0700 and fails with `EACCES`. Foreground mode and disabling `daemon_auto_start`
+therefore do not avoid every use of the fixed daemon directory.
+
+The missing-bubblewrap message precedes this failure but does not identify the
+immediate failing operation. Installing bubblewrap or exporting TMPDIR again
+does not resolve the traced directory failure. No sandbox/approval policy was
+changed, no PRoot was used, and no mobile pairing was established.
+
+<!-- TODO: After implementing the shared fixed Android socket root above, rerun
+foreground remote-control startup and verify mobile pairing and access to an
+existing session separately; neither is established by successful startup. -->
+
 ### Google Antigravity CLI (`scripts/install-antigravity-termux.sh`)
 
 Installs or upgrades Google's `agy` CLI on Termux without changing the system

@@ -44,6 +44,11 @@ More-specific repository instructions always take precedence.
   root for both listeners and sandbox exclusions, retaining UID/mode/symlink checks.
 - `/tmp` here is tmpfs labeled `shell_data_file`, not merely a missing directory.
   Android forbids app-domain writes to that label; ADB chmod is not a global fix.
+- Codex 0.159.3 foreground `remote-control` falls back from `/tmp/codex-rc-*`
+  to `$PREFIX/tmp`, then still fails creating `/tmp/codex-daemon-<uid>` (strace
+  verified). Disabling daemon_auto_start does not avoid this second path. The
+  bubblewrap warning is not the immediate directory failure; do not claim that
+  foreground mode alone enables mobile access to a Termux session.
 
 ## Long-running commands
 
