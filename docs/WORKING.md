@@ -413,3 +413,10 @@ All features comprehensively documented:
 ✅ All scripts tested
 ✅ Git commits clean and descriptive
 ✅ README updated
+
+## Android app remediation skill — 2026-10-06
+
+- Added `.claude/skills/android-app-remediation/SKILL.md`, copied unchanged from the maintained `solit` skill, including its local-tooling review.
+- Covers blank-repository APK analysis, progression and play restrictions, telemetry/privacy remediation, supported offline operation, reproducible patching, signing, and device verification. Local tool paths are conditional candidates; app-specific offsets are not reusable.
+- Validated skill frontmatter and structure with the skill-creator validator and checked byte-for-byte equality with the source. Documentation-only addition; no application code, APKs, or device state changed.
+- This commit is scoped to the skill and this working-log entry. Existing unrelated repository changes are preserved and excluded; no push requested or performed.
