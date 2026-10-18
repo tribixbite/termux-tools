@@ -257,6 +257,90 @@ changed, no PRoot was used, and no mobile pairing was established.
 foreground remote-control startup and verify mobile pairing and access to an
 existing session separately; neither is established by successful startup. -->
 
+### Isolated native Codex source build (2026-10-02)
+
+`scripts/build-codex-termux.sh` prepares a pinned 0.159.3 checkout and builds a
+separate candidate under `$PREFIX/tmp/codex-native-0.159.3`. It never installs,
+promotes, changes shell startup/configuration, or invokes a package manager.
+Cargo may populate its normal source/download cache. Build outputs and the
+checksum-verified compiler, standard libraries, and test runner stay in the
+checkout. Existing glibc GCC, native Clang, Zig, Cargo, and Just are prerequisites;
+the helper fails if one is missing instead of upgrading the environment.
+
+```bash
+scripts/build-codex-termux.sh --prepare-only
+scripts/build-codex-termux.sh --test-only
+scripts/build-codex-termux.sh
+```
+
+The source patch is `patches/codex-termux-socket-root.patch`. It selects the fixed
+Termux root for Android or the explicit build-time `codex_termux` configuration.
+Other builds retain `/tmp`. The shared helper still derives a UID directory,
+canonicalizes its root, and rejects symlinks, wrong ownership, and modes other
+than 0700. Building the same Linux/musl target as the distributed CLI preserves
+Linux sandbox selection; building directly for Android would select no platform
+sandbox in the unmodified upstream manager and is not the chosen route.
+
+Validation: the musl probe runs natively, the patched socket crate type-checks,
+and `just test --locked --target aarch64-unknown-linux-musl -p codex-uds` passed
+all six tests with zero skips. The added test binds and connects through the
+actual shared Termux directory and checks ownership/mode and safe reuse.
+Preparation, archive checksums, and shell syntax checks passed. The October 2
+full CLI build was interrupted during dependency compilation without a final
+exit status. The complete CLI and remote-control runtime remain unvalidated.
+
+The tagged Cargo manifest stamps 0.159.3 while its lockfile retains local 0.0.0
+versions. The helper lets Cargo refresh those labels, then verifies that external
+package versions, sources, and checksums remain exactly those of the pinned tag.
+The full `just fmt` workflow could not finish cleanly: DotSlash is absent and the
+Python formatters initiate source builds on Android. Rust formatting is checked
+separately; no global tools are installed to satisfy unrelated formatter stages.
+
+#### Guarded retry review (2026-10-18)
+
+The retained build log ends at 2026-10-02 05:21 UTC without an OOM message or
+compiler failure. Current uptime dates the latest boot to approximately October 8;
+retained crash-buffer entries are newer and do not establish an October 2 crash.
+This cannot rule out a Termux process kill or an earlier reboot. The previous
+build plus unrelated formatter source builds caused substantial pressure; do not
+repeat the whole formatter workflow for this patch.
+
+A real retry through the helper refused before spawning any compiler: available
+RAM was about 1.8–1.9 GiB, free storage about 22 GiB, and load around 19. The
+helper now requires at least 4 GiB available RAM, 25 GiB free storage, and load
+no higher than 75% of the CPUs currently allowed by Android. Unreadable metrics
+also refuse a build. There are no background waiting/retry loops.
+
+When those entry checks pass, its child job uses one CPU at nice 19 and one
+Cargo job. The supervisor cancels only that build if available RAM drops below
+3 GiB, free space falls below 25 GiB, load exceeds the entry ceiling, measured
+build RSS exceeds 1.5 GiB, or 15 minutes elapse. Child core dumps are disabled;
+each child has a 10-minute CPU soft limit. These are conservative cancellation
+thresholds, not kernel-enforced memory isolation. No on-device build can promise
+protection against abrupt pressure from other apps.
+
+SIGTERM/Ctrl-C cleanup, descendant tracking, and PID start-time checks prevent
+ordinary cancellation from stranding the monitored job or targeting reused PIDs.
+Eight lightweight guard tests passed, including a live interruption and an
+unrelated sleeping-process sentinel surviving cancellation. Strict mypy and
+shell syntax checks passed. The temporary guard harness is retained under
+`$PREFIX/tmp/codex-resource-guard-checks`; no new tracked test file was added
+under the no-new-files rule. The six cached socket tests also passed again,
+without rebuilding. Normal `codex` and `codex-next` both report 0.160.0; neither
+installed binary, any package-manager state, nor shell configuration was changed
+by this retry review.
+
+After confirming no native build was live and the old owner marker predated
+the latest reboot, its stale lock was preserved as
+`$PREFIX/tmp/codex-native-0.159.3/.termux-build.lock.interrupted-20261002`.
+Future safe retries can claim a fresh lock without discarding the old evidence.
+The helper checks resources before touching a lock or downloading anything.
+
+<!-- TODO: Resume only when the resource guard permits; finish CLI compilation,
+verify the packaged candidate and bubblewrap digest, then test foreground remote
+control, mobile discovery/pairing, and existing-session access. Preserve installed
+channels and do not bypass the guard or rerun unrelated formatter builds. -->
+
 ### Google Antigravity CLI (`scripts/install-antigravity-termux.sh`)
 
 Installs or upgrades Google's `agy` CLI on Termux without changing the system

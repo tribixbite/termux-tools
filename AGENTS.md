@@ -50,6 +50,26 @@ More-specific repository instructions always take precedence.
   bubblewrap warning is not the immediate directory failure; do not claim that
   foreground mode alone enables mobile access to a Termux session.
 
+- For native Codex source builds, preserve Linux sandbox selection with the
+  musl target and explicit build-time `codex_termux` socket-root cfg. Upstream
+  Android target selection otherwise yields no platform sandbox.
+- Termux Rust's “built from a source tarball” identity is incompatible with
+  official Rust std/proc-macro metadata despite matching versions. Use a matched
+  isolated upstream compiler for BOTH host proc macros and target crates; clear
+  LD_PRELOAD in its glibc children and give host executables the existing glibc
+  interpreter/rpath. Do not replace system Rust or mixed-link bionic/glibc.
+- Codex rust-v0.159.3 stamps workspace versions but not lockfile local versions;
+  refresh via Cargo and verify external versions/checksums remain unchanged.
+  `just fmt` can start expensive unrelated Python/Rust tool builds on Android;
+  account for that load and report missing formatter prerequisites accurately.
+
+- Run native Codex retries through `scripts/build-codex-termux.sh`: its resource
+  guard refuses a busy/low-memory host before any compilation. Never bypass it
+  to work around a refusal; cached socket tests can run without rebuilding.
+- An abruptly ending build log does not prove a system crash. Check timestamps,
+  uptime and retained crash evidence; the October 2 attempt has no final status.
+  Limit optional formatter/tool bootstrapping as well as Cargo itself.
+
 ## Long-running commands
 
 - A long command can return a live session identifier rather than its final exit status. Poll

@@ -1,0 +1,70 @@
+diff --git a/codex-rs/uds/src/daemon_directory.rs b/codex-rs/uds/src/daemon_directory.rs
+index 90c3c10..9d921b6 100644
+--- a/codex-rs/uds/src/daemon_directory.rs
++++ b/codex-rs/uds/src/daemon_directory.rs
+@@ -9,10 +9,19 @@ use std::os::unix::fs::DirBuilderExt;
+ use std::os::unix::fs::MetadataExt;
+ use std::path::PathBuf;
+ 
++// Android app domains cannot write the system /tmp directory. Keep the Termux
++// root fixed at build time so listeners and sandbox exclusions agree regardless
++// of the launching process's environment or configuration.
++#[cfg(any(target_os = "android", codex_termux))]
++const SHARED_SOCKET_TEMPORARY_ROOT: &str = "/data/data/com.termux/files/usr/tmp";
++
++#[cfg(not(any(target_os = "android", codex_termux)))]
++const SHARED_SOCKET_TEMPORARY_ROOT: &str = "/tmp";
++
+ /// Returns the fixed executor-local directory that every sandbox must hide.
+ pub fn shared_daemon_socket_directory() -> io::Result<PathBuf> {
+     // Resolve the system alias /tmp -> /private/tmp on macOS.
+-    let temporary_root = fs::canonicalize("/tmp")?;
++    let temporary_root = fs::canonicalize(SHARED_SOCKET_TEMPORARY_ROOT)?;
+     let uid = unsafe { libc::geteuid() };
+     Ok(temporary_root.join(format!("codex-daemon-{uid}")))
+ }
+diff --git a/codex-rs/uds/src/lib_tests.rs b/codex-rs/uds/src/lib_tests.rs
+index 91040b1..d2fa7da 100644
+--- a/codex-rs/uds/src/lib_tests.rs
++++ b/codex-rs/uds/src/lib_tests.rs
+@@ -305,3 +305,40 @@ async fn implicit_peer_validation_rejects_elevated_listener() {
+         expected
+     );
+ }
++
++#[cfg(all(unix, any(target_os = "android", codex_termux)))]
++#[tokio::test]
++async fn shared_daemon_directory_supports_private_socket_connections() {
++    use std::os::unix::fs::MetadataExt;
++
++    let directory = prepare_shared_daemon_socket_directory().expect("shared socket directory");
++    let metadata = std::fs::symlink_metadata(&directory).expect("socket directory metadata");
++    assert!(metadata.is_dir());
++    assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
++    assert_eq!(metadata.mode() & 0o777, 0o700);
++    assert_eq!(
++        prepare_shared_daemon_socket_directory().expect("reuse private directory"),
++        directory,
++    );
++
++    let temp_dir = tempfile::TempDir::new_in(&directory).expect("private socket test directory");
++    let socket_path = temp_dir.path().join("socket");
++    let mut listener = UnixListener::bind(&socket_path)
++        .await
++        .expect("bind private socket");
++    let client = UnixStream::connect(&socket_path)
++        .await
++        .expect("connect private socket");
++    let mut server = listener.accept().await.expect("accept private socket");
++    server
++        .write_all(b"private")
++        .await
++        .expect("send private socket data");
++    let mut client = client;
++    let mut received = [0; 7];
++    client
++        .read_exact(&mut received)
++        .await
++        .expect("read private socket data");
++    assert_eq!(&received, b"private");
++}
