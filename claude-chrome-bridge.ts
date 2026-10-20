@@ -15,6 +15,7 @@
 
 import { resolve, dirname } from "path";
 import { inflateSync, deflateSync } from "node:zlib";
+import { handleMcpHttp } from "./bridge/src/cli";
 import {
   IS_BUN,
   fileExists,
@@ -79,7 +80,7 @@ function getAdbSerial(): string {
     const result = runSync([ADB_PATH, "devices"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
     const lines = result.stdout.toString().trim().split("\n")
       .filter(l => l.endsWith("\tdevice"));
-    if (lines.length <= 1) { _adbSerial = ""; return _adbSerial; }
+    if (lines.length <= 1) { _adbSerial = lines[0]?.split("\t")[0] ?? ""; return _adbSerial; }
     // Multiple devices: find the one running Edge Canary
     for (const line of lines) {
       const serial = line.split("\t")[0];
@@ -786,7 +787,7 @@ class CdpManager {
           const shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId) as { data?: string };
           if (shot?.data) {
             log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
-            return { data: shot.data };
+            return { data: normalizeScreenshot(shot.data) };
           }
         }
       } catch (err) {
@@ -807,7 +808,7 @@ class CdpManager {
           const { readFile: rf } = await import("node:fs/promises");
           const buf = await rf(tmpPath);
           log("info", `CDP: ADB screencap captured ${buf.length} bytes`);
-          return { data: buf.toString("base64") };
+          return { data: normalizeScreenshot(buf.toString("base64")) };
         }
       }
     } catch { /* ADB not available — continue */ }
@@ -1347,6 +1348,24 @@ function encodePNG(rgba: Uint8Array, width: number, height: number): Buffer {
   return Buffer.concat([sig, writeChunk("IHDR", ihdr), idat, iend]);
 }
 
+/** Keep screenshots below 2000px on either axis and below 4MB. */
+function normalizeScreenshot(data: string): string {
+  let png: Buffer = Buffer.from(data, "base64");
+  let width = png.readUInt32BE(16);
+  let height = png.readUInt32BE(20);
+  if (width < 2000 && height < 2000 && png.length < 4_000_000) return data;
+  let decoded = decodePNG(data);
+  do {
+    const factor = Math.min(0.9, 1999 / width, 1999 / height);
+    decoded = scalePixels(decoded.rgba, width, height, Math.max(1, Math.floor(width * factor)));
+    width = decoded.width;
+    height = decoded.height;
+    png = encodePNG(decoded.rgba, width, height);
+  } while ((width >= 2000 || height >= 2000 || png.length >= 4_000_000) && width > 1 && height > 1);
+  if (png.length >= 4_000_000 || width >= 2000 || height >= 2000) throw new Error("Screenshot exceeds output limits");
+  return png.toString("base64");
+}
+
 /** Scale RGBA pixels down by nearest-neighbor */
 function scalePixels(rgba: Uint8Array, srcW: number, srcH: number, maxW: number): { rgba: Uint8Array; width: number; height: number } {
   if (srcW <= maxW) return { rgba, width: srcW, height: srcH };
@@ -1575,14 +1594,20 @@ const HTTP_TOOL_TIMEOUT_MS = 30_000;
 let lastToolName: string | null = null;
 let lastToolTime: string | null = null;
 
-/** Send a tool request to all connected WS clients */
-/** Send tool request to all connected WS clients. Returns true if sent to at least one. */
+/** Route both HTTP and native requests through the same CDP interceptors. */
 function sendToolRequest(requestId: string, requestJson: string): boolean {
-  let sent = false;
-  for (const client of wsClients) {
-    try { client.send(requestJson); sent = true; } catch {}
-  }
-  return sent;
+  if (wsClients.size === 0 && !cdpManager.isAvailable()) return false;
+  handleNativeMessage(requestJson, (json) => {
+    const entry = pendingToolMap.get(requestId);
+    // A timed-out request must never be delivered to a different client.
+    if (!entry) return true;
+    pendingToolMap.delete(requestId);
+    clearTimeout(entry.timeout);
+    entry.resolve({ ...JSON.parse(json), requestId });
+    drainTabQueue(entry.tabId);
+    return true;
+  });
+  return true;
 }
 
 /** Reject every in-flight HTTP /tool request with the given reason. Called when
@@ -1709,7 +1734,7 @@ function spawnNativeHost(): void {
 }
 
 /** Forward a message from the native host to all connected WS clients */
-function handleNativeMessage(json: string): void {
+function handleNativeMessage(json: string, reply: (json: string) => boolean = sendToNativeHost): void {
   log("debug", `native→ws: ${json.slice(0, 200)}`);
 
   // Unwrap execute_tool: native host sends {type: "tool_request", method: "execute_tool",
@@ -1735,7 +1760,7 @@ function handleNativeMessage(json: string): void {
       cdpManager.evaluateJS(code, tabId).then((cdpResult) => {
         const response = JSON.stringify({ type: "tool_response", result: cdpResult });
         log("debug", `CDP→native: ${response.slice(0, 200)}`);
-        try { sendToNativeHost(response); } catch (e) {
+        try { reply(response); } catch (e) {
           log("warn", `sendToNativeHost failed after CDP eval: ${(e as Error).message}`);
           for (const client of wsClients) { try { client.send(outJson); } catch {} }
         }
@@ -1760,7 +1785,7 @@ function handleNativeMessage(json: string): void {
         if (cdpResult.data) {
           // Return as MCP image content matching CFC's expected format
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: {
                 content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }],
@@ -1807,7 +1832,7 @@ function handleNativeMessage(json: string): void {
           const pngBuf = encodePNG(croppedRGBA, cropW, cropH);
           const b64 = pngBuf.toString("base64");
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: {
                 content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }],
@@ -1842,7 +1867,7 @@ function handleNativeMessage(json: string): void {
       cdpManager.dispatchComputerAction(action, (parsed.params ?? {}) as Record<string, unknown>, tabId).then((cdpResult) => {
         if (cdpResult.result) {
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: { result: cdpResult.result },
             }));
@@ -1869,7 +1894,7 @@ function handleNativeMessage(json: string): void {
         log("info", `CDP: intercepting resize_window (${width}×${height})`);
         cdpManager.setDeviceMetrics(width, height, parsed.params?.tabId as number | undefined).then((r) => {
           try {
-            sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+            reply(JSON.stringify({ type: "tool_response", result: r }));
           } catch (e) {
             log("warn", `sendToNativeHost failed after CDP resize: ${(e as Error).message}`);
             for (const client of wsClients) { try { client.send(outJson); } catch {} }
@@ -1890,7 +1915,7 @@ function handleNativeMessage(json: string): void {
       if (cdpRequests.length > 0) {
         log("info", `CDP: returning ${cdpRequests.length} network requests`);
         try {
-          sendToNativeHost(JSON.stringify({
+          reply(JSON.stringify({
             type: "tool_response",
             result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" },
           }));
@@ -1940,6 +1965,9 @@ const server: BridgeServer = createBridgeServer({
 
   async fetch(req, upgrade) {
     const url = new URL(req.url);
+
+    // Direct MCP transport: no per-Codex relay subprocess.
+    if (url.pathname === "/mcp") return handleMcpHttp(req);
 
     // Health check endpoint
     if (url.pathname === "/health") {
@@ -2460,9 +2488,9 @@ const server: BridgeServer = createBridgeServer({
       }
     },
 
-    maxPayloadLength: MAX_MESSAGE_SIZE,
-    idleTimeout: 120, // seconds
   },
+  maxPayloadLength: MAX_MESSAGE_SIZE,
+  idleTimeout: 120, // seconds
 });
 
 // --- Heartbeat ---------------------------------------------------------------

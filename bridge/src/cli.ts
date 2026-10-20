@@ -35,7 +35,7 @@ const BRIDGE_URL = process.env.BRIDGE_URL ?? `http://${WS_HOST}:${WS_PORT}`;
 const HEALTH_URL = `${BRIDGE_URL}/health`;
 const SHUTDOWN_URL = `${BRIDGE_URL}/shutdown`;
 const TOOL_URL = `${BRIDGE_URL}/tool`;
-const TOOL_TIMEOUT_MS = 30_000;
+const TOOL_TIMEOUT_MS = 35_000; // Outlast the bridge's 30s queue timeout.
 
 async function fetchWithTimeout(url: string, opts: RequestInit & { timeout?: number } = {}): Promise<Response> {
   const { timeout = 3000, ...fetchOpts } = opts;
@@ -971,14 +971,14 @@ const MCP_TOOLS: McpTool[] = [
 
 // --- MCP JSON-RPC helpers ----------------------------------------------------
 
-interface JsonRpcRequest {
+export interface JsonRpcRequest {
   jsonrpc: "2.0";
   id?: number | string;
   method: string;
   params?: Record<string, unknown>;
 }
 
-interface JsonRpcResponse {
+export interface JsonRpcResponse {
   jsonrpc: "2.0";
   id: number | string | null;
   result?: unknown;
@@ -1029,36 +1029,60 @@ async function callBridgeTool(
   }
 }
 
-/** Convert bridge tool_response to MCP content blocks */
-function formatToolResult(result: unknown): Array<Record<string, unknown>> {
+/** Convert extension image envelopes into standard MCP content blocks. */
+export function formatToolResult(result: unknown): Array<Record<string, unknown>> {
   if (!result || typeof result !== "object") {
-    return [{ type: "text", text: JSON.stringify(result) }];
+    return [{ type: "text", text: JSON.stringify(result) ?? "undefined" }];
   }
   const r = result as Record<string, unknown>;
-  if (Array.isArray(r.content)) return r.content as Array<Record<string, unknown>>;
-  if (r.data && typeof r.data === "string" && r.media_type) {
-    return [{ type: "image", source: { type: "base64", media_type: r.media_type, data: r.data } }];
+  if (Array.isArray(r.content)) {
+    return r.content.flatMap((item: unknown) => {
+      if (!item || typeof item !== "object") return formatToolResult(item);
+      const block = item as Record<string, unknown>;
+      const source = block.source as Record<string, unknown> | undefined;
+      if (block.type === "image" && source?.type === "base64") {
+        return [{ type: "image", mimeType: source.media_type, data: source.data }];
+      }
+      return [block];
+    });
+  }
+  if (typeof r.data === "string" && typeof r.media_type === "string") {
+    return [{ type: "image", mimeType: r.media_type, data: r.data }];
   }
   if (r.result !== undefined) return formatToolResult(r.result);
   return [{ type: "text", text: JSON.stringify(result, null, 2) }];
 }
 
+/** Detect errors nested inside the bridge/extension's result envelope. */
+function toolResultFailed(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const r = result as Record<string, unknown>;
+  return Boolean(r.error || r.isError || (r.result !== undefined && toolResultFailed(r.result)));
+}
+
 // --- MCP request handler -----------------------------------------------------
 
-async function handleMcpRequest(req: JsonRpcRequest): Promise<void> {
+export async function handleMcpRequest(
+  req: JsonRpcRequest,
+  send: (response: JsonRpcResponse) => void = mcpSend,
+): Promise<void> {
   if (req.id === undefined || req.id === null) return; // notification
 
   switch (req.method) {
     case "initialize":
-      mcpSend(mcpResult(req.id, {
-        protocolVersion: "2024-11-05",
+      send(mcpResult(req.id, {
+        protocolVersion: req.params?.protocolVersion === "2024-11-05" ? "2024-11-05" : "2025-03-26",
         capabilities: { tools: {} },
         serverInfo: { name: "Claude in Chrome (Bridge)", version: PKG_VERSION },
       }));
       break;
 
+    case "ping":
+      send(mcpResult(req.id, {}));
+      break;
+
     case "tools/list":
-      mcpSend(mcpResult(req.id, { tools: MCP_TOOLS }));
+      send(mcpResult(req.id, { tools: MCP_TOOLS }));
       break;
 
     case "tools/call": {
@@ -1066,21 +1090,80 @@ async function handleMcpRequest(req: JsonRpcRequest): Promise<void> {
       const toolArgs = (req.params?.arguments as Record<string, unknown>) ?? {};
       const tool = MCP_TOOLS.find((t) => t.name === toolName);
       if (!tool) {
-        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: `Unknown tool: ${toolName}` }], isError: true }));
+        send(mcpResult(req.id, { content: [{ type: "text", text: `Unknown tool: ${toolName}` }], isError: true }));
         break;
       }
       const { result, error } = await callBridgeTool(toolName, toolArgs);
       if (error) {
-        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: error }], isError: true }));
+        send(mcpResult(req.id, { content: [{ type: "text", text: error }], isError: true }));
       } else {
-        mcpSend(mcpResult(req.id, { content: formatToolResult(result) }));
+        send(mcpResult(req.id, { content: formatToolResult(result), isError: toolResultFailed(result) }));
       }
       break;
     }
 
     default:
-      mcpSend(mcpError(req.id, -32601, `Method not found: ${req.method}`));
+      send(mcpError(req.id, -32601, `Method not found: ${req.method}`));
   }
+}
+
+/**
+ * Stateless Streamable HTTP: one shared bridge serves all clients. No session
+ * IDs survive in the daemon, so subsequent requests work after a bridge update.
+ * GET is deliberately 405: this server does not advertise SSE notifications.
+ */
+export async function handleMcpHttp(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const origin = req.headers.get("origin");
+  const allowedHosts = new Set([url.host, `localhost:${url.port}`]);
+  if (!allowedHosts.has(req.headers.get("host") ?? url.host) ||
+      (origin !== null && origin !== url.origin)) {
+    return new Response("Forbidden origin", { status: 403 });
+  }
+  const token = process.env.BRIDGE_TOKEN;
+  if (token && req.headers.get("authorization") !== `Bearer ${token}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  if (req.method !== "POST") {
+    return new Response(null, { status: 405, headers: { Allow: "POST" } });
+  }
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return new Response("Expected application/json", { status: 415 });
+  }
+  const accept = req.headers.get("accept") ?? "";
+  if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+    return new Response("Expected JSON and SSE accept types", { status: 406 });
+  }
+  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+    status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+  });
+  let body: unknown;
+  try {
+    const raw = await req.text();
+    if (Buffer.byteLength(raw) > 1_048_576) return new Response("Request too large", { status: 413 });
+    body = JSON.parse(raw);
+  } catch {
+    return json(mcpError(null, -32700, "Parse error"), 400);
+  }
+  const messages = Array.isArray(body) ? body : [body];
+  if (!messages.length) return json(mcpError(null, -32600, "Invalid Request"), 400);
+  const responses: JsonRpcResponse[] = [];
+  for (const value of messages) {
+    if (!value || typeof value !== "object") return json(mcpError(null, -32600, "Invalid Request"), 400);
+    const message = value as Record<string, unknown>;
+    if (message.jsonrpc !== "2.0" || typeof message.method !== "string" ||
+        (message.id !== undefined && typeof message.id !== "string" && typeof message.id !== "number") ||
+        (message.params !== undefined && (!message.params || typeof message.params !== "object" || Array.isArray(message.params)))) {
+      return json(mcpError(null, -32600, "Invalid Request"), 400);
+    }
+    try {
+      await handleMcpRequest(message as unknown as JsonRpcRequest, (response) => responses.push(response));
+    } catch (error) {
+      if (message.id !== undefined) responses.push(mcpError(message.id as number | string, -32603, (error as Error).message));
+    }
+  }
+  if (!responses.length) return new Response(null, { status: 202 });
+  return json(Array.isArray(body) ? responses : responses[0]);
 }
 
 // --- MCP stdio transport -----------------------------------------------------
@@ -1137,6 +1220,9 @@ async function cmdMcp(): Promise<void> {
 
 // --- Main --------------------------------------------------------------------
 
+// Importing the MCP handlers into the daemon must not start another CLI.
+if (typeof require !== "undefined" && typeof module !== "undefined"
+    ? require.main === module : import.meta.main) {
 const args = process.argv.slice(2);
 const command = args[0] ?? "";
 
@@ -1169,4 +1255,5 @@ switch (command) {
     console.error(`Unknown option: ${command}`);
     cmdHelp();
     process.exit(1);
+}
 }

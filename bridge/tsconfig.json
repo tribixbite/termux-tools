@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [
+      "node",
+      "bun"
+    ],
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "ws": [
+        "./node_modules/@types/ws/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "../claude-chrome-bridge.ts",
+    "../compat.ts",
+    "src/cli.ts"
+  ]
+}

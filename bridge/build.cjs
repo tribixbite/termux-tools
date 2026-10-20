@@ -21,6 +21,7 @@ build({
   nodePaths: [resolve(__dirname, "node_modules")],
   // Replace import.meta references with CJS equivalents
   define: {
+    "import.meta.main": "false", // CJS entry detection uses require.main.
     "import.meta.url": "import_meta_url",
     "import.meta.dir": "import_meta_dir",
   },

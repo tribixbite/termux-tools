@@ -55,7 +55,7 @@ export async function createFileStream(path: string): Promise<ReadableStream> {
   }
   const nodeStream = createReadStream(path);
   // Convert Node readable stream to web ReadableStream
-  return Readable.toWeb(nodeStream) as ReadableStream;
+  return Readable.toWeb(nodeStream) as unknown as ReadableStream;
 }
 
 // --- Process spawning --------------------------------------------------------
@@ -157,7 +157,7 @@ export function spawnProcess(
   // Convert Node Readable streams to Web ReadableStreams for uniform API
   const toWebStream = (nodeStream: any): ReadableStream<Uint8Array> | null => {
     if (!nodeStream) return null;
-    return Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+    return Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
   };
   return {
     stdin: child.stdin,
@@ -188,7 +188,7 @@ export interface BridgeServerConfig {
   fetch(
     req: Request,
     upgrade: (data?: Record<string, unknown>) => boolean
-  ): Response | Promise<Response> | undefined | Promise<undefined>;
+  ): Response | undefined | Promise<Response | undefined>;
   websocket: {
     open(ws: BridgeWebSocket): void;
     message(ws: BridgeWebSocket, message: string | Buffer): void;
@@ -242,7 +242,7 @@ function createBunServer(config: BridgeServerConfig): BridgeServer {
         const data =
           typeof message === "string"
             ? message
-            : Buffer.from(message as ArrayBuffer);
+            : Buffer.from(message);
         config.websocket.message(wrapper, data);
       },
       close(bunWs) {
@@ -259,7 +259,8 @@ function createBunServer(config: BridgeServerConfig): BridgeServer {
 
   return {
     stop: () => server.stop(),
-    port: server.port,
+    // Bun types `server.port` as optional; a bound server always has one.
+    port: server.port ?? config.port,
   };
 }
 
