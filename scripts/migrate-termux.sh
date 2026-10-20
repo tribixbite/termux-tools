@@ -26,6 +26,8 @@ readonly DEFAULT_REPO_COUNT=20
 readonly HOME_EXCLUDES=(
   --exclude='./home/git'
   --exclude='./home/.cache'
+  --exclude='./home/.gradle'
+  --exclude='./home/android-tools'
   --exclude='./home/.bun/install/cache'
   --exclude='./home/.cargo/registry/cache'
   --exclude='./home/.cargo/registry/src'
@@ -168,8 +170,12 @@ cmd_backup() {
   local out="${OUTPUT_DIR:-$(default_io_dir)}"
   mkdir -p "$out"
 
-  local prefix_tar="$out/termux-prefix-$TIMESTAMP.tar.gz"
-  local home_tar="$out/termux-home-$TIMESTAMP.tar.gz"
+  # Uncompressed .tar — gzip is single-threaded and turned the SoC into a
+  # heater on a previous run (likely contributed to a thermal reboot).
+  # Termux's tar auto-detects compression on read, so .tar / .tar.gz / .tar.zst
+  # all work at restore time; we only standardize the write path.
+  local prefix_tar="$out/termux-prefix-$TIMESTAMP.tar"
+  local home_tar="$out/termux-home-$TIMESTAMP.tar"
   local repos_txt="$out/termux-repos-$TIMESTAMP.txt"
 
   if [ "$DRY" -eq 1 ]; then
@@ -188,7 +194,7 @@ cmd_backup() {
     list_repos | awk -F'|' '{printf "  %-30s [%s]  %s\n", $1, $2, $3}'
 
     msg ""
-    info "${C_DIM}note: gzip typically gives ~50-70% reduction on these trees.${C_RST}"
+    info "${C_DIM}note: writes are uncompressed — final tar size matches uncompressed size above.${C_RST}"
     return 0
   fi
 
@@ -205,7 +211,7 @@ cmd_backup() {
   info "backing up \$HOME -> $home_tar"
   tar --warning=no-file-changed --warning=no-file-ignored \
       "${HOME_EXCLUDES[@]}" \
-      -czf "$home_tar" \
+      -cf "$home_tar" \
       -C "$TERMUX_ROOT" ./home
   ok "HOME archive: $(du -h "$home_tar" | awk '{print $1}')"
 
@@ -228,13 +234,14 @@ latest() {
 cmd_restore() {
   local in="${INPUT_DIR:-$(default_io_dir)}"
 
+  # Match .tar / .tar.gz / .tar.zst — tar auto-detects compression on read.
   local prefix_tar home_tar repos_txt
-  prefix_tar=$(latest "$in/termux-prefix-*.tar.gz")
-  home_tar=$(latest "$in/termux-home-*.tar.gz")
+  prefix_tar=$(latest "$in/termux-prefix-*.tar*")
+  home_tar=$(latest "$in/termux-home-*.tar*")
   repos_txt="${REPOS_FILE:-$(latest "$in/termux-repos-*.txt")}"
 
-  [ -f "$prefix_tar" ] || { err "no termux-prefix-*.tar.gz in $in"; exit 1; }
-  [ -f "$home_tar" ]   || { err "no termux-home-*.tar.gz in $in"; exit 1; }
+  [ -f "$prefix_tar" ] || { err "no termux-prefix-*.tar* in $in"; exit 1; }
+  [ -f "$home_tar" ]   || { err "no termux-home-*.tar* in $in"; exit 1; }
 
   info "restore plan:"
   info "  PREFIX  $prefix_tar  ($(du -h "$prefix_tar" | awk '{print $1}'))"
@@ -271,7 +278,7 @@ cmd_restore() {
   ok "PREFIX restored"
 
   info "extracting \$HOME..."
-  tar -xzf "$home_tar" -C "$TERMUX_ROOT"
+  tar -xf "$home_tar" -C "$TERMUX_ROOT"
   ok "HOME extracted"
 
   info "refreshing pacman repo metadata..."
