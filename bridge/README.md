@@ -162,6 +162,16 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 
 ## Changelog
 
+### 1.6.0
+
+- Direct Streamable-HTTP MCP transport on the bridge daemon (`POST /mcp`, stateless, origin/host checked, optional `BRIDGE_TOKEN` bearer auth) so Codex and other MCP clients connect without a per-session relay subprocess; the stdio relay (`--mcp`) answers `ping` and negotiates protocol version 2025-03-26
+- Tool results from the extension are normalised to standard MCP content blocks (`{type:"image", mimeType, data}`), nested extension errors surface as `isError`, and the relay timeout outlasts the bridge's 30 s queue timeout so a late reply is never delivered to a different client
+- Screenshots are scaled below 2000 px per axis and 4 MB before they leave the bridge
+- Pressure, tilt and twist pen strokes via CDP `Input.dispatchMouseEvent` (`pen_stroke` tool); verified to deliver trusted PointerEvents on Edge Canary
+- Extension 1.12.1: tap-to-remove element zapper with a Reveal action for blur/opacity paywalls, operad dashboard token on daemon bridge-launch calls, extension startup and share-fallback repairs
+- `--setup-edge` pins a single ADB serial even when a stale offline device is listed
+- Bridge sources are now typechecked (`npm run typecheck`, also in CI)
+
 ### 1.5.1
 
 - Fix setup-edge probes failing with "more than one device/emulator" when multiple ADB devices are listed (e.g. a stale offline one): resolve and pin a single serial (`ADB_SERIAL`/`BRIDGE_ADB_SERIAL`, else the sole online device) on every adb call; status output shows the targeted serial

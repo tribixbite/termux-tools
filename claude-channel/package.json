@@ -7,23 +7,39 @@
   "homepage": "https://termux.party",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tribixbite/termux-tools",
+    "url": "git+https://github.com/tribixbite/termux-tools.git",
     "directory": "claude-channel"
   },
   "bugs": "https://github.com/tribixbite/termux-tools/issues",
-  "keywords": ["termux", "android", "claude-code", "codex", "antigravity", "channel-manager", "release-pinning"],
+  "keywords": [
+    "termux",
+    "android",
+    "claude-code",
+    "codex",
+    "antigravity",
+    "channel-manager",
+    "release-pinning"
+  ],
   "bin": {
-    "ccx": "./dist/cli.js",
-    "cdx": "./dist/codex-cli.js",
-    "agx": "./dist/antigravity-cli.js",
-    "pip-tool-install": "./bin/pip-tool-install",
-    "install-ghostty-termux": "./bin/install-ghostty-termux",
-    "install-antigravity-termux": "./bin/install-antigravity-termux",
-    "migrate-termux": "./bin/migrate-termux",
-    "threads-dl": "./bin/threads-dl"
+    "ccx": "dist/cli.js",
+    "cdx": "dist/codex-cli.js",
+    "agx": "dist/antigravity-cli.js",
+    "pip-tool-install": "bin/pip-tool-install",
+    "install-ghostty-termux": "bin/install-ghostty-termux",
+    "install-antigravity-termux": "bin/install-antigravity-termux",
+    "migrate-termux": "bin/migrate-termux",
+    "threads-dl": "bin/threads-dl"
   },
-  "files": ["dist/", "bin/", "README.md", "LICENSE"],
-  "os": ["android", "linux"],
+  "files": [
+    "dist/",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "android",
+    "linux"
+  ],
   "engines": {
     "node": ">=18"
   },

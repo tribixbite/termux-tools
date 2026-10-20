@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -31,18 +32,20 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // src/import-meta-shim.js
 var import_meta_url;
 var init_import_meta_shim = __esm({
   "src/import-meta-shim.js"() {
+    "use strict";
     import_meta_url = typeof __filename !== "undefined" ? require("url").pathToFileURL(__filename).href : "";
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/constants.js
+// node_modules/ws/lib/constants.js
 var require_constants = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/constants.js"(exports2, module2) {
+  "node_modules/ws/lib/constants.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var BINARY_TYPES = ["nodebuffer", "arraybuffer", "fragments"];
@@ -64,9 +67,9 @@ var require_constants = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/buffer-util.js
+// node_modules/ws/lib/buffer-util.js
 var require_buffer_util = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/buffer-util.js"(exports2, module2) {
+  "node_modules/ws/lib/buffer-util.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { EMPTY_BUFFER } = require_constants();
@@ -140,9 +143,9 @@ var require_buffer_util = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/limiter.js
+// node_modules/ws/lib/limiter.js
 var require_limiter = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/limiter.js"(exports2, module2) {
+  "node_modules/ws/lib/limiter.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var kDone = Symbol("kDone");
@@ -191,9 +194,9 @@ var require_limiter = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/permessage-deflate.js
+// node_modules/ws/lib/permessage-deflate.js
 var require_permessage_deflate = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
+  "node_modules/ws/lib/permessage-deflate.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var zlib = require("zlib");
@@ -575,9 +578,9 @@ var require_permessage_deflate = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/validation.js
+// node_modules/ws/lib/validation.js
 var require_validation = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/validation.js"(exports2, module2) {
+  "node_modules/ws/lib/validation.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { isUtf8 } = require("buffer");
@@ -777,9 +780,9 @@ var require_validation = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/receiver.js
+// node_modules/ws/lib/receiver.js
 var require_receiver = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/receiver.js"(exports2, module2) {
+  "node_modules/ws/lib/receiver.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Writable } = require("stream");
@@ -1370,9 +1373,9 @@ var require_receiver = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/sender.js
+// node_modules/ws/lib/sender.js
 var require_sender = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/sender.js"(exports2, module2) {
+  "node_modules/ws/lib/sender.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { Duplex } = require("stream");
@@ -1859,9 +1862,9 @@ var require_sender = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/event-target.js
+// node_modules/ws/lib/event-target.js
 var require_event_target = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/event-target.js"(exports2, module2) {
+  "node_modules/ws/lib/event-target.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { kForOnEventAttribute, kListener } = require_constants();
@@ -2089,9 +2092,9 @@ var require_event_target = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/extension.js
+// node_modules/ws/lib/extension.js
 var require_extension = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/extension.js"(exports2, module2) {
+  "node_modules/ws/lib/extension.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -2243,9 +2246,9 @@ var require_extension = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket.js
+// node_modules/ws/lib/websocket.js
 var require_websocket = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket.js"(exports2, module2) {
+  "node_modules/ws/lib/websocket.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3130,9 +3133,9 @@ var require_websocket = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/stream.js
+// node_modules/ws/lib/stream.js
 var require_stream = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/stream.js"(exports2, module2) {
+  "node_modules/ws/lib/stream.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var WebSocket3 = require_websocket();
@@ -3229,9 +3232,9 @@ var require_stream = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/subprotocol.js
+// node_modules/ws/lib/subprotocol.js
 var require_subprotocol = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/subprotocol.js"(exports2, module2) {
+  "node_modules/ws/lib/subprotocol.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var { tokenChars } = require_validation();
@@ -3275,9 +3278,9 @@ var require_subprotocol = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket-server.js
+// node_modules/ws/lib/websocket-server.js
 var require_websocket_server = __commonJS({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/lib/websocket-server.js"(exports2, module2) {
+  "node_modules/ws/lib/websocket-server.js"(exports2, module2) {
     "use strict";
     init_import_meta_shim();
     var EventEmitter = require("events");
@@ -3669,10 +3672,10 @@ var require_websocket_server = __commonJS({
   }
 });
 
-// ../../../../../home/git/termux-tools/bridge/node_modules/ws/wrapper.mjs
+// node_modules/ws/wrapper.mjs
 var import_stream, import_receiver, import_sender, import_websocket, import_websocket_server;
 var init_wrapper = __esm({
-  "../../../../../home/git/termux-tools/bridge/node_modules/ws/wrapper.mjs"() {
+  "node_modules/ws/wrapper.mjs"() {
     init_import_meta_shim();
     import_stream = __toESM(require_stream(), 1);
     import_receiver = __toESM(require_receiver(), 1);
@@ -3833,7 +3836,8 @@ function createBunServer(config) {
   });
   return {
     stop: () => server2.stop(),
-    port: server2.port
+    // Bun types `server.port` as optional; a bound server always has one.
+    port: server2.port ?? config.port
   };
 }
 function createNodeServer(config) {
@@ -3968,7 +3972,7 @@ function getAdbSerial() {
     const result = runSync([ADB_PATH, "devices"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
     const lines = result.stdout.toString().trim().split("\n").filter((l) => l.endsWith("	device"));
     if (lines.length <= 1) {
-      _adbSerial = "";
+      _adbSerial = lines[0]?.split("	")[0] ?? "";
       return _adbSerial;
     }
     for (const line of lines) {
@@ -3986,9 +3990,9 @@ function getAdbSerial() {
     return _adbSerial;
   }
 }
-function adb(...args2) {
+function adb(...args) {
   const serial = getAdbSerial();
-  return serial ? [ADB_PATH, "-s", serial, ...args2] : [ADB_PATH, ...args2];
+  return serial ? [ADB_PATH, "-s", serial, ...args] : [ADB_PATH, ...args];
 }
 function adbNotify(tag, title, text) {
   try {
@@ -4011,12 +4015,12 @@ function findRuntime() {
   }
   return process.execPath;
 }
-function log(level, msg, ...args2) {
+function log(level, msg, ...args) {
   if (LOG_PRIORITY[level] < LOG_PRIORITY[LOG_LEVEL]) return;
   const ts = (/* @__PURE__ */ new Date()).toISOString();
   const prefix = `[${ts}] [bridge:${level}]`;
-  if (level === "error") console.error(prefix, msg, ...args2);
-  else console.log(prefix, msg, ...args2);
+  if (level === "error") console.error(prefix, msg, ...args);
+  else console.log(prefix, msg, ...args);
 }
 function encodeNativeMessage(json) {
   const body = Buffer.from(json, "utf-8");
@@ -4220,6 +4224,22 @@ function encodePNG(rgba, width, height) {
   const sig = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
   return Buffer.concat([sig, writeChunk("IHDR", ihdr), idat, iend]);
 }
+function normalizeScreenshot(data) {
+  let png = Buffer.from(data, "base64");
+  let width = png.readUInt32BE(16);
+  let height = png.readUInt32BE(20);
+  if (width < 2e3 && height < 2e3 && png.length < 4e6) return data;
+  let decoded = decodePNG(data);
+  do {
+    const factor = Math.min(0.9, 1999 / width, 1999 / height);
+    decoded = scalePixels(decoded.rgba, width, height, Math.max(1, Math.floor(width * factor)));
+    width = decoded.width;
+    height = decoded.height;
+    png = encodePNG(decoded.rgba, width, height);
+  } while ((width >= 2e3 || height >= 2e3 || png.length >= 4e6) && width > 1 && height > 1);
+  if (png.length >= 4e6 || width >= 2e3 || height >= 2e3) throw new Error("Screenshot exceeds output limits");
+  return png.toString("base64");
+}
 function scalePixels(rgba, srcW, srcH, maxW) {
   if (srcW <= maxW) return { rgba, width: srcW, height: srcH };
   const scale = maxW / srcW;
@@ -4417,15 +4437,17 @@ function encodeGIF(frames, delayMs) {
   return result;
 }
 function sendToolRequest(requestId, requestJson) {
-  let sent = false;
-  for (const client of wsClients) {
-    try {
-      client.send(requestJson);
-      sent = true;
-    } catch {
-    }
-  }
-  return sent;
+  if (wsClients.size === 0 && !cdpManager.isAvailable()) return false;
+  handleNativeMessage(requestJson, (json) => {
+    const entry = pendingToolMap.get(requestId);
+    if (!entry) return true;
+    pendingToolMap.delete(requestId);
+    clearTimeout(entry.timeout);
+    entry.resolve({ ...JSON.parse(json), requestId });
+    drainTabQueue(entry.tabId);
+    return true;
+  });
+  return true;
 }
 function rejectAllPendingTools(reason) {
   for (const [requestId, entry] of pendingToolMap) {
@@ -4524,7 +4546,7 @@ function spawnNativeHost() {
     }
   });
 }
-function handleNativeMessage(json) {
+function handleNativeMessage(json, reply = sendToNativeHost) {
   log("debug", `native\u2192ws: ${json.slice(0, 200)}`);
   let outJson = json;
   try {
@@ -4543,7 +4565,7 @@ function handleNativeMessage(json) {
         const response = JSON.stringify({ type: "tool_response", result: cdpResult });
         log("debug", `CDP\u2192native: ${response.slice(0, 200)}`);
         try {
-          sendToNativeHost(response);
+          reply(response);
         } catch (e) {
           log("warn", `sendToNativeHost failed after CDP eval: ${e.message}`);
           for (const client of wsClients) {
@@ -4570,7 +4592,7 @@ function handleNativeMessage(json) {
       cdpManager.captureScreenshot(tabId).then((cdpResult) => {
         if (cdpResult.data) {
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: {
                 content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: cdpResult.data } }]
@@ -4633,7 +4655,7 @@ function handleNativeMessage(json) {
           const pngBuf = encodePNG(croppedRGBA, cropW, cropH);
           const b64 = pngBuf.toString("base64");
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: {
                 content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }]
@@ -4686,7 +4708,7 @@ function handleNativeMessage(json) {
       cdpManager.dispatchComputerAction(action, parsed.params ?? {}, tabId).then((cdpResult) => {
         if (cdpResult.result) {
           try {
-            sendToNativeHost(JSON.stringify({
+            reply(JSON.stringify({
               type: "tool_response",
               result: { result: cdpResult.result }
             }));
@@ -4725,7 +4747,7 @@ function handleNativeMessage(json) {
         log("info", `CDP: intercepting resize_window (${width}\xD7${height})`);
         cdpManager.setDeviceMetrics(width, height, parsed.params?.tabId).then((r) => {
           try {
-            sendToNativeHost(JSON.stringify({ type: "tool_response", result: r }));
+            reply(JSON.stringify({ type: "tool_response", result: r }));
           } catch (e) {
             log("warn", `sendToNativeHost failed after CDP resize: ${e.message}`);
             for (const client of wsClients) {
@@ -4754,7 +4776,7 @@ function handleNativeMessage(json) {
       if (cdpRequests.length > 0) {
         log("info", `CDP: returning ${cdpRequests.length} network requests`);
         try {
-          sendToNativeHost(JSON.stringify({
+          reply(JSON.stringify({
             type: "tool_response",
             result: { result: cdpRequests, count: cdpRequests.length, source: "cdp" }
           }));
@@ -4815,6 +4837,7 @@ var init_claude_chrome_bridge = __esm({
     init_import_meta_shim();
     import_path = require("path");
     import_node_zlib = require("node:zlib");
+    init_cli();
     init_compat();
     SCRIPT_DIR = IS_BUN ? globalThis.Bun.main ? (0, import_path.dirname)(globalThis.Bun.main) : (0, import_path.dirname)(new URL(import_meta_url).pathname) : (0, import_path.dirname)(new URL(import_meta_url).pathname);
     MANIFEST_PATH = (0, import_path.resolve)(SCRIPT_DIR, "edge-claude-ext/manifest.json");
@@ -5262,7 +5285,7 @@ var init_claude_chrome_bridge = __esm({
               const shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId);
               if (shot?.data) {
                 log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
-                return { data: shot.data };
+                return { data: normalizeScreenshot(shot.data) };
               }
             }
           } catch (err) {
@@ -5279,7 +5302,7 @@ var init_claude_chrome_bridge = __esm({
               const { readFile: rf } = await import("node:fs/promises");
               const buf = await rf(tmpPath);
               log("info", `CDP: ADB screencap captured ${buf.length} bytes`);
-              return { data: buf.toString("base64") };
+              return { data: normalizeScreenshot(buf.toString("base64")) };
             }
           }
         } catch {
@@ -5717,6 +5740,7 @@ var init_claude_chrome_bridge = __esm({
       port: WS_PORT,
       async fetch(req, upgrade) {
         const url = new URL(req.url);
+        if (url.pathname === "/mcp") return handleMcpHttp(req);
         if (url.pathname === "/health") {
           return new Response(
             JSON.stringify({
@@ -6125,11 +6149,11 @@ var init_claude_chrome_bridge = __esm({
               }
             }, 3e4);
           }
-        },
-        maxPayloadLength: MAX_MESSAGE_SIZE,
-        idleTimeout: 120
-        // seconds
-      }
+        }
+      },
+      maxPayloadLength: MAX_MESSAGE_SIZE,
+      idleTimeout: 120
+      // seconds
     });
     setInterval(() => {
       for (const ws of wsClients) {
@@ -6267,25 +6291,13 @@ var init_claude_chrome_bridge = __esm({
 });
 
 // src/cli.ts
-init_import_meta_shim();
-var import_path2 = require("path");
-var import_fs = require("fs");
-var PKG_VERSION = (() => {
-  try {
-    const dir = typeof __dirname !== "undefined" ? __dirname : (0, import_path2.dirname)(new URL(import_meta_url).pathname);
-    const pkgPath = (0, import_path2.resolve)(dir, "../package.json");
-    return JSON.parse((0, import_fs.readFileSync)(pkgPath, "utf-8")).version ?? "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
-var WS_PORT2 = parseInt(process.env.BRIDGE_PORT ?? "18963", 10);
-var WS_HOST2 = "127.0.0.1";
-var BRIDGE_URL = process.env.BRIDGE_URL ?? `http://${WS_HOST2}:${WS_PORT2}`;
-var HEALTH_URL = `${BRIDGE_URL}/health`;
-var SHUTDOWN_URL = `${BRIDGE_URL}/shutdown`;
-var TOOL_URL = `${BRIDGE_URL}/tool`;
-var TOOL_TIMEOUT_MS = 3e4;
+var cli_exports = {};
+__export(cli_exports, {
+  formatToolResult: () => formatToolResult,
+  handleMcpHttp: () => handleMcpHttp,
+  handleMcpRequest: () => handleMcpRequest
+});
+module.exports = __toCommonJS(cli_exports);
 async function fetchWithTimeout(url, opts = {}) {
   const { timeout = 3e3, ...fetchOpts } = opts;
   const controller = new AbortController();
@@ -6314,14 +6326,6 @@ async function bridgeClientCount() {
     return null;
   }
 }
-var EDGE_PACKAGES = [
-  "com.microsoft.emmx.canary",
-  "com.microsoft.emmx.dev",
-  "com.microsoft.emmx.beta",
-  "com.microsoft.emmx"
-];
-var EXT_DEST = "/data/local/tmp/cfc-ext";
-var FLAGS_FILE = "/data/local/tmp/chrome-command-line";
 function selfDir() {
   return typeof __dirname !== "undefined" ? __dirname : (0, import_path2.dirname)(new URL(import_meta_url).pathname);
 }
@@ -6359,9 +6363,9 @@ function resolveAdbSerial(sp) {
   if (online.length > 1) return env || online[0].serial;
   return "";
 }
-function runAdb(sp, serial, args2) {
+function runAdb(sp, serial, args) {
   const base = serial ? ["-s", serial] : [];
-  return sp("adb", [...base, ...args2], { stdio: "pipe", encoding: "utf-8" });
+  return sp("adb", [...base, ...args], { stdio: "pipe", encoding: "utf-8" });
 }
 function detectEdgePkg(sp, serial) {
   for (const pkg of EDGE_PACKAGES) {
@@ -6634,7 +6638,6 @@ Installing CFC extension v${extVersion} via --load-extension...`);
   console.log("  Extension will load automatically when Edge starts.");
   return true;
 }
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function ask(question) {
   return new Promise((res) => {
     const rl = require("readline").createInterface({ input: process.stdin, output: process.stdout });
@@ -6644,8 +6647,6 @@ function ask(question) {
     });
   });
 }
-var isYes = (a) => a === "" || a === "y" || a === "yes";
-var EDGE_CANARY = "com.microsoft.emmx.canary";
 async function ensureEdgeInstalled(sp, serial, interactive) {
   let pkg = detectEdgePkg(sp, serial);
   if (pkg) return pkg;
@@ -6799,264 +6800,6 @@ async function cmdStart() {
     process.exit(1);
   }
 }
-var MCP_TOOLS = [
-  {
-    name: "tabs_context_mcp",
-    description: "Get context information about the current MCP tab group. Returns all tab IDs inside the group if it exists. CRITICAL: You must get the context at least once before using other browser automation tools so you know what tabs exist.",
-    inputSchema: {
-      type: "object",
-      properties: { createIfEmpty: { type: "boolean", description: "Creates a new MCP tab group if none exists." } },
-      required: []
-    }
-  },
-  {
-    name: "tabs_create_mcp",
-    description: "Creates a new empty tab in the MCP tab group.",
-    inputSchema: { type: "object", properties: {}, required: [] }
-  },
-  {
-    name: "navigate",
-    description: "Navigate to a URL, or go forward/back in browser history.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: 'URL to navigate to. Use "forward" or "back" for history.' },
-        tabId: { type: "number", description: "Tab ID to navigate." }
-      },
-      required: ["url", "tabId"]
-    }
-  },
-  {
-    name: "computer",
-    description: "Use a mouse and keyboard to interact with a web browser, and take screenshots.\n* Consult a screenshot to determine coordinates before clicking.\n* Click buttons/icons in the center of the element.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["left_click", "right_click", "type", "screenshot", "wait", "scroll", "key", "left_click_drag", "double_click", "triple_click", "zoom", "scroll_to", "hover"],
-          description: "The action to perform."
-        },
-        coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "(x, y) pixel coordinates." },
-        text: { type: "string", description: "Text to type or key(s) to press." },
-        duration: { type: "number", minimum: 0, maximum: 30, description: "Seconds to wait." },
-        scroll_direction: { type: "string", enum: ["up", "down", "left", "right"], description: "Scroll direction." },
-        scroll_amount: { type: "number", minimum: 1, maximum: 10, description: "Scroll ticks (default: 3)." },
-        start_coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Start coords for drag." },
-        region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "(x0,y0,x1,y1) for zoom." },
-        repeat: { type: "number", minimum: 1, maximum: 100, description: "Key repeat count." },
-        ref: { type: "string", description: "Element ref ID for scroll_to." },
-        modifiers: { type: "string", description: 'Modifier keys: "ctrl", "shift", "alt", "cmd".' },
-        tabId: { type: "number", description: "Tab ID." }
-      },
-      required: ["action", "tabId"]
-    }
-  },
-  {
-    name: "pen_stroke",
-    description: "Draw a trusted pen stroke with per-point pressure, tilt and rotation. Coordinates are viewport CSS pixels. Requires BRIDGE_ADB_SERIAL and CDP. Specify exactly one extension tabId (refresh tabs first) or exact CDP targetId. Never falls back to mouse input. Do not replay a failed stroke without inspecting the canvas.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tabId: { type: "integer", minimum: 0, description: "Extension tab ID, resolved only when its URL uniquely matches a page." },
-        targetId: { type: "string", minLength: 1, description: "Exact CDP page target ID (alternative to tabId)." },
-        points: {
-          type: "array",
-          minItems: 1,
-          maxItems: 512,
-          items: {
-            type: "object",
-            properties: {
-              x: { type: "number", minimum: 0, maximum: 1e5 },
-              y: { type: "number", minimum: 0, maximum: 1e5 },
-              pressure: { type: "number", minimum: 0, maximum: 1 },
-              tiltX: { type: "number", minimum: -90, maximum: 90, default: 0 },
-              tiltY: { type: "number", minimum: -90, maximum: 90, default: 0 },
-              twist: { type: "number", minimum: 0, maximum: 359, default: 0 },
-              timeMs: { type: "number", minimum: 0, maximum: 2e4, description: "Nondecreasing milliseconds from stroke start; defaults to sample index \xD7 8." }
-            },
-            required: ["x", "y", "pressure"]
-          }
-        }
-      },
-      required: ["points"],
-      oneOf: [{ required: ["tabId"], not: { required: ["targetId"] } }, { required: ["targetId"], not: { required: ["tabId"] } }]
-    }
-  },
-  {
-    name: "javascript_tool",
-    description: "Execute JavaScript in the page context. Returns the last expression result.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: { type: "string", description: "Must be 'javascript_exec'" },
-        text: { type: "string", description: "JavaScript code. Don't use 'return'." },
-        tabId: { type: "number", description: "Tab ID." }
-      },
-      required: ["action", "text", "tabId"]
-    }
-  },
-  {
-    name: "read_page",
-    description: "Get accessibility tree of page elements. Filter for interactive elements or get all.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        filter: { type: "string", enum: ["interactive", "all"], description: "Element filter." },
-        tabId: { type: "number", description: "Tab ID." },
-        depth: { type: "number", description: "Max tree depth (default: 15)." },
-        ref_id: { type: "string", description: "Parent element ref to focus on." },
-        max_chars: { type: "number", description: "Max output chars (default: 50000)." }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "find",
-    description: 'Find elements by natural language (e.g., "search bar", "login button").',
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "What to find." },
-        tabId: { type: "number", description: "Tab ID." }
-      },
-      required: ["query", "tabId"]
-    }
-  },
-  {
-    name: "form_input",
-    description: "Set form element values using ref ID from read_page.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ref: { type: "string", description: "Element ref ID." },
-        value: { type: ["string", "boolean", "number"], description: "Value to set." },
-        tabId: { type: "number", description: "Tab ID." }
-      },
-      required: ["ref", "value", "tabId"]
-    }
-  },
-  {
-    name: "get_page_text",
-    description: "Extract raw text content from the page.",
-    inputSchema: {
-      type: "object",
-      properties: { tabId: { type: "number", description: "Tab ID." } },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "read_console_messages",
-    description: "Read browser console messages. Always provide a pattern to filter.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "Tab ID." },
-        onlyErrors: { type: "boolean", description: "Errors only." },
-        clear: { type: "boolean", description: "Clear after reading." },
-        pattern: { type: "string", description: "Regex filter pattern." },
-        limit: { type: "number", description: "Max messages (default: 100)." }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "read_network_requests",
-    description: "Read HTTP network requests from a tab.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "Tab ID." },
-        urlPattern: { type: "string", description: "URL substring filter." },
-        clear: { type: "boolean", description: "Clear after reading." },
-        limit: { type: "number", description: "Max requests (default: 100)." }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "resize_window",
-    description: "Resize browser window.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        width: { type: "number", description: "Width in pixels." },
-        height: { type: "number", description: "Height in pixels." },
-        tabId: { type: "number", description: "Tab ID." }
-      },
-      required: ["width", "height", "tabId"]
-    }
-  },
-  {
-    name: "gif_creator",
-    description: "Record and export browser session GIFs.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["start_recording", "stop_recording", "export", "clear"], description: "Action." },
-        tabId: { type: "number", description: "Tab ID." },
-        download: { type: "boolean", description: "Download GIF on export." },
-        filename: { type: "string", description: "GIF filename." },
-        options: { type: "object", description: "GIF options." }
-      },
-      required: ["action", "tabId"]
-    }
-  },
-  {
-    name: "upload_image",
-    description: "Upload a screenshot to a file input or drag & drop target.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        imageId: { type: "string", description: "Screenshot ID." },
-        ref: { type: "string", description: "Element ref ID." },
-        coordinate: { type: "array", items: { type: "number" }, description: "Drop coords [x,y]." },
-        tabId: { type: "number", description: "Tab ID." },
-        filename: { type: "string", description: "Filename." }
-      },
-      required: ["imageId", "tabId"]
-    }
-  },
-  {
-    name: "update_plan",
-    description: "Present a plan to the user for approval.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        domains: { type: "array", items: { type: "string" }, description: "Domains to visit." },
-        approach: { type: "array", items: { type: "string" }, description: "Steps to take." }
-      },
-      required: ["domains", "approach"]
-    }
-  },
-  {
-    name: "shortcuts_list",
-    description: "List available shortcuts and workflows.",
-    inputSchema: {
-      type: "object",
-      properties: { tabId: { type: "number", description: "Tab ID." } },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "shortcuts_execute",
-    description: "Execute a shortcut or workflow.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tabId: { type: "number", description: "Tab ID." },
-        shortcutId: { type: "string", description: "Shortcut ID." },
-        command: { type: "string", description: "Command name." }
-      },
-      required: ["tabId"]
-    }
-  },
-  {
-    name: "switch_browser",
-    description: "Switch which Chrome browser is used for automation.",
-    inputSchema: { type: "object", properties: {}, required: [] }
-  }
-];
 function mcpResult(id, result) {
   return { jsonrpc: "2.0", id, result };
 }
@@ -7093,48 +6836,117 @@ async function callBridgeTool(method, params) {
 }
 function formatToolResult(result) {
   if (!result || typeof result !== "object") {
-    return [{ type: "text", text: JSON.stringify(result) }];
+    return [{ type: "text", text: JSON.stringify(result) ?? "undefined" }];
   }
   const r = result;
-  if (Array.isArray(r.content)) return r.content;
-  if (r.data && typeof r.data === "string" && r.media_type) {
-    return [{ type: "image", source: { type: "base64", media_type: r.media_type, data: r.data } }];
+  if (Array.isArray(r.content)) {
+    return r.content.flatMap((item) => {
+      if (!item || typeof item !== "object") return formatToolResult(item);
+      const block = item;
+      const source = block.source;
+      if (block.type === "image" && source?.type === "base64") {
+        return [{ type: "image", mimeType: source.media_type, data: source.data }];
+      }
+      return [block];
+    });
+  }
+  if (typeof r.data === "string" && typeof r.media_type === "string") {
+    return [{ type: "image", mimeType: r.media_type, data: r.data }];
   }
   if (r.result !== void 0) return formatToolResult(r.result);
   return [{ type: "text", text: JSON.stringify(result, null, 2) }];
 }
-async function handleMcpRequest(req) {
+function toolResultFailed(result) {
+  if (!result || typeof result !== "object") return false;
+  const r = result;
+  return Boolean(r.error || r.isError || r.result !== void 0 && toolResultFailed(r.result));
+}
+async function handleMcpRequest(req, send = mcpSend) {
   if (req.id === void 0 || req.id === null) return;
   switch (req.method) {
     case "initialize":
-      mcpSend(mcpResult(req.id, {
-        protocolVersion: "2024-11-05",
+      send(mcpResult(req.id, {
+        protocolVersion: req.params?.protocolVersion === "2024-11-05" ? "2024-11-05" : "2025-03-26",
         capabilities: { tools: {} },
         serverInfo: { name: "Claude in Chrome (Bridge)", version: PKG_VERSION }
       }));
       break;
+    case "ping":
+      send(mcpResult(req.id, {}));
+      break;
     case "tools/list":
-      mcpSend(mcpResult(req.id, { tools: MCP_TOOLS }));
+      send(mcpResult(req.id, { tools: MCP_TOOLS }));
       break;
     case "tools/call": {
       const toolName = req.params?.name ?? "";
       const toolArgs = req.params?.arguments ?? {};
       const tool = MCP_TOOLS.find((t) => t.name === toolName);
       if (!tool) {
-        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: `Unknown tool: ${toolName}` }], isError: true }));
+        send(mcpResult(req.id, { content: [{ type: "text", text: `Unknown tool: ${toolName}` }], isError: true }));
         break;
       }
       const { result, error } = await callBridgeTool(toolName, toolArgs);
       if (error) {
-        mcpSend(mcpResult(req.id, { content: [{ type: "text", text: error }], isError: true }));
+        send(mcpResult(req.id, { content: [{ type: "text", text: error }], isError: true }));
       } else {
-        mcpSend(mcpResult(req.id, { content: formatToolResult(result) }));
+        send(mcpResult(req.id, { content: formatToolResult(result), isError: toolResultFailed(result) }));
       }
       break;
     }
     default:
-      mcpSend(mcpError(req.id, -32601, `Method not found: ${req.method}`));
+      send(mcpError(req.id, -32601, `Method not found: ${req.method}`));
   }
+}
+async function handleMcpHttp(req) {
+  const url = new URL(req.url);
+  const origin = req.headers.get("origin");
+  const allowedHosts = /* @__PURE__ */ new Set([url.host, `localhost:${url.port}`]);
+  if (!allowedHosts.has(req.headers.get("host") ?? url.host) || origin !== null && origin !== url.origin) {
+    return new Response("Forbidden origin", { status: 403 });
+  }
+  const token = process.env.BRIDGE_TOKEN;
+  if (token && req.headers.get("authorization") !== `Bearer ${token}`) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  if (req.method !== "POST") {
+    return new Response(null, { status: 405, headers: { Allow: "POST" } });
+  }
+  if (!req.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    return new Response("Expected application/json", { status: 415 });
+  }
+  const accept = req.headers.get("accept") ?? "";
+  if (!accept.includes("application/json") || !accept.includes("text/event-stream")) {
+    return new Response("Expected JSON and SSE accept types", { status: 406 });
+  }
+  const json = (value, status = 200) => new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+  });
+  let body;
+  try {
+    const raw = await req.text();
+    if (Buffer.byteLength(raw) > 1048576) return new Response("Request too large", { status: 413 });
+    body = JSON.parse(raw);
+  } catch {
+    return json(mcpError(null, -32700, "Parse error"), 400);
+  }
+  const messages = Array.isArray(body) ? body : [body];
+  if (!messages.length) return json(mcpError(null, -32600, "Invalid Request"), 400);
+  const responses = [];
+  for (const value of messages) {
+    if (!value || typeof value !== "object") return json(mcpError(null, -32600, "Invalid Request"), 400);
+    const message = value;
+    if (message.jsonrpc !== "2.0" || typeof message.method !== "string" || message.id !== void 0 && typeof message.id !== "string" && typeof message.id !== "number" || message.params !== void 0 && (!message.params || typeof message.params !== "object" || Array.isArray(message.params))) {
+      return json(mcpError(null, -32600, "Invalid Request"), 400);
+    }
+    try {
+      await handleMcpRequest(message, (response) => responses.push(response));
+    } catch (error) {
+      if (message.id !== void 0) responses.push(mcpError(message.id, -32603, error.message));
+    }
+  }
+  if (!responses.length) return new Response(null, { status: 202 });
+  return json(Array.isArray(body) ? responses : responses[0]);
 }
 async function cmdMcp() {
   const log2 = (msg) => process.stderr.write(`[cfc-mcp] ${msg}
@@ -7177,35 +6989,337 @@ async function cmdMcp() {
   log2("stdin closed");
   process.exit(0);
 }
-var args = process.argv.slice(2);
-var command = args[0] ?? "";
-switch (command) {
-  case "--version":
-  case "-v":
-    cmdVersion();
-    break;
-  case "--help":
-  case "-h":
-    cmdHelp();
-    break;
-  case "--stop":
-    cmdStop();
-    break;
-  case "--setup":
-    cmdSetup();
-    break;
-  case "--setup-edge":
-  case "--doctor":
-    cmdSetupEdge();
-    break;
-  case "--mcp":
-    cmdMcp();
-    break;
-  case "":
-    cmdStart();
-    break;
-  default:
-    console.error(`Unknown option: ${command}`);
-    cmdHelp();
-    process.exit(1);
-}
+var import_path2, import_fs, PKG_VERSION, WS_PORT2, WS_HOST2, BRIDGE_URL, HEALTH_URL, SHUTDOWN_URL, TOOL_URL, TOOL_TIMEOUT_MS, EDGE_PACKAGES, EXT_DEST, FLAGS_FILE, sleep, isYes, EDGE_CANARY, MCP_TOOLS;
+var init_cli = __esm({
+  "src/cli.ts"() {
+    init_import_meta_shim();
+    import_path2 = require("path");
+    import_fs = require("fs");
+    PKG_VERSION = (() => {
+      try {
+        const dir = typeof __dirname !== "undefined" ? __dirname : (0, import_path2.dirname)(new URL(import_meta_url).pathname);
+        const pkgPath = (0, import_path2.resolve)(dir, "../package.json");
+        return JSON.parse((0, import_fs.readFileSync)(pkgPath, "utf-8")).version ?? "0.0.0";
+      } catch {
+        return "0.0.0";
+      }
+    })();
+    WS_PORT2 = parseInt(process.env.BRIDGE_PORT ?? "18963", 10);
+    WS_HOST2 = "127.0.0.1";
+    BRIDGE_URL = process.env.BRIDGE_URL ?? `http://${WS_HOST2}:${WS_PORT2}`;
+    HEALTH_URL = `${BRIDGE_URL}/health`;
+    SHUTDOWN_URL = `${BRIDGE_URL}/shutdown`;
+    TOOL_URL = `${BRIDGE_URL}/tool`;
+    TOOL_TIMEOUT_MS = 35e3;
+    EDGE_PACKAGES = [
+      "com.microsoft.emmx.canary",
+      "com.microsoft.emmx.dev",
+      "com.microsoft.emmx.beta",
+      "com.microsoft.emmx"
+    ];
+    EXT_DEST = "/data/local/tmp/cfc-ext";
+    FLAGS_FILE = "/data/local/tmp/chrome-command-line";
+    sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    isYes = (a) => a === "" || a === "y" || a === "yes";
+    EDGE_CANARY = "com.microsoft.emmx.canary";
+    MCP_TOOLS = [
+      {
+        name: "tabs_context_mcp",
+        description: "Get context information about the current MCP tab group. Returns all tab IDs inside the group if it exists. CRITICAL: You must get the context at least once before using other browser automation tools so you know what tabs exist.",
+        inputSchema: {
+          type: "object",
+          properties: { createIfEmpty: { type: "boolean", description: "Creates a new MCP tab group if none exists." } },
+          required: []
+        }
+      },
+      {
+        name: "tabs_create_mcp",
+        description: "Creates a new empty tab in the MCP tab group.",
+        inputSchema: { type: "object", properties: {}, required: [] }
+      },
+      {
+        name: "navigate",
+        description: "Navigate to a URL, or go forward/back in browser history.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: 'URL to navigate to. Use "forward" or "back" for history.' },
+            tabId: { type: "number", description: "Tab ID to navigate." }
+          },
+          required: ["url", "tabId"]
+        }
+      },
+      {
+        name: "computer",
+        description: "Use a mouse and keyboard to interact with a web browser, and take screenshots.\n* Consult a screenshot to determine coordinates before clicking.\n* Click buttons/icons in the center of the element.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["left_click", "right_click", "type", "screenshot", "wait", "scroll", "key", "left_click_drag", "double_click", "triple_click", "zoom", "scroll_to", "hover"],
+              description: "The action to perform."
+            },
+            coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "(x, y) pixel coordinates." },
+            text: { type: "string", description: "Text to type or key(s) to press." },
+            duration: { type: "number", minimum: 0, maximum: 30, description: "Seconds to wait." },
+            scroll_direction: { type: "string", enum: ["up", "down", "left", "right"], description: "Scroll direction." },
+            scroll_amount: { type: "number", minimum: 1, maximum: 10, description: "Scroll ticks (default: 3)." },
+            start_coordinate: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2, description: "Start coords for drag." },
+            region: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4, description: "(x0,y0,x1,y1) for zoom." },
+            repeat: { type: "number", minimum: 1, maximum: 100, description: "Key repeat count." },
+            ref: { type: "string", description: "Element ref ID for scroll_to." },
+            modifiers: { type: "string", description: 'Modifier keys: "ctrl", "shift", "alt", "cmd".' },
+            tabId: { type: "number", description: "Tab ID." }
+          },
+          required: ["action", "tabId"]
+        }
+      },
+      {
+        name: "pen_stroke",
+        description: "Draw a trusted pen stroke with per-point pressure, tilt and rotation. Coordinates are viewport CSS pixels. Requires BRIDGE_ADB_SERIAL and CDP. Specify exactly one extension tabId (refresh tabs first) or exact CDP targetId. Never falls back to mouse input. Do not replay a failed stroke without inspecting the canvas.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: { type: "integer", minimum: 0, description: "Extension tab ID, resolved only when its URL uniquely matches a page." },
+            targetId: { type: "string", minLength: 1, description: "Exact CDP page target ID (alternative to tabId)." },
+            points: {
+              type: "array",
+              minItems: 1,
+              maxItems: 512,
+              items: {
+                type: "object",
+                properties: {
+                  x: { type: "number", minimum: 0, maximum: 1e5 },
+                  y: { type: "number", minimum: 0, maximum: 1e5 },
+                  pressure: { type: "number", minimum: 0, maximum: 1 },
+                  tiltX: { type: "number", minimum: -90, maximum: 90, default: 0 },
+                  tiltY: { type: "number", minimum: -90, maximum: 90, default: 0 },
+                  twist: { type: "number", minimum: 0, maximum: 359, default: 0 },
+                  timeMs: { type: "number", minimum: 0, maximum: 2e4, description: "Nondecreasing milliseconds from stroke start; defaults to sample index \xD7 8." }
+                },
+                required: ["x", "y", "pressure"]
+              }
+            }
+          },
+          required: ["points"],
+          oneOf: [{ required: ["tabId"], not: { required: ["targetId"] } }, { required: ["targetId"], not: { required: ["tabId"] } }]
+        }
+      },
+      {
+        name: "javascript_tool",
+        description: "Execute JavaScript in the page context. Returns the last expression result.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", description: "Must be 'javascript_exec'" },
+            text: { type: "string", description: "JavaScript code. Don't use 'return'." },
+            tabId: { type: "number", description: "Tab ID." }
+          },
+          required: ["action", "text", "tabId"]
+        }
+      },
+      {
+        name: "read_page",
+        description: "Get accessibility tree of page elements. Filter for interactive elements or get all.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filter: { type: "string", enum: ["interactive", "all"], description: "Element filter." },
+            tabId: { type: "number", description: "Tab ID." },
+            depth: { type: "number", description: "Max tree depth (default: 15)." },
+            ref_id: { type: "string", description: "Parent element ref to focus on." },
+            max_chars: { type: "number", description: "Max output chars (default: 50000)." }
+          },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "find",
+        description: 'Find elements by natural language (e.g., "search bar", "login button").',
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "What to find." },
+            tabId: { type: "number", description: "Tab ID." }
+          },
+          required: ["query", "tabId"]
+        }
+      },
+      {
+        name: "form_input",
+        description: "Set form element values using ref ID from read_page.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            ref: { type: "string", description: "Element ref ID." },
+            value: { type: ["string", "boolean", "number"], description: "Value to set." },
+            tabId: { type: "number", description: "Tab ID." }
+          },
+          required: ["ref", "value", "tabId"]
+        }
+      },
+      {
+        name: "get_page_text",
+        description: "Extract raw text content from the page.",
+        inputSchema: {
+          type: "object",
+          properties: { tabId: { type: "number", description: "Tab ID." } },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "read_console_messages",
+        description: "Read browser console messages. Always provide a pattern to filter.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: { type: "number", description: "Tab ID." },
+            onlyErrors: { type: "boolean", description: "Errors only." },
+            clear: { type: "boolean", description: "Clear after reading." },
+            pattern: { type: "string", description: "Regex filter pattern." },
+            limit: { type: "number", description: "Max messages (default: 100)." }
+          },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "read_network_requests",
+        description: "Read HTTP network requests from a tab.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: { type: "number", description: "Tab ID." },
+            urlPattern: { type: "string", description: "URL substring filter." },
+            clear: { type: "boolean", description: "Clear after reading." },
+            limit: { type: "number", description: "Max requests (default: 100)." }
+          },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "resize_window",
+        description: "Resize browser window.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            width: { type: "number", description: "Width in pixels." },
+            height: { type: "number", description: "Height in pixels." },
+            tabId: { type: "number", description: "Tab ID." }
+          },
+          required: ["width", "height", "tabId"]
+        }
+      },
+      {
+        name: "gif_creator",
+        description: "Record and export browser session GIFs.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            action: { type: "string", enum: ["start_recording", "stop_recording", "export", "clear"], description: "Action." },
+            tabId: { type: "number", description: "Tab ID." },
+            download: { type: "boolean", description: "Download GIF on export." },
+            filename: { type: "string", description: "GIF filename." },
+            options: { type: "object", description: "GIF options." }
+          },
+          required: ["action", "tabId"]
+        }
+      },
+      {
+        name: "upload_image",
+        description: "Upload a screenshot to a file input or drag & drop target.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            imageId: { type: "string", description: "Screenshot ID." },
+            ref: { type: "string", description: "Element ref ID." },
+            coordinate: { type: "array", items: { type: "number" }, description: "Drop coords [x,y]." },
+            tabId: { type: "number", description: "Tab ID." },
+            filename: { type: "string", description: "Filename." }
+          },
+          required: ["imageId", "tabId"]
+        }
+      },
+      {
+        name: "update_plan",
+        description: "Present a plan to the user for approval.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            domains: { type: "array", items: { type: "string" }, description: "Domains to visit." },
+            approach: { type: "array", items: { type: "string" }, description: "Steps to take." }
+          },
+          required: ["domains", "approach"]
+        }
+      },
+      {
+        name: "shortcuts_list",
+        description: "List available shortcuts and workflows.",
+        inputSchema: {
+          type: "object",
+          properties: { tabId: { type: "number", description: "Tab ID." } },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "shortcuts_execute",
+        description: "Execute a shortcut or workflow.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            tabId: { type: "number", description: "Tab ID." },
+            shortcutId: { type: "string", description: "Shortcut ID." },
+            command: { type: "string", description: "Command name." }
+          },
+          required: ["tabId"]
+        }
+      },
+      {
+        name: "switch_browser",
+        description: "Switch which Chrome browser is used for automation.",
+        inputSchema: { type: "object", properties: {}, required: [] }
+      }
+    ];
+    if (typeof require !== "undefined" && typeof module !== "undefined" ? require.main === module : false) {
+      const args = process.argv.slice(2);
+      const command = args[0] ?? "";
+      switch (command) {
+        case "--version":
+        case "-v":
+          cmdVersion();
+          break;
+        case "--help":
+        case "-h":
+          cmdHelp();
+          break;
+        case "--stop":
+          cmdStop();
+          break;
+        case "--setup":
+          cmdSetup();
+          break;
+        case "--setup-edge":
+        case "--doctor":
+          cmdSetupEdge();
+          break;
+        case "--mcp":
+          cmdMcp();
+          break;
+        case "":
+          cmdStart();
+          break;
+        default:
+          console.error(`Unknown option: ${command}`);
+          cmdHelp();
+          process.exit(1);
+      }
+    }
+  }
+});
+init_cli();
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  formatToolResult,
+  handleMcpHttp,
+  handleMcpRequest
+});
