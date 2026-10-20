@@ -1,10 +1,11 @@
 import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
+import { atomicWrite, replaceCronEntry, run, shellQuote, validateVersion, VERSION_PATTERN as VERSION, withDirLock } from "./managed";
 import { PATCH_TARGETS, patchBuffer, RESOLV_CONTENT, RESOLV_FROM, RESOLV_REDIRECT_PATH } from "./patch";
 
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$/;
+// Shared release-store plumbing lives in managed.ts; re-exported so existing callers and tests keep working.
+export { atomicWrite, validateVersion };
 const TRIPLE = "aarch64-unknown-linux-musl";
 export interface CodexState { schema: 1; next: string | null; stable: string | null; archive: string[]; }
 export interface CodexContext { root: string; prefix: string; localBin: string; resolver: string; fetchImpl: (url: string, init?: RequestInit) => Promise<Response>; }
@@ -12,11 +13,6 @@ export interface CodexContext { root: string; prefix: string; localBin: string; 
 export function codexContext(): CodexContext {
   const home = process.env.HOME ?? homedir();
   return { root: path.join(home, ".local/share/codex-channel"), prefix: process.env.PREFIX ?? "/data/data/com.termux/files/usr", localBin: path.join(home, ".local/bin"), resolver: RESOLV_REDIRECT_PATH, fetchImpl: fetch };
-}
-/** Reject paths and malformed versions before constructing install paths. */
-export function validateVersion(version: string): string {
-  if (!VERSION.test(version)) throw new Error(`Invalid version: ${version}`);
-  return version;
 }
 /** Fail closed on corrupt state rather than silently forgetting a working channel. */
 export function readCodexState(ctx: CodexContext): CodexState {
@@ -26,29 +22,10 @@ export function readCodexState(ctx: CodexContext): CodexState {
   if (!s || s.schema !== 1 || !Array.isArray(s.archive) || !s.archive.every(v => typeof v === "string" && VERSION.test(v)) || ![s.next, s.stable].every(v => v === null || typeof v === "string" && VERSION.test(v))) throw new Error("Invalid cdx state.json; refusing to replace it");
   return s;
 }
-/** Replace a file by rename, never by truncating an inode used by a running process. */
-export function atomicWrite(file: string, contents: string, mode = 0o600): void {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const dir = mkdtempSync(path.join(path.dirname(file), ".cdx-write-"));
-  try { const tmp = path.join(dir, "file"); writeFileSync(tmp, contents, { mode }); renameSync(tmp, file); }
-  finally { rmSync(dir, { recursive: true, force: true }); }
-}
-/** Serialize mutations with an atomic directory lock; never steal a live or ambiguous lock. */
-export async function codexLock<T>(ctx: CodexContext, action: () => Promise<T>): Promise<T> {
-  mkdirSync(ctx.root, { recursive: true });
-  const lock = path.join(ctx.root, ".lock");
-  try { mkdirSync(lock); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; throw new Error(`Another cdx mutation holds ${lock}. Check its owner.json before removing a stale lock.`); }
-  try { writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, started: new Date().toISOString() })); return await action(); }
-  finally { rmSync(lock, { recursive: true, force: true }); }
-}
+/** Serialize cdx mutations on the release store (see withDirLock). */
+export function codexLock<T>(ctx: CodexContext, action: () => Promise<T>): Promise<T> { return withDirLock(ctx.root, "cdx", action); }
 function release(ctx: CodexContext, version: string): string { return path.join(ctx.root, "versions", validateVersion(version)); }
 export function codexBinary(ctx: CodexContext, version: string): string { return path.join(release(ctx, version), "bin/codex"); }
-function run(command: string, args: string[], env = process.env): string {
-  const result = spawnSync(command, args, { encoding: "utf8", env, timeout: 300_000, maxBuffer: 8 * 1024 * 1024 });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} failed (${result.status ?? result.signal}): ${result.stderr || result.stdout}`);
-  return result.stdout.trim();
-}
 /** Resolve the official stable registry tag; pin installs never guess platform versions. */
 export async function resolveCodex(ctx: CodexContext, pin?: string): Promise<string> {
   if (pin) return validateVersion(pin);
@@ -139,7 +116,6 @@ export function pruneCodex(ctx: CodexContext, keep: number, apply: boolean): str
 }
 
 const CRON_MARKER = "# codex-channel cdx auto-update";
-function shellQuote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
 /** Produce a cron entry with an explicit runtime PATH; scheduled updates only change next. */
 export function codexCronLine(ctx: CodexContext, cli: string, hours: number): string {
   if (![1, 2, 3, 4, 6, 8, 12, 24].includes(hours)) throw new Error("--every must be 1, 2, 3, 4, 6, 8, 12, or 24 hours");
@@ -148,16 +124,7 @@ export function codexCronLine(ctx: CodexContext, cli: string, hours: number): st
   const command = `PATH=${shellQuote(`${ctx.prefix}/bin:${home}/.bun/bin:${ctx.localBin}`)} ${shellQuote(`${ctx.prefix}/bin/node`)} ${shellQuote(cli)} update >> ${shellQuote(path.join(ctx.root, "update.log"))} 2>&1`;
   return `${spec} ${command.replaceAll("%", "\\%")} ${CRON_MARKER}`;
 }
-/** Preserve unrelated cron entries and fail on access/tool errors instead of clearing them. */
+/** Install (hours given) or remove (hours undefined) the cdx cron entry; other entries are preserved. */
 export function scheduleCodex(ctx: CodexContext, cli: string, hours?: number): void {
-  const entry = hours === undefined ? null : codexCronLine(ctx, cli, hours);
-  const previous = spawnSync("crontab", ["-l"], { encoding: "utf8" });
-  if (previous.error) throw previous.error;
-  if (previous.status !== 0 && !/no crontab for/i.test(previous.stderr)) throw new Error(`Cannot read crontab: ${previous.stderr}`);
-  const lines = previous.stdout.split("\n").filter(line => !line.endsWith(CRON_MARKER));
-  while (lines.at(-1) === "") lines.pop();
-  if (entry) lines.push(entry);
-  const result = spawnSync("crontab", ["-"], { encoding: "utf8", input: lines.length ? lines.join("\n") + "\n" : "" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`Cannot write crontab: ${result.stderr}`);
+  replaceCronEntry(CRON_MARKER, hours === undefined ? null : codexCronLine(ctx, cli, hours));
 }

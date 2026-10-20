@@ -1,14 +1,35 @@
 {
-  "name": "claude-channel",
-  "version": "0.1.0",
-  "description": "Manage Claude Code as pinned next/stable channels on Termux",
+  "name": "termux-tools",
+  "version": "1.0.0",
+  "description": "Pinned stable/next channel managers for Claude Code (ccx), Codex (cdx) and Antigravity (agx) on Termux, plus the Termux tooling scripts from tribixbite/termux-tools",
+  "license": "MIT",
+  "author": "willstone",
+  "homepage": "https://termux.party",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tribixbite/termux-tools",
+    "directory": "claude-channel"
+  },
+  "bugs": "https://github.com/tribixbite/termux-tools/issues",
+  "keywords": ["termux", "android", "claude-code", "codex", "antigravity", "channel-manager", "release-pinning"],
   "bin": {
     "ccx": "./dist/cli.js",
-    "cdx": "./dist/codex-cli.js"
+    "cdx": "./dist/codex-cli.js",
+    "agx": "./dist/antigravity-cli.js",
+    "pip-tool-install": "./bin/pip-tool-install",
+    "install-ghostty-termux": "./bin/install-ghostty-termux",
+    "install-antigravity-termux": "./bin/install-antigravity-termux",
+    "migrate-termux": "./bin/migrate-termux",
+    "threads-dl": "./bin/threads-dl"
   },
-  "files": ["dist/", "README.md"],
+  "files": ["dist/", "bin/", "README.md", "LICENSE"],
+  "os": ["android", "linux"],
   "engines": {
     "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "bun run build.ts",

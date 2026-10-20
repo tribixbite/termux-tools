@@ -1,7 +1,9 @@
 import { existsSync, readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { atomicWrite, codexBinary, codexContext, codexLock, installedCodex, pruneCodex, readCodexState, resolveCodex, scheduleCodex, switchCodex, updateCodex, validateVersion, type CodexContext } from "./codex";
+import { atomicWrite, codexBinary, codexContext, codexLock, installedCodex, pruneCodex, readCodexState, resolveCodex, scheduleCodex, switchCodex, updateCodex, type CodexContext } from "./codex";
+import { shellQuote as quote } from "./managed";
+import { parseManagerArgs, type ManagerArgs } from "./manager-args";
 
 const HELP = `cdx — Codex channel manager for ARM64 Termux
   cdx update [--pin VERSION]       stage, patch and verify codex-next
@@ -17,7 +19,6 @@ const HELP = `cdx — Codex channel manager for ARM64 Termux
   cdx help
 Updates use isolated Bun installs; no PRoot or changes to login/configuration.
 `;
-function quote(value: string): string { return "'" + value.replaceAll("'", "'\\''") + "'"; }
 /** Install dispatchers once; future channel changes are a single atomic state update. */
 export function setupCodex(ctx: CodexContext, cli: string): void {
   for (const name of ["cdx", "codex", "codex-next"]) {
@@ -28,28 +29,8 @@ export function setupCodex(ctx: CodexContext, cli: string): void {
     atomicWrite(path.join(ctx.localBin, name), `#!${ctx.prefix}/bin/bash\n# cdx managed launcher\nexec ${quote(path.join(ctx.prefix, "bin/node"))} ${quote(cli)} ${channel ? `run ${channel} ` : ""}"$@"\n`, 0o755);
   }
 }
-/** Parse command-specific options strictly so a typo cannot trigger a mutation. */
-export function parseCodexArgs(args: string[]): { command: string; value?: string; keep: number; hours: number; yes: boolean; json: boolean } {
-  const command = args[0] ?? "help";
-  const allowed: Record<string, string[]> = { help: [], update: ["--pin"], promote: [], rollback: ["--to"], status: ["--json"], list: [], prune: ["--keep", "--yes"], setup: [], schedule: ["--every"], unschedule: [], alias: [] };
-  if (!Object.hasOwn(allowed, command)) throw new Error(`Unknown command: ${command}`);
-  const out = { command, value: undefined as string | undefined, keep: 2, hours: 24, yes: false, json: false };
-  const seen = new Set<string>();
-  for (let i = 1; i < args.length; i++) {
-    const flag = args[i];
-    if (!allowed[command].includes(flag) || seen.has(flag)) throw new Error(`Unexpected option: ${flag}`);
-    seen.add(flag);
-    if (flag === "--yes") out.yes = true;
-    else if (flag === "--json") out.json = true;
-    else {
-      const value = args[++i]; if (!value) throw new Error(`${flag} needs a value`);
-      if (flag === "--keep") { if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) throw new Error("Invalid --keep"); out.keep = Number(value); }
-      else if (flag === "--every") { if (!/^(1|2|3|4|6|8|12|24)$/.test(value)) throw new Error("Invalid --every interval"); out.hours = Number(value); }
-      else out.value = validateVersion(value);
-    }
-  }
-  return out;
-}
+/** cdx uses the shared manager vocabulary unchanged. */
+export function parseCodexArgs(args: string[]): ManagerArgs { return parseManagerArgs(args); }
 async function main(): Promise<void> {
   const ctx = codexContext();
   const args = process.argv.slice(2);
