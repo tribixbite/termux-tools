@@ -4,57 +4,55 @@ import Nav from "../components/Nav.astro";
 import Footer from "../components/Footer.astro";
 import CodeBlock from "../components/CodeBlock.svelte";
 
-// Two install paths the repo's installer supports.
-const paths = [
-  {
-    accent: "amber",
-    name: "cli.js bundle",
-    version: "2.1.112",
-    cap: "Opus 4.7",
-    runs: "Direct — a Node-compatible JS bundle (~14 MB).",
-    patch: "sed-patchable: 5 idempotent patches applied after install.",
-    select: "CCINSTALL_VERSION=2.1.112 (default)",
-  },
+// The two channels ccx keeps for Claude Code.
+const channels = [
   {
     accent: "cyan",
-    name: "bun-compiled binary",
-    version: "2.1.158",
-    cap: "Opus 4.8",
-    runs: "Userland-exec via bun-on-termux (no grun, no patchelf).",
-    patch: "Byte-preserving: same-length blanking survives bun-vfs offsets.",
-    select: "CCINSTALL_VERSION=next",
+    name: "next",
+    launcher: "~/.local/bin/claude-next",
+    runs: "The newest release from Anthropic's native channel, fetched and patched by `ccx update`.",
+    patch: "Byte-preserving: same-length edits survive bun-vfs offsets; a backup is kept.",
+    select: "ccx update [--channel latest|stable] [--pin X.Y.Z]",
+  },
+  {
+    accent: "amber",
+    name: "stable",
+    launcher: "~/.local/bin/claude",
+    runs: "Whatever you last promoted. It never changes underneath you: the launcher sets DISABLE_AUTOUPDATER=1.",
+    patch: "`ccx promote` snapshots next → stable and archives the outgoing binary for `ccx rollback`.",
+    select: "ccx promote · ccx rollback [--to X.Y.Z]",
   },
 ];
 
 // What the patcher changes and why.
 const patches = [
   {
-    id: "P2",
+    id: "P1",
     accent: "green",
+    title: "DNS resolver",
+    what: "Rewrite the literal /etc/resolv.conf → /sdcard/dns.conf (same length).",
+    why: "bun's bundled c-ares reads that absolute path with a raw syscall; Termux has no /etc/resolv.conf, so OAuth login and token refresh time out. Opt out: CCPATCH_KEEP_RESOLV=1.",
+  },
+  {
+    id: "P2",
+    accent: "cyan",
     title: "Socket path",
-    what: "Hardcoded /tmp/claude-mcp-browser-bridge- → CLAUDE_CODE_TMPDIR",
-    why: "Termux /tmp is not writable; redirect into $PREFIX/tmp.",
+    what: "Launcher exports CLAUDE_CODE_TMPDIR=$PREFIX/tmp.",
+    why: "Termux /tmp is not writable; Claude Code's own tmpdir helper honours the variable, so no binary edit is needed.",
   },
   {
     id: "P3",
-    accent: "cyan",
+    accent: "amber",
     title: "Commit directive",
-    what: "Strip \u201cNEVER commit changes unless the user explicitly asks.\u201d",
-    why: "Conflicts with a conventional-commit-per-round workflow.",
+    what: "Blank “NEVER commit changes unless the user explicitly asks.”",
+    why: "Conflicts with a conventional-commit-per-round workflow. Opt out: CCPATCH_KEEP_NO_COMMIT=1.",
   },
   {
     id: "P4",
-    accent: "amber",
-    title: "Comment directive",
-    what: "Strip \u201cDefault to writing no comments.\u201d",
-    why: "Conflicts with a typed, explanatory-comment house style.",
-  },
-  {
-    id: "P5",
     accent: "purple",
-    title: "Length caps",
-    what: "Relax inter-tool 25\u219260 / final 100\u2192250 words (cli.js path).",
-    why: "Comfort. 2.1.158 already ships the relaxed caps upstream.",
+    title: "Comment directive",
+    what: "Blank “Default to writing no comments.”",
+    why: "Conflicts with a typed, explanatory-comment house style. Opt out: CCPATCH_KEEP_NO_COMMENTS=1.",
   },
 ];
 
@@ -65,24 +63,22 @@ const accentClass = {
   purple: "text-terminal-text",
 };
 
-const quickStart = `# Clone the repo and run the interactive installer
-git clone https://github.com/tribixbite/termux-tools ~/git/termux-tools
-cd ~/git/termux-tools
+const quickStart = `# Requirements: Termux + bun-on-termux (~/.bun/bin/bun-termux) + pkg install glibc-runner nodejs
+npm i -g termux-tools          # ccx (Claude Code), cdx (Codex), agx (Antigravity)
+export PATH="$HOME/.local/bin:$PATH"
 
-# Install Claude Code — latest binary path (Opus 4.8):
-CCINSTALL_VERSION=next ./claude-edge-setup.sh
+ccx update                     # fetch + byte-patch the latest release into claude-next
+claude-next --version          # try it
+ccx promote                    # make it the stable \`claude\` (archives the previous one)
+ccx status                     # channels, upstream versions, PATH check
 
-# (omit the env var to install the patched cli.js / Opus 4.7 path)
-
-# Make bare \`claude\` resolve to 4.8:
-ln -sf ~/.local/bin/claude-next ~/.local/bin/claude
-claude --version          # 2.1.158 (Claude Code)
-claude --model claude-opus-4-8`;
+# Something broke upstream? Go back in one command:
+ccx rollback`;
 ---
 
 <Layout
   title="Claude Code on Termux — termux-tools"
-  description="Run the latest Claude Code (2.1.158, Opus 4.8) on bionic Android. Two install paths, CLAUDE.md-aligned system-prompt patches, and a byte-preserving patcher for the bun-compiled binary."
+  description="Run current Claude Code on bionic Android with pinned stable/next channels. ccx fetches the native release, byte-patches the bun-compiled binary for Termux and promotes or rolls back atomically."
   path="claude"
 >
   <Nav current="/claude" />
@@ -95,7 +91,7 @@ claude --model claude-opus-4-8`;
 
       <div class="relative mx-auto max-w-4xl text-center">
         <div class="mb-6 inline-block rounded-lg border border-terminal-border bg-terminal-surface px-4 py-2 font-[family-name:var(--font-mono)] text-sm text-terminal-dim">
-          <span class="text-terminal-cyan">$</span> claude --version <span class="text-terminal-amber">2.1.158</span> <span class="text-terminal-dim">&middot;</span> <span class="text-terminal-green">Opus 4.8</span>
+          <span class="text-terminal-cyan">$</span> ccx status <span class="text-terminal-dim">&middot;</span> <span class="text-terminal-amber">stable</span> pinned <span class="text-terminal-dim">&middot;</span> <span class="text-terminal-green">next</span> one command ahead
         </div>
 
         <h1 class="mb-4 font-[family-name:var(--font-mono)] text-4xl font-bold tracking-tight text-terminal-bright sm:text-5xl">
@@ -103,23 +99,23 @@ claude --model claude-opus-4-8`;
         </h1>
 
         <p class="mx-auto mb-2 max-w-2xl text-xl text-terminal-text sm:text-2xl">
-          The latest Claude Code, patched to fit, on bionic Android
+          Current Claude Code, patched to fit, pinned so it stays that way
         </p>
 
         <p class="mb-8 text-sm text-terminal-dim">
-          Two install paths &middot; CLAUDE.md-aligned prompt patches &middot; byte-preserving binary patcher
+          stable / next channels &middot; CLAUDE.md-aligned prompt patches &middot; byte-preserving binary patcher
         </p>
 
         <div class="flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <a href="https://github.com/tribixbite/termux-tools/blob/main/install/modules/claude-code.sh"
+          <a href="https://www.npmjs.com/package/termux-tools"
             class="inline-flex items-center gap-2 rounded-lg border border-terminal-cyan bg-terminal-cyan/10 px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan transition-colors hover:bg-terminal-cyan/20"
             target="_blank" rel="noopener">
-            install/modules/claude-code.sh
+            npm i -g termux-tools
           </a>
-          <a href="https://github.com/tribixbite/termux-tools/blob/main/docs/claude-code-patches/README.md"
+          <a href="https://github.com/tribixbite/termux-tools/blob/main/claude-channel/README.md"
             class="inline-flex items-center gap-2 rounded-lg border border-terminal-border px-6 py-3 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-text transition-colors hover:border-terminal-dim hover:text-terminal-bright"
             target="_blank" rel="noopener">
-            Patch notes
+            ccx · cdx · agx docs
           </a>
         </div>
       </div>
@@ -129,48 +125,56 @@ claude --model claude-opus-4-8`;
     <section class="px-4 pb-4 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <p class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-5 font-[family-name:var(--font-mono)] text-sm leading-relaxed text-terminal-dim">
-          Claude Code v2.1.123+ stopped shipping a portable <code class="text-terminal-text">cli.js</code> and
-          switched to a <span class="text-terminal-text">bun-compiled glibc binary</span> that hardcodes the
+          Claude Code ships as a <span class="text-terminal-text">bun-compiled glibc binary</span> that hardcodes the
           <code class="text-terminal-text">/lib/ld-linux-aarch64.so.1</code> interpreter — absent on Android's
-          bionic libc. This repo keeps both the stable bundle <span class="text-terminal-amber">and</span> the
-          latest binary running, and aligns the system prompt with your global
-          <code class="text-terminal-text">CLAUDE.md</code> conventions.
+          bionic libc — and reads <code class="text-terminal-text">/etc/resolv.conf</code> with a raw syscall that
+          Termux cannot satisfy. <code class="text-terminal-text">ccx</code> fetches each release from Anthropic's
+          native channel, runs it through <a href="https://github.com/tribixbite/bun-on-termux" target="_blank" rel="noopener" class="text-terminal-cyan hover:underline">bun-on-termux</a>'s
+          userland exec, patches the binary without moving a byte, and keeps a
+          <span class="text-terminal-amber">stable</span> launcher that only changes when you promote.
         </p>
       </div>
     </section>
 
-    <!-- Two paths -->
-    <section id="paths" class="px-4 py-12 sm:px-6 lg:px-8">
+    <!-- Channels -->
+    <section id="channels" class="px-4 py-12 sm:px-6 lg:px-8">
       <div class="mx-auto max-w-4xl">
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
-          <span class="text-terminal-cyan">#</span> Two install paths
+          <span class="text-terminal-cyan">#</span> Two channels
         </h2>
 
         <div class="grid gap-4 sm:grid-cols-2">
-          {paths.map((p) => (
+          {channels.map((c) => (
             <div class="rounded-lg border border-terminal-border bg-terminal-surface p-6">
               <div class="mb-3 flex items-baseline justify-between gap-2">
-                <h3 class={`font-[family-name:var(--font-mono)] text-sm font-medium ${accentClass[p.accent]}`}>{p.name}</h3>
-                <span class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{p.version}</span>
+                <h3 class={`font-[family-name:var(--font-mono)] text-sm font-medium ${accentClass[c.accent]}`}>{c.name}</h3>
+                <span class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">{c.launcher}</span>
               </div>
-              <div class="mb-4 inline-block rounded border border-terminal-border/60 px-2 py-1 font-[family-name:var(--font-mono)] text-xs text-terminal-bright">{p.cap}</div>
               <dl class="space-y-3 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
                 <div>
                   <dt class="text-terminal-text">Runs</dt>
-                  <dd>{p.runs}</dd>
+                  <dd>{c.runs}</dd>
                 </div>
                 <div>
                   <dt class="text-terminal-text">Patching</dt>
-                  <dd>{p.patch}</dd>
+                  <dd>{c.patch}</dd>
                 </div>
                 <div>
-                  <dt class="text-terminal-text">Select</dt>
-                  <dd><code class={accentClass[p.accent]}>{p.select}</code></dd>
+                  <dt class="text-terminal-text">Commands</dt>
+                  <dd><code class={accentClass[c.accent]}>{c.select}</code></dd>
                 </div>
               </dl>
             </div>
           ))}
         </div>
+
+        <p class="mt-6 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+          The same model runs Codex (<code class="text-terminal-text">cdx</code>: isolated Bun install, DNS and
+          ripgrep fixes, no PRoot) and Google's Antigravity CLI (<code class="text-terminal-text">agx</code>:
+          SHA-512 verified glibc binary launched through proot with its self-updater disabled). Every manager
+          keeps immutable per-version releases, previews <code class="text-terminal-text">prune</code>, and
+          only schedules <code class="text-terminal-text">next</code> updates when asked.
+        </p>
       </div>
     </section>
 
@@ -181,7 +185,7 @@ claude --model claude-opus-4-8`;
           <span class="text-terminal-cyan">#</span> What the patcher does
         </h2>
         <p class="mb-8 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-          Each prompt patch is opt-out via an env var (<code class="text-terminal-text">CCPATCH_KEEP_*</code>). A backup is kept on first run.
+          Applied by <code class="text-terminal-text">ccx update</code> to every fetched binary. Each edit is opt-out via an env var (<code class="text-terminal-text">CCPATCH_KEEP_*</code>); a <code class="text-terminal-text">.bak-prepatch</code> copy is kept.
         </p>
 
         <div class="grid gap-4 sm:grid-cols-2">
@@ -213,15 +217,15 @@ claude --model claude-opus-4-8`;
                                               <span class="text-terminal-dim">(--version → bun 1.3.x)</span>
 
   length-<span class="text-terminal-green">preserving</span> edit ──▶  offsets intact ──▶  <span class="text-terminal-green">binary still runs</span>
-   <span class="text-terminal-dim">(blank a target string with equal-length spaces)</span></code></pre>
+   <span class="text-terminal-dim">(blank a string with equal-length spaces, or swap a path for one of the same length)</span></code></pre>
         </div>
 
         <p class="mt-6 font-[family-name:var(--font-mono)] text-sm leading-relaxed text-terminal-dim">
           bun-vfs is <span class="text-terminal-text">not checksummed</span>, so a same-length overwrite leaves every
-          downstream offset in place — the patched 2.1.158 binary still reports its own version and runs full
-          inference. That's why the patcher <span class="text-terminal-text">blanks</span> the conflicting prompt
-          lines with spaces instead of deleting them. <span class="text-terminal-text">P5</span> needs no binary
-          edit: 2.1.158 already ships the relaxed length caps upstream.
+          downstream offset in place: the patched binary still reports its own version and runs full inference.
+          That's why <code class="text-terminal-text">ccx</code> <span class="text-terminal-text">blanks</span> the conflicting prompt
+          lines with spaces instead of deleting them, and why the resolver redirect swaps
+          <code class="text-terminal-text">/etc/resolv.conf</code> for the exactly-as-long <code class="text-terminal-text">/sdcard/dns.conf</code>.
         </p>
       </div>
     </section>
@@ -232,11 +236,11 @@ claude --model claude-opus-4-8`;
         <h2 class="mb-8 font-[family-name:var(--font-mono)] text-2xl font-bold text-terminal-bright sm:text-3xl">
           <span class="text-terminal-cyan">#</span> Quick start
         </h2>
-        <CodeBlock code={quickStart} lang="bash" title="install Claude Code 4.8" client:idle />
+        <CodeBlock code={quickStart} lang="bash" title="install Claude Code with ccx" client:idle />
         <p class="mt-4 font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
-          The binary path depends on <a href="https://github.com/tribixbite/bun-on-termux" target="_blank" rel="noopener" class="text-terminal-cyan hover:underline">bun-on-termux</a>
-          (a userland-exec wrapper for glibc binaries). The installer wires the
-          <code class="text-terminal-text">claude-next</code> launcher and applies the patches automatically.
+          Updates come from <code class="text-terminal-text">downloads.claude.ai/claude-code-releases</code>, not npm.
+          Each binary is ~250 MB; <code class="text-terminal-text">ccx prune</code> reclaims old ones (keeps 2 by default).
+          <code class="text-terminal-text">ccx schedule --every 24</code> is opt-in and only refreshes <code class="text-terminal-text">next</code>.
         </p>
       </div>
     </section>

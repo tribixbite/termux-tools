@@ -1,354 +1,89 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# Module: Install Claude Code CLI
+# Module: Install Claude Code CLI through ccx (the termux-tools channel manager)
+#
+# History: this module used to pin @anthropic-ai/claude-code@2.1.112 (a sed-patched
+# cli.js bundle) or hand-fetch the 2.1.158 bun-compiled binary. Both paths are
+# superseded by ccx, which fetches the native release channel, applies the
+# byte-preserving Termux patches (c-ares resolver redirect + CLAUDE.md prompt
+# alignment, opt-out via CCPATCH_KEEP_*) and manages the stable/next launchers in
+# ~/.local/bin. See claude-channel/README.md for the channel model.
 
 module_claude_code() {
-  header "[Claude Code] Install CLI"
+  header "[Claude Code] Install via ccx"
 
-  # Check if already installed
   if detect_claude_code; then
     ok "Claude Code already installed: ${_DETECT_CLAUDE_CODE}"
-    if ! ask_yn "Reinstall/update anyway?" N; then
+    if ! ask_yn "Refresh the next channel anyway (ccx update)?" N; then
       _ensure_cfc_env
       return 0
     fi
   fi
 
-  # Ensure bun is available
+  # ccx launches the glibc binary through bun-on-termux's userland-exec wrapper.
   if ! detect_bun; then
-    fail "Bun is required to install Claude Code"
+    fail "Bun (bun-on-termux) is required for the Claude Code binary"
     info "Run the Bun installer first (option 1)"
     return 1
   fi
-
-  # Install globally via bun.
-  # Pin reasoning:
-  #   - v2.1.112 ships a single bundled cli.js (~14 MB) at the package root —
-  #     sed-patchable by patch_claude_cli below.
-  #   - v2.1.123+ ships a bun-compiled glibc ELF binary (~240 MB) in an
-  #     optionalDependency, with hardcoded interpreter /lib/ld-linux-aarch64.so.1.
-  #     Direct exec fails on Termux bionic; in-place sed against the binary
-  #     corrupts bun-vfs offsets (substitutions shift downstream bytes).
-  #
-  # We support BOTH paths:
-  #   CCINSTALL_VERSION=2.1.112 (default) → cli.js install + 5-patch sed.
-  #   CCINSTALL_VERSION=2.1.158 (or "next") → manual binary fetch + launcher
-  #     wrapper at $HOME/.local/bin/claude-next that uses bun-on-termux's
-  #     bun-termux userland-exec (no grun, no patchelf). 4.7→4.8 model access.
-  local target_version="${CCINSTALL_VERSION:-2.1.112}"
-  if [[ "$target_version" == "next" ]] || [[ "$target_version" == 2.1.1[2-9][3-9] ]] || [[ "$target_version" == 2.1.1[5-9][0-9] ]]; then
-    _install_claude_binary "$target_version"
-    return $?
-  fi
-
-  info "Installing @anthropic-ai/claude-code@${target_version}..."
-  if bun install -g "@anthropic-ai/claude-code@${target_version}" 2>&1; then
-    ok "Claude Code ${target_version} installed"
-  else
-    fail "Installation failed"
+  if ! command -v node >/dev/null 2>&1; then
+    fail "node is required for the ccx launcher: pkg install nodejs"
     return 1
   fi
 
-  # Verify
-  if detect_claude_code; then
-    ok "Verified: ${_DETECT_CLAUDE_CODE}"
-  else
-    warn "Install completed but cli.js not found at expected path"
-    info "Expected: ${CLI_JS_GLOBAL}"
+  _ensure_ccx || return 1
+
+  info "Fetching + patching the latest Claude Code into claude-next..."
+  if ! _ccx update; then
+    fail "ccx update failed"
+    return 1
   fi
+
+  if ask_yn "Promote next -> stable (~/.local/bin/claude)?" Y; then
+    _ccx promote || { fail "ccx promote failed"; return 1; }
+  fi
+  _ccx status
+
+  case ":$PATH:" in
+    *":${TERMUX_HOME}/.local/bin:"*) ;;
+    *) warn "~/.local/bin is not on PATH — add: export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
+  esac
 
   _ensure_cfc_env
-  patch_claude_cli
 }
 
-# Install the bun-compiled glibc binary (v2.1.123+) via bun-on-termux's
-# userland-exec wrapper. Requires:
-#   - $HOME/.bun/bin/bun-termux (from ~/git/bun-on-termux make install)
-#   - $HOME/.bun/lib/bun-shim.so (ditto)
-#   - $PREFIX/glibc/lib/ld-linux-aarch64.so.1 (pacman: glibc, glibc-runner)
-# Byte-preserving system-prompt patch for the bun-compiled binary.
-#
-# The bun-compiled binary embeds its JS in a bun-vfs blob keyed by internal
-# byte offsets. Any in-place edit that CHANGES byte length shifts every
-# downstream offset and corrupts the binary (--version then reports the bun
-# runtime version, e.g. 1.3.x, instead of the claude version). Same-length
-# overwrites are safe — bun-vfs does not checksum the blob, verified end to
-# end (patched binary still reports 2.1.158 and runs full inference).
-#
-# So we neutralize the two CLAUDE.md-conflicting directives by blanking them
-# with equal-length spaces rather than removing the lines:
-#   P3 — "NEVER commit changes unless the user explicitly asks you to."
-#        (conflicts with the global "make a conventional commit" workflow)
-#   P4 — "Default to writing no comments."
-#        (conflicts with "use ... explanatory comments" + "write a # TODO")
-#
-# P5 (length caps) needs no patch: 2.1.158 already ships the relaxed
-# 60/250-word limits upstream. Opt out with CCPATCH_KEEP_NO_COMMIT=1 /
-# CCPATCH_KEEP_NO_COMMENTS=1.
-_patch_claude_binary() {
-  local bin="$1"
-  [ -f "$bin" ] || return 0
-  [ -f "${bin}.bak-prepatch" ] || cp "$bin" "${bin}.bak-prepatch"
-  CCPATCH_KEEP_NO_COMMIT="${CCPATCH_KEEP_NO_COMMIT:-}" \
-  CCPATCH_KEEP_NO_COMMENTS="${CCPATCH_KEEP_NO_COMMENTS:-}" \
-  python3 - "$bin" <<'PY'
-import os, sys
-path = sys.argv[1]
-b = bytearray(open(path, "rb").read())
-orig = len(b)
-def blank_all(text):
-    o = text.encode(); n = b" " * len(o)
-    c = b.count(o); start = 0
-    while True:
-        i = b.find(o, start)
-        if i < 0: break
-        b[i:i+len(o)] = n; start = i + len(o)
-    return c
-changed = 0
-if not os.environ.get("CCPATCH_KEEP_NO_COMMIT"):
-    changed += blank_all("NEVER commit changes unless the user explicitly asks you to.")
-if not os.environ.get("CCPATCH_KEEP_NO_COMMENTS"):
-    changed += blank_all("Default to writing no comments.")
-assert len(b) == orig, "byte length changed — would corrupt bun-vfs"
-if changed:
-    open(path, "wb").write(b)
-print(f"binary prompt patches applied: {changed} occurrence(s)")
-PY
-  ok "Patched binary system prompt (CLAUDE.md alignment, byte-preserving)"
+# Run ccx from the repo build when present, else from a global install.
+_ccx() {
+  local repo_cli="${REPO_DIR}/claude-channel/dist/cli.js"
+  if [[ -f "$repo_cli" ]]; then
+    node "$repo_cli" "$@"
+  elif command -v ccx >/dev/null 2>&1; then
+    ccx "$@"
+  else
+    return 127
+  fi
 }
 
-_install_claude_binary() {
-  local version="$1"
-  [[ "$version" == "next" ]] && version="2.1.158"
-
-  if [[ ! -x "$HOME/.bun/bin/bun-termux" ]]; then
-    fail "bun-on-termux's bun-termux wrapper is required for the binary install path."
-    info "  cd ~/git/bun-on-termux && make install"
-    return 1
-  fi
-
-  local target_dir="$HOME/.claude/binaries/claude-${version}"
-  mkdir -p "$target_dir"
-
-  # Fetch the linux-arm64 tarball directly from npm (the wrapper package's
-  # postinstall doesn't run by default under bun's blocked-postinstall policy).
-  info "Fetching @anthropic-ai/claude-code-linux-arm64@${version} (~75 MB)..."
-  local tarball_url
-  tarball_url=$(curl -sS --max-time 10 \
-    "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/${version}" \
-    | python3 -c "import sys, json; print(json.load(sys.stdin)['dist']['tarball'])" 2>/dev/null) || {
-    fail "Could not resolve npm tarball URL for version ${version}"
-    return 1
-  }
-
-  local tmp
-  tmp=$(mktemp -d)
-  if ! curl -sSL --max-time 120 "$tarball_url" -o "$tmp/pkg.tgz"; then
-    fail "Download failed: $tarball_url"
-    rm -rf "$tmp"
-    return 1
-  fi
-  tar -xzf "$tmp/pkg.tgz" -C "$tmp"
-  cp "$tmp/package/claude" "$target_dir/claude-binary"
-  chmod +x "$target_dir/claude-binary"
-  rm -rf "$tmp"
-
-  _patch_claude_binary "$target_dir/claude-binary"
-
-  # Drop the launcher
-  mkdir -p "$HOME/.local/bin"
-  cat > "$HOME/.local/bin/claude-next" <<EOF
-#!/data/data/com.termux/files/usr/bin/bash
-# Launch claude-code ${version} via bun-on-termux userland-exec wrapper.
-# CLAUDE_CODE_TMPDIR avoids the one remaining hardcoded /tmp/claude-mcp-browser-
-# bridge- socket path falling outside \$PREFIX.
-export CLAUDE_CODE_TMPDIR="\${CLAUDE_CODE_TMPDIR:-\$PREFIX/tmp}"
-BUN_BINARY_PATH="${target_dir}/claude-binary" \\
-  exec "\$HOME/.bun/bin/bun-termux" "\$@"
-EOF
-  chmod +x "$HOME/.local/bin/claude-next"
-
-  ok "Installed claude-${version} binary + launcher (\$HOME/.local/bin/claude-next)"
-  info "Verify: claude-next --version"
-  info "Use 4.8: claude-next --model claude-opus-4-8"
-  _ensure_cfc_env
-  return 0
-}
-
-# Apply Termux-compatibility patches to cli.js after install/update.
-# Patches are idempotent — safe to re-run after any `bun install -g` update.
-#
-# Compatibility-fix patches (always applied):
-#
-#   Patch 1 — MB/Yw6 null guard (v2.1.56 only):
-#     [...MB,"inherit"] → [...(MB||[]),"inherit"]
-#     MB (minified agent-type list) could be null on Termux. Fixed upstream in v2.1.112+
-#     (Yw6 is now initialized as an array literal so no guard needed). Still patched
-#     when the unguarded pattern is found for older installs.
-#
-#   Patch 2 — Socket path /tmp/ → z2() / os.tmpdir():
-#     The built-in claude-in-chrome socket dir function uses a hardcoded /tmp/ path.
-#     On Termux, /tmp/ does not exist (correct path is $PREFIX/tmp).
-#     Fix: replace with z2() which is Claude Code's own smart-tmpdir helper:
-#       z2() → CLAUDE_CODE_TMPDIR env > /tmp (macOS) > os.tmpdir() (all others incl. Android)
-#     Minified function name varies by version:
-#       v2.1.56:  function dg6(){return`/tmp/...`}  →  `${Za9()}/...`  (Za9=os.tmpdir import)
-#       v2.1.112: function i88(){return`/tmp/...`}  →  `${z2()}/...`   (z2=smart tmpdir helper)
-#     We try both patterns so the script works across versions.
-#
-# System-prompt patches (opt-out via env vars; default on for this user):
-#
-#   Patch 3 — Strip "NEVER commit changes unless asked":
-#     Conflicts with our global CLAUDE.md directive ("after every round of
-#     work, make a conventional commit"). Removing the redundant negative
-#     lets the CLAUDE.md positive rule apply cleanly without context noise.
-#     Set CCPATCH_KEEP_NO_COMMIT=1 to skip.
-#
-#   Patch 4 — Strip "Default to writing no comments":
-#     Conflicts with our global CLAUDE.md ("use properly typed DRY production
-#     level code with explanatory comments"). Set CCPATCH_KEEP_NO_COMMENTS=1
-#     to skip.
-#
-#   Patch 5 — Relax inter-tool length cap from 25 → 60 words:
-#     The 25-word cap on between-tool updates is too tight for explaining
-#     non-trivial state. Set CCPATCH_KEEP_TIGHT_LENGTH=1 to skip.
-#
-# Tested against v2.1.112. Patterns are sentinel-string-based (literal phrase
-# matches) so they typically survive minor version bumps. If a patch's
-# verification grep fails after `bun install -g`, the .bak-prepatch backup
-# remains untouched.
-patch_claude_cli() {
-  local cli="${CLI_JS_GLOBAL}"
-  if [[ ! -f "$cli" ]]; then
-    warn "patch_claude_cli: cli.js not found at ${cli}, skipping"
-    return 1
-  fi
-
-  local needs_patch=0
-
-  # Compatibility-fix detection
-  grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null && needs_patch=1
-  grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null && needs_patch=1
-
-  # System-prompt detection (each gated by an opt-out env var)
-  [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" == "1" ]] || \
-    grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null && \
-    [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]] && needs_patch=1
-  [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" == "1" ]] || \
-    grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null && \
-    [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" != "1" ]] && needs_patch=1
-  [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" == "1" ]] || \
-    grep -qF 'Length limits: keep text between tool calls to ≤25 words.' "$cli" 2>/dev/null && \
-    [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" != "1" ]] && needs_patch=1
-
-  if [[ $needs_patch -eq 0 ]]; then
-    ok "cli.js Termux patches already applied"
+# Make ccx available: repo build (bun) first, otherwise the published package.
+_ensure_ccx() {
+  if _ccx help >/dev/null 2>&1; then
+    ok "ccx available"
     return 0
   fi
-
-  # Backup before patching (only if no backup exists yet for this install)
-  local bak="${cli}.bak-prepatch"
-  if [[ ! -f "$bak" ]]; then
-    cp "$cli" "$bak"
-    info "Backup: ${bak}"
-  fi
-
-  local applied=0
-
-  # Patch 1: MB null guard (v2.1.56 — fixed upstream in v2.1.112+, no-op if not found)
-  if grep -qF '[...MB,"inherit"]' "$cli" 2>/dev/null; then
-    sed -i 's/\[\.\.\.MB,"inherit"\]/[...(MB||[]),"inherit"]/g' "$cli"
-    grep -qF '[...(MB||[]),"inherit"]' "$cli" 2>/dev/null && ((applied++)) \
-      || warn "Patch 1 (MB null guard): sed ran but pattern not found in result"
-  else
-    ok "Patch 1 (MB null guard): not needed for this version"
-    ((applied++))
-  fi
-
-  # Patch 2a: /tmp/ socket path — v2.1.56 style (dg6/Za9)
-  # Patch 2b: /tmp/ socket path — v2.1.112 style (i88/z2)
-  # We replace the hardcoded /tmp/ with z2() (Claude's own smart-tmpdir that respects
-  # CLAUDE_CODE_TMPDIR env var and falls back to os.tmpdir() on Android/Linux).
-  if grep -qF '`/tmp/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
-    # Try v2.1.112 pattern first (i88 → z2), then v2.1.56 (dg6 → Za9)
-    sed -i 's|`/tmp/claude-mcp-browser-bridge-|`${z2()}/claude-mcp-browser-bridge-|g' "$cli"
-    if grep -qF '`${z2()}/claude-mcp-browser-bridge-' "$cli" 2>/dev/null; then
-      ok "Patch 2 (socket /tmp/ → z2()): applied"
-      ((applied++))
-    else
-      warn "Patch 2 (socket path): sed ran but verification failed — check ${cli} manually"
+  if [[ -f "${REPO_DIR}/claude-channel/build.ts" ]] && command -v bun >/dev/null 2>&1; then
+    info "Building ccx from the repo checkout..."
+    if (cd "${REPO_DIR}/claude-channel" && bun install && bun run build.ts); then
+      ok "Built claude-channel/dist/cli.js"
+      return 0
     fi
-  else
-    ok "Patch 2 (socket path): not needed or already applied"
-    ((applied++))
+    warn "repo build failed; falling back to the npm package"
   fi
-
-  local total=2
-
-  # Patch 3: strip the "NEVER commit changes unless..." bullet from the static
-  # git-workflow section. The phrase lives on its own line inside a backtick
-  # template literal (real newlines), so a line-delete cleanly removes it
-  # without touching the surrounding bullets.
-  if [[ "${CCPATCH_KEEP_NO_COMMIT:-0}" != "1" ]]; then
-    total=$((total+1))
-    if grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
-      sed -i '/^- NEVER commit changes unless the user explicitly asks you to\. It is VERY IMPORTANT to only commit when explicitly asked, otherwise the user will feel that you are being too proactive$/d' "$cli"
-      if ! grep -qF -- '- NEVER commit changes unless the user explicitly asks you to.' "$cli" 2>/dev/null; then
-        ok "Patch 3 (no-commit prompt strip): applied"
-        ((applied++))
-      else
-        warn "Patch 3: sed ran but phrase still present"
-      fi
-    else
-      ok "Patch 3 (no-commit prompt strip): not needed"
-      ((applied++))
-    fi
+  info "Installing the termux-tools package (ccx, cdx, agx) globally..."
+  if npm install -g termux-tools; then
+    ok "termux-tools installed"
+    return 0
   fi
-
-  # Patch 4: strip the "Default to writing no comments." JS string from the
-  # `D6A()` array. The string is one element of a comma-separated array on a
-  # single physical line, so we substitute the literal `"...",` (string +
-  # trailing comma) out, leaving the array intact.
-  if [[ "${CCPATCH_KEEP_NO_COMMENTS:-0}" != "1" ]]; then
-    total=$((total+1))
-    if grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null; then
-      sed -i 's|"Default to writing no comments\. Only add one when the WHY is non-obvious: a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise a reader\. If removing the comment wouldn'"'"'t confuse a future reader, don'"'"'t write it\.",||g' "$cli"
-      if ! grep -qF '"Default to writing no comments. Only add one' "$cli" 2>/dev/null; then
-        ok "Patch 4 (no-comments prompt strip): applied"
-        ((applied++))
-      else
-        warn "Patch 4: sed ran but phrase still present"
-      fi
-    else
-      ok "Patch 4 (no-comments prompt strip): not needed"
-      ((applied++))
-    fi
-  fi
-
-  # Patch 5: relax inter-tool word cap 25 → 60. The literal lives inside an
-  # `XT("numeric_length_anchors", () => "...")` arrow on a single line.
-  if [[ "${CCPATCH_KEEP_TIGHT_LENGTH:-0}" != "1" ]]; then
-    total=$((total+1))
-    if grep -qF '"Length limits: keep text between tool calls to ≤25 words.' "$cli" 2>/dev/null; then
-      sed -i 's|"Length limits: keep text between tool calls to ≤25 words\. Keep final responses to ≤100 words unless the task requires more detail\."|"Length limits: keep text between tool calls to ≤60 words. Keep final responses to ≤250 words unless the task requires more detail."|g' "$cli"
-      if grep -qF '"Length limits: keep text between tool calls to ≤60 words.' "$cli" 2>/dev/null; then
-        ok "Patch 5 (length-cap relax 25→60 / 100→250): applied"
-        ((applied++))
-      else
-        warn "Patch 5: sed ran but new phrase not present"
-      fi
-    else
-      ok "Patch 5 (length-cap relax): already applied or phrase not found"
-      ((applied++))
-    fi
-  fi
-
-  if [[ $applied -eq $total ]]; then
-    ok "cli.js patches complete (${applied}/${total})"
-  else
-    warn "cli.js patch incomplete (${applied}/${total}) — manual verification needed"
-    warn "Variable names or phrases may have changed in this version. Restore:"
-    warn "  cp ${bak} ${cli}"
-  fi
+  fail "Could not obtain ccx (repo build and npm install both failed)"
+  return 1
 }
 
 # Ensure CLAUDE_CODE_ENABLE_CFC=true is in environment

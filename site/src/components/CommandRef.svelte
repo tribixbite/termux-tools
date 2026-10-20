@@ -23,9 +23,21 @@
         { cmd: "./claude-edge-setup.sh", desc: "Interactive installer menu" },
         { cmd: "./claude-edge-setup.sh --all", desc: "Run every install step non-interactively" },
         { cmd: "install/modules/bun.sh", desc: "Install Bun via bun-on-termux" },
-        { cmd: "install/modules/claude-code.sh", desc: "Install + byte-preserving patch Claude Code" },
+        { cmd: "install/modules/claude-code.sh", desc: "Install Claude Code through ccx (pinned channels)" },
         { cmd: "install/modules/adb.sh", desc: "Pair and connect ADB over WiFi" },
         { cmd: "install/modules/extension.sh", desc: "Build CRX + sideload into Edge" },
+      ],
+    },
+    {
+      id: "channels",
+      label: "Channels",
+      commands: [
+        { cmd: "npm i -g termux-tools", desc: "ccx + cdx + agx + the Termux scripts in one package" },
+        { cmd: "ccx update && ccx promote", desc: "Claude Code: fetch, byte-patch, pin stable/next" },
+        { cmd: "cdx setup && cdx update", desc: "Codex: isolated install, DNS + ripgrep fixes → codex-next" },
+        { cmd: "agx setup && agx update", desc: "Antigravity: SHA-512 verified glibc binary via proot → agy-next" },
+        { cmd: "<tool> rollback --to X.Y.Z", desc: "Restore an archived stable release" },
+        { cmd: "<tool> status --json", desc: "Channels, upstream latest, update availability" },
       ],
     },
     {

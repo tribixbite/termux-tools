@@ -96,6 +96,17 @@ detect_bun() {
 }
 
 detect_claude_code() {
+  # ccx-managed install: ~/.claude/binaries/channel-state.json records stable/next.
+  local state="${TERMUX_HOME}/.claude/binaries/channel-state.json"
+  if [[ -f "$state" ]]; then
+    local ver
+    ver=$(python3 -c 'import json,sys; s=json.load(open(sys.argv[1])); print(((s.get("stable") or s.get("next") or {}).get("version","")))' "$state" 2>/dev/null)
+    if [[ -n "$ver" ]]; then
+      _DETECT_CLAUDE_CODE="v${ver} (ccx)"
+      return 0
+    fi
+  fi
+  # Legacy bun-global cli.js install (pre-ccx).
   if [[ -f "$CLI_JS_GLOBAL" ]]; then
     local ver
     ver=$(grep -oP 'VERSION:"[^"]+' "$CLI_JS_GLOBAL" 2>/dev/null | head -1 | cut -d'"' -f2)

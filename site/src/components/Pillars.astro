@@ -29,11 +29,11 @@ const features = [
   {
     icon: "◆",
     title: "Claude Code on Termux",
-    description: "Runs the latest Claude Code (2.1.158, Opus 4.8) on bionic Android. A byte-preserving patcher edits the bun-compiled binary's vfs in place, plus sed patches for the legacy cli.js path — aligned to your CLAUDE.md.",
+    description: "Runs current Claude Code on bionic Android through pinned stable/next channels. ccx fetches the native release, byte-patches the bun-compiled binary in place (resolver redirect + CLAUDE.md alignment) and promotes or rolls back atomically; cdx and agx do the same for Codex and Antigravity.",
     commands: [
-      { cmd: "CCINSTALL_VERSION=next", desc: "install the 4.8 binary" },
-      { cmd: "claude-code.sh", desc: "install + auto-patch" },
-      { cmd: "byte-preserving", desc: "survives bun-vfs offsets" },
+      { cmd: "npm i -g termux-tools", desc: "ccx · cdx · agx" },
+      { cmd: "ccx update && ccx promote", desc: "fetch, patch, pin" },
+      { cmd: "ccx rollback", desc: "restore an archived stable" },
     ],
     color: "terminal-cyan",
     href: "/claude",

@@ -4,45 +4,29 @@ Tools, automation, and infrastructure for running Claude Code sessions on Androi
 
 ## Components
 
-### TMX Orchestrator (`orchestrator/`)
+### Channel managers: `termux-tools` on npm (`ccx`, `cdx`, `agx`)
 
-TypeScript daemon that manages tmux session lifecycle — replaces the old bash boot scripts
-with dependency-ordered startup, health monitoring, battery management, and a web dashboard.
+Pinned **stable / next** release channels for the AI CLIs on this device, published from
+[`claude-channel/`](claude-channel/README.md) as the `termux-tools` npm package together
+with the self-contained Termux scripts (`pip-tool-install`, `install-ghostty-termux`,
+`migrate-termux`, `threads-dl`, `install-antigravity-termux`).
 
 ```bash
-tmx boot              # Start daemon + boot all sessions + create Termux tabs
-tmx status            # Show daemon status, all sessions, battery, memory
-tmx health            # Run health checks
-tmx start <name>      # Start a stopped session (fuzzy-matches names)
-tmx stop <name>       # Stop a running session
-tmx go <name>         # Send Enter to a waiting Claude session
-tmx open <path|name>  # Open a new Claude session dynamically (fuzzy match)
-tmx close <name>      # Stop + remove a dynamic session from registry
-tmx recent            # List recent Claude projects from history.jsonl
-tmx tabs              # Recreate Termux tabs for tmux sessions
-tmx memory            # Show system + per-session memory usage
-tmx upgrade           # Rebuild, shutdown daemon, let watchdog auto-restart
-tmx shutdown          # Graceful shutdown (sessions orphaned for re-adoption)
+npm i -g termux-tools
+ccx update && ccx promote      # Claude Code: native release channel, byte-patched for Termux
+cdx setup && cdx update        # Codex: isolated Bun install + DNS/ripgrep fixes -> codex-next
+agx setup && agx update        # Antigravity: SHA-512 verified glibc binary run via proot -> agy-next
 ```
 
-**Features:**
-- Config-driven sessions via `~/.config/tmx/tmx.toml`
-- Dependency-ordered parallel startup (topological sort)
-- Health checks (tmux_alive, http, process, custom) with auto-restart
-- Battery monitoring — disables radios below threshold when not charging
-- Memory pressure detection (normal/warning/critical/emergency from /proc/meminfo)
-- Boot recency — auto-starts only the N most recently used Claude sessions
-- Multi-instance sessions — multiple Claude instances per project with named session resume
-- Fuzzy matching — `tmx start torch` / `tmx open embeddy` match by prefix or substring
-- Dynamic session registry — `tmx open`/`tmx close` survive daemon restarts
-- Web dashboard on port 18970 (Astro 5 + Svelte 5 + SSE real-time updates)
-  - Session controls: start/stop/restart/go/close
-  - Recent projects panel with search and play buttons
-  - System memory, battery, ADB, CFC bridge status gauges
-- Persistent status bar notification — taps open dashboard
-- `tmx upgrade` — rebuilds, shuts down daemon, watchdog auto-restarts with new build
-- Watchdog bash loop survives Android OOM kills
-- Termux tab creation via TermuxService intents (Android 16 compatible)
+Every manager keeps immutable per-version release directories, promotes with one atomic
+state write, archives the outgoing stable for `rollback`, previews `prune`, and only
+schedules `next` updates when asked. Launchers disable each tool's built-in self-updater.
+
+### Session orchestrator (moved to `operad`)
+
+The TMX/operad daemon that boots and supervises tmux-hosted Claude sessions now lives in
+[tribixbite/operad](https://github.com/tribixbite/operad) (npm `operadic`).
+`orchestrator/` here is only a pointer.
 
 ### CFC Bridge (`bridge/`)
 
@@ -74,7 +58,7 @@ ADB auto-reconnects every 5 minutes via cron.
 
 ### Codex channel manager (`cdx`)
 
-For routine Codex updates, use the ccx companion in [claude-channel](claude-channel/README.md#codex-channels-cdx):
+Part of the `termux-tools` npm package (source in [`claude-channel/`](claude-channel/README.md)):
 
 ```bash
 cdx update       # stage latest with Termux DNS/ripgrep fixes
@@ -360,6 +344,12 @@ agy --help
 The binary is stored under `~/.local/lib/antigravity/`, with the Termux launcher
 at `~/.local/bin/agy`. Authentication and settings remain under
 `~/.gemini/antigravity-cli/` across upgrades.
+
+For upgrades, use the `agx` channel manager from the `termux-tools` package instead of
+re-running the installer: `agx setup` adopts the installer's binary as the first stable
+release, `agx update` stages Google's current release as `agy-next` (SHA-512 verified,
+`--version` checked under proot, self-updater disabled), and `agx promote` / `agx rollback`
+switch `agy` atomically. See [`claude-channel/README.md`](claude-channel/README.md#agx--antigravity).
 
 Run `agy` interactively once to complete Google OAuth. Commands that require the
 agent service, such as `agy models`, remain unavailable until that sign-in.
