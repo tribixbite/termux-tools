@@ -6,10 +6,12 @@ on:
     paths:
       - 'bridge/src/**'
       - 'bridge/package.json'
+      - 'claude-channel/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'bridge/**'
+      - 'claude-channel/**'
 
 jobs:
   build-bridge:
@@ -27,5 +29,33 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Typecheck bridge
+        run: npm run typecheck
+
       - name: Build bridge
         run: npm run build
+
+  test-termux-tools:
+    # claude-channel/ is the `termux-tools` npm package: ccx, cdx, agx + shell tools.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-channel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dev dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+
+      - name: Build
+        run: bun run build
