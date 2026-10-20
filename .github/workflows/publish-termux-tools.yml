@@ -69,8 +69,20 @@ jobs:
           echo "### Package contents" >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/pack-output.txt >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Check whether this version is already on npm
+        id: published
+        working-directory: claude-channel
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "termux-tools@$V" version >/dev/null 2>&1; then
+            echo "termux-tools@$V is already published; npm publish will be skipped"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm (trusted publisher / OIDC)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.published.outputs.exists != 'true' }}
         # No NODE_AUTH_TOKEN on purpose: npm uses the GitHub OIDC token against the
         # trusted publisher configured for `termux-tools` on npmjs.com. The first
         # version of a package cannot use OIDC and was published manually.

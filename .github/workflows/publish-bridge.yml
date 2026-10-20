@@ -66,8 +66,20 @@ jobs:
           echo "### Package contents" >> $GITHUB_STEP_SUMMARY
           cat /tmp/pack-output.txt >> $GITHUB_STEP_SUMMARY
 
+      - name: Check whether this version is already on npm
+        id: published
+        working-directory: bridge
+        run: |
+          V="$(node -p "require('./package.json').version")"
+          if npm view "claude-chrome-android@$V" version >/dev/null 2>&1; then
+            echo "claude-chrome-android@$V is already published; npm publish will be skipped"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm (trusted publisher / OIDC)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && steps.published.outputs.exists != 'true' }}
         working-directory: bridge
         # No NODE_AUTH_TOKEN env on purpose — npm 11.5.1+ uses the GitHub OIDC
         # ID token (id-token: write perm above) against the trusted publisher
