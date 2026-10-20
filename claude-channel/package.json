@@ -1,6 +1,6 @@
 {
   "name": "termux-tools",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pinned stable/next channel managers for Claude Code (ccx), Codex (cdx) and Antigravity (agx) on Termux, plus the Termux tooling scripts from tribixbite/termux-tools",
   "license": "MIT",
   "author": "willstone",
