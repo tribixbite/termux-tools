@@ -12,7 +12,9 @@ import { parseAgxArgs, setupAgx } from "./antigravity-cli";
 import { atomicWrite } from "./managed";
 
 const dirs: string[] = [];
-const shell = existsSync(`${process.env.PREFIX ?? ""}/bin/bash`) ? `${process.env.PREFIX}/bin/bash` : "/bin/bash";
+// Fixture scripts need a real bash: Termux keeps it under $PREFIX, CI runners under /bin.
+const shell = ["/data/data/com.termux/files/usr/bin/bash", process.env.PREFIX ? `${process.env.PREFIX}/bin/bash` : "", "/bin/bash", "/usr/bin/bash"]
+  .filter(Boolean).find(candidate => existsSync(candidate)) ?? "/bin/bash";
 const MANIFEST_URL = "https://updater.test/manifests/linux_arm64.json";
 
 interface Release { version: string; url: string; sha512: string; tarball: string; }
