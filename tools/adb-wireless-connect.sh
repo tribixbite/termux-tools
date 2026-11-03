@@ -42,9 +42,58 @@ load_last_connection() {
     fi
 }
 
+# Loopback endpoint for this phone's own adbd. Wireless debugging's TLS port
+# changes every time adbd restarts, and adbd restarts on any USB function
+# switch (e.g. a screen lock/unlock with "Default USB configuration" set).
+# The legacy TCP listener enabled by `adb tcpip` keeps the same port across
+# adbd restarts until reboot, and loopback does not depend on Wi-Fi.
+LOOPBACK_SERIAL="127.0.0.1:5555"
+
+# Connect to the loopback listener if adbd already has it open.
+try_loopback() {
+    timeout 5 adb connect "$LOOPBACK_SERIAL" >/dev/null 2>&1 || true
+    sleep 0.3
+    adb devices 2>/dev/null | grep -q "^$LOOPBACK_SERIAL[[:space:]]*device"
+}
+
+# After a wireless-debugging connection succeeds, open the loopback listener
+# (needed once per boot) and switch to it. `adb tcpip` restarts adbd, which
+# drops the wireless serial; that is expected.
+promote_to_loopback() {
+    local wireless="$1"
+    echo "   Enabling loopback listener on port 5555 (once per boot)..."
+    adb -s "$wireless" tcpip 5555 >/dev/null 2>&1 || return 1
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        sleep 1
+        if try_loopback; then
+            adb disconnect "$wireless" >/dev/null 2>&1 || true
+            # The fresh transport can flap to "offline" for a few seconds while
+            # adbd finishes starting; wait until a shell command goes through.
+            local j
+            for j in 1 2 3 4 5 6 7 8 9 10; do
+                timeout 5 adb -s "$LOOPBACK_SERIAL" shell true >/dev/null 2>&1 && return 0
+                sleep 1
+                timeout 5 adb connect "$LOOPBACK_SERIAL" >/dev/null 2>&1 || true
+            done
+            return 1
+        fi
+    done
+    return 1
+}
+
 # Function to find and connect to ADB wireless
 # Commands that may fail use || true instead of set +e to avoid leaking to caller
 connect_adb_wireless() {
+    # This phone's own adbd over loopback: fixed port, survives Wi-Fi changes
+    # and adbd restarts. Only applies when no explicit host was given.
+    if [ -z "$1" ] && try_loopback; then
+        echo "✅ Connected to $LOOPBACK_SERIAL (loopback)"
+        export ADB_DEVICE="$LOOPBACK_SERIAL"
+        save_state "$LOOPBACK_SERIAL"
+        return 0
+    fi
+
     # Get host IP from wlan0 or use provided host
     if [ -n "$1" ]; then
         HOST="$1"
@@ -76,15 +125,23 @@ connect_adb_wireless() {
             if adb devices | grep -q "^$LAST_CONN[[:space:]]*device"; then
                 echo "✅ Reconnected to $LAST_CONN"
                 export ADB_DEVICE="$LAST_CONN"
+                if [ -z "$1" ] && [ "$LAST_CONN" != "$LOOPBACK_SERIAL" ] && promote_to_loopback "$LAST_CONN"; then
+                    echo "✅ Switched to $LOOPBACK_SERIAL (loopback)"
+                    export ADB_DEVICE="$LOOPBACK_SERIAL"
+                    save_state "$LOOPBACK_SERIAL"
+                fi
                 return 0
             fi
         fi
         echo "   Last connection failed, scanning for new port..."
     fi
 
-    # Disconnect any existing connections
-    echo "   Disconnecting existing ADB connections..."
-    adb disconnect -a >/dev/null 2>&1 || true
+    # Drop stale entries for this host only; other test phones connected to
+    # the same adb server (shared between agents) must stay connected.
+    echo "   Disconnecting stale connections to $HOST..."
+    for stale in $(adb devices 2>/dev/null | awk -v h="$HOST:" 'index($1, h) == 1 {print $1}'); do
+        adb disconnect "$stale" >/dev/null 2>&1 || true
+    done
 
     # Build list of ports to try (reversed order - highest first)
     PORTS="5555"
@@ -142,6 +199,11 @@ connect_adb_wireless() {
                 echo "✅ connected!"
                 export ADB_DEVICE="$HOST:$port"
                 save_state "$HOST:$port"
+                if [ -z "$1" ] && promote_to_loopback "$HOST:$port"; then
+                    echo "✅ Switched to $LOOPBACK_SERIAL (loopback)"
+                    export ADB_DEVICE="$LOOPBACK_SERIAL"
+                    save_state "$LOOPBACK_SERIAL"
+                fi
 
                 return 0
             fi
@@ -149,6 +211,8 @@ connect_adb_wireless() {
             adb disconnect "$HOST:$port" >/dev/null 2>&1 || true
         else
             echo "❌"
+            # A timed-out probe can leave an "offline" entry behind
+            adb disconnect "$HOST:$port" >/dev/null 2>&1 || true
         fi
     done
 
@@ -202,9 +266,9 @@ if connect_adb_wireless "$HOST_IP"; then
 
     # Show device info
     echo "📱 Device Information:"
-    adb shell getprop ro.product.model 2>/dev/null | sed 's/^/   Model: /'
-    adb shell getprop ro.build.version.release 2>/dev/null | sed 's/^/   Android: /'
-    adb shell getprop ro.product.manufacturer 2>/dev/null | sed 's/^/   Manufacturer: /'
+    adb -s "$ADB_DEVICE" shell getprop ro.product.model 2>/dev/null | sed 's/^/   Model: /'
+    adb -s "$ADB_DEVICE" shell getprop ro.build.version.release 2>/dev/null | sed 's/^/   Android: /'
+    adb -s "$ADB_DEVICE" shell getprop ro.product.manufacturer 2>/dev/null | sed 's/^/   Manufacturer: /'
     echo
 
     # If APK path provided, install it
@@ -217,11 +281,11 @@ if connect_adb_wireless "$HOST_IP"; then
         if [ -n "$PACKAGE" ]; then
             echo "   Package: $PACKAGE"
             echo "   Uninstalling old version..."
-            adb uninstall "$PACKAGE" 2>/dev/null || true
+            adb -s "$ADB_DEVICE" uninstall "$PACKAGE" 2>/dev/null || true
         fi
 
         echo "   Installing new version..."
-        if adb install -r "$APK_PATH"; then
+        if adb -s "$ADB_DEVICE" install -r "$APK_PATH"; then
             echo
             echo "✅ APK installed successfully!"
 
