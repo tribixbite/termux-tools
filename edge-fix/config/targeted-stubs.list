@@ -80,3 +80,8 @@ smali/com/adjust/sdk/Adjust.smali|gdprForgetMe
 # entry point means no token request and no callback; the native side simply never
 # hears back. The feature is also disabled via command-line-flags.list.
 split_chrome.apk:smali/org/chromium/chrome/browser/edge_bing_notification/BingNotificationService.smali|requestDeviceToken
+# TODO: the only other callers of BingNotificationPushServiceOrigin.a() are the manual
+# edge://settings notification DEBUG page (EdgeNotificationDebugSettings.onViewCreated and
+# its onClick handler), which would hit the same null Firebase instance if opened. Stubbing
+# the funnel below closes that too; enable it on the next rebuild (needs install + launch test).
+# split_chrome.apk:smali/org/chromium/chrome/browser/edge_bing_notification/BingNotificationPushServiceOrigin.smali|a
