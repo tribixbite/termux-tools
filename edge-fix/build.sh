@@ -219,15 +219,34 @@ smali_to_dex() {
     esac
 }
 
+# Helper: split an optional "<split>.apk:" prefix off a config path.
+# Entries without a prefix target base.apk; prefixed ones target a DEX inside
+# that split (split_chrome.apk carries most of the Chromium/Edge browser code).
+split_apk_prefix() {
+    local entry="$1"
+    if [[ "$entry" == *.apk:* ]]; then
+        printf '%s\t%s\n' "${entry%%:*}" "${entry#*:}"
+    else
+        printf '\t%s\n' "$entry"
+    fi
+}
+
 # Collect all DEX files that need patching from all config sources
 declare -A DEX_NEEDS_PATCH
+declare -A SPLIT_DEX_NEEDS_PATCH   # "split_chrome.apk:classes.dex" -> 1
 
 # From targeted-stubs.list
 if [ -f "$TARGETED_STUBS" ]; then
     while IFS='|' read -r smali_path _method; do
         smali_path="${smali_path#\?}"
+        IFS=$'\t' read -r stub_apk smali_path <<< "$(split_apk_prefix "$smali_path")"
         dex=$(smali_to_dex "$smali_path")
-        [ -n "$dex" ] && DEX_NEEDS_PATCH["$dex"]=1
+        [ -z "$dex" ] && continue
+        if [ -n "$stub_apk" ]; then
+            SPLIT_DEX_NEEDS_PATCH["$stub_apk:$dex"]=1
+        else
+            DEX_NEEDS_PATCH["$dex"]=1
+        fi
     done < <(read_config "$TARGETED_STUBS")
 fi
 
@@ -433,6 +452,71 @@ fi
 echo "  [x] Command-line patch assembled from $CMDLINE_DEX"
 echo ""
 
+# ─── 3d. Patch DEX files inside split APKs ───
+# Only targeted method stubs are supported for splits. Each patched DEX is
+# swapped into its split during signing (Step 5) and byte-verified there.
+declare -A SPLIT_PATCHED_DEX   # "split_chrome.apk:classes.dex" -> patched DEX path
+for key in "${!SPLIT_DEX_NEEDS_PATCH[@]}"; do
+    split_apk_name="${key%%:*}"
+    dex_name="${key#*:}"
+    split_src="$EXTRACTED_DIR/$split_apk_name"
+    if [ ! -f "$split_src" ]; then
+        echo "ERROR: split APK not found for stub target: $split_apk_name" >&2
+        exit 1
+    fi
+    echo "  Processing $split_apk_name:$dex_name..."
+    split_work="$DEX_WORK/${split_apk_name%.apk}"
+    mkdir -p "$split_work"
+    unzip -o "$split_src" "$dex_name" -d "$split_work" > /dev/null
+    case "$dex_name" in
+        classes.dex) smali_dir_name="smali" ;;
+        classes*.dex) smali_dir_name="smali_${dex_name%.dex}" ;;
+    esac
+    SMALI_OUT="$split_work/$smali_dir_name"
+    echo "    baksmali: decompiling..."
+    java -jar "$BAKSMALI_JAR" d "$split_work/$dex_name" -o "$SMALI_OUT" 2>&1
+
+    while IFS='|' read -r smali_path method_name; do
+        optional=0
+        if [[ "$smali_path" == \?* ]]; then
+            optional=1
+            smali_path="${smali_path#\?}"
+        fi
+        [[ "$smali_path" == "$split_apk_name:"* ]] || continue
+        smali_path="${smali_path#*:}"
+        [ "$(smali_to_dex "$smali_path")" != "$dex_name" ] && continue
+        full_path="$split_work/$smali_path"
+        if [ ! -f "$full_path" ]; then
+            if [ "$optional" -eq 1 ]; then
+                echo "    [i] Optional target absent in this version: $split_apk_name:$smali_path"
+                continue
+            fi
+            echo "ERROR: required patch target not found: $split_apk_name:$smali_path" >&2
+            exit 1
+        fi
+        if python3 "$SCRIPT_DIR/scripts/stub-method.py" "$full_path" "$method_name"; then
+            :
+        else
+            patch_status=$?
+            if [ "$optional" -eq 1 ] && [ "$patch_status" -eq 2 ]; then
+                echo "    [i] Optional method absent in this version: $split_apk_name:$smali_path|$method_name"
+                continue
+            fi
+            echo "ERROR: required method patch failed: $split_apk_name:$smali_path|$method_name" >&2
+            exit "$patch_status"
+        fi
+    done < <(read_config "$TARGETED_STUBS")
+
+    echo "    smali: recompiling..."
+    java -jar "$SMALI_JAR" a "$SMALI_OUT" -o "$split_work/${dex_name%.dex}-patched.dex" 2>&1
+    echo "    $split_apk_name:$dex_name: $(wc -c < "$split_work/$dex_name") → $(wc -c < "$split_work/${dex_name%.dex}-patched.dex") bytes"
+    SPLIT_PATCHED_DEX["$key"]="$split_work/${dex_name%.dex}-patched.dex"
+done
+if [ "${#SPLIT_DEX_NEEDS_PATCH[@]}" -gt 0 ]; then
+    echo "  [x] Patched ${#SPLIT_PATCHED_DEX[@]} split DEX file(s)"
+    echo ""
+fi
+
 # ─── 4. Assemble output APK ───
 # Strategy: copy original base.apk, replace only the patched files (DEX +
 # manifest), strip META-INF (old signatures). This preserves all original
@@ -606,6 +690,22 @@ for split_apk in "$EXTRACTED_DIR"/split_*.apk; do
     UNSIGNED="${WORK_DIR}/${split_name}.unsigned"
     cp "$split_apk" "$UNSIGNED"
     zip -d "$UNSIGNED" "META-INF/*" > /dev/null 2>&1 || true
+    # Replace DEX files patched in Step 3d, verifying the emitted bytes as for base.
+    for key in "${!SPLIT_PATCHED_DEX[@]}"; do
+        [ "${key%%:*}" = "$split_name" ] || continue
+        dex_basename="${key#*:}"
+        patched_dex="${SPLIT_PATCHED_DEX[$key]}"
+        staging="$(dirname "$patched_dex")"
+        cp "$patched_dex" "$staging/$dex_basename"
+        (cd "$staging" && zip -j "$UNSIGNED" "$dex_basename") > /dev/null
+        unzip -p "$UNSIGNED" "$dex_basename" > "$staging/emitted-$dex_basename"
+        if ! cmp -s "$patched_dex" "$staging/emitted-$dex_basename"; then
+            echo "ERROR: $split_name contains the wrong $dex_basename bytes" >&2
+            exit 1
+        fi
+        rm -f "$staging/emitted-$dex_basename"
+        echo "  Replaced and verified in $split_name: $dex_basename"
+    done
     sign_apk "$UNSIGNED" "$split_name"
     rm -f "$UNSIGNED"
 done
@@ -665,6 +765,7 @@ echo ""
 echo "Verified build results:"
 echo "  - Configured manifest removals are absent from the compiled manifest"
 echo "  - $PATCHED_DEX_COUNT patched DEX entries match their assembled bytes"
+echo "  - ${#SPLIT_PATCHED_DEX[@]} split DEX entries patched and byte-verified"
 echo "  - Required method and loadLibrary patches completed; optional misses were reported"
 echo "  - CommandLine.wasFlagsLoadedFromFile() returns false in $CMDLINE_DEX"
 echo "  - Version-dependent telemetry URLs were redirected wherever present"

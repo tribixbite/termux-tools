@@ -1,5 +1,7 @@
 # Targeted method stubs: stub only specific methods, not entire classes
-# Format: smali_path|method_name
+# Format: [split_name.apk:]smali_path|method_name
+#   Without a prefix the path is a DEX in base.apk; with one (e.g. split_chrome.apk:)
+#   it is a DEX inside that split, patched in build.sh Step 3d.
 # Prefix a path with ? only when the class/method is known to be
 # version-dependent. Unmarked entries are required and fail the build if absent.
 # The method body is replaced with a safe return default while the rest
@@ -67,3 +69,14 @@ smali/com/adjust/sdk/Adjust.smali|gdprForgetMe
 ?smali_classes3/com/tencent/matrix/trace/tracer/SignalAnrTracer.smali|onAlive
 ?smali_classes3/com/tencent/matrix/trace/tracer/TouchEventLagTracer.smali|onAlive
 ?smali_classes3/com/tencent/matrix/trace/tracer/ThreadPriorityTracer.smali|onAlive
+
+# -- Edge Bing push notifications (startup crash fix, 2026-11-06) --
+# BingNotificationService.requestDeviceToken is @CalledByNative on the UI thread and
+# registers for Bing push through Firebase Messaging. This build removes Firebase's
+# init provider from the manifest, so FirebaseMessaging.getInstance() returns null and
+# the lambda behind BingNotificationPushServiceOrigin.a() dies with a
+# NullPointerException ("FirebaseMessaging.d() on a null object reference") the moment
+# Edge decides to register (observed after a signed-in token refresh). Stubbing the
+# entry point means no token request and no callback; the native side simply never
+# hears back. The feature is also disabled via command-line-flags.list.
+split_chrome.apk:smali/org/chromium/chrome/browser/edge_bing_notification/BingNotificationService.smali|requestDeviceToken

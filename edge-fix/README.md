@@ -109,6 +109,28 @@ For the CFC bridge itself (WebSocket server + MCP relay + CRX build) see the
 a device's extension reaches a bridge running on the same host, or over
 `adb reverse tcp:18963 tcp:18963` to a bridge on your build host.
 
+## Known crash: Bing notification registration (fixed 2026-11-06)
+
+Symptom: Edge opens, then dies on the UI thread a few seconds later, every launch,
+with `NullPointerException: FirebaseMessaging.d() on a null object reference` under
+`BingNotificationService.requestDeviceToken` (visible in `logcat -b crash`). Cause:
+this build strips Firebase's init provider, so when Edge decides to register for Bing
+push notifications (seen right after a signed-in account's token refresh) the
+registration lambda dereferences a null `FirebaseMessaging`. The trigger is remote
+and account driven, which is why a build that ran for weeks "randomly" started
+crashing.
+
+Two layers fix it:
+
+- `config/targeted-stubs.list` stubs `requestDeviceToken` inside `split_chrome.apk`.
+  Split DEX patching is new: prefix a stub path with `<split>.apk:` and `build.sh`
+  Step 3d disassembles that split's DEX, applies the stub and swaps the DEX back in
+  (byte-verified) before signing.
+- `config/command-line-flags.list` adds `msEdgeMobileBingNotification` and
+  `msEdgeMobileBingNotificationWeather` to `--disable-features`. On an already
+  provisioned device this alone stops the crash; re-run `setup-cfc-device.sh` (or
+  push the flags file) to apply it without reinstalling.
+
 ## Install (pre-built)
 
 > ⚠️ **Install the SPLIT bundle, NOT the merged APK.** The merged single APK

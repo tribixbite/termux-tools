@@ -8,6 +8,8 @@
 #   --js-flags: cap V8 old-space per renderer (raised 256->1024 so heavy WebGL/3D
 #     pages with large JS-side buffers don't OOM; Chrome has no such cap, which is
 #     why heavy 3D rendered there but not in Edge)
+#   msEdgeMobileBingNotification*: Bing push registration needs Firebase, which this
+#     build strips; left enabled it crashes the UI thread (see targeted-stubs.list).
 #   --ignore-gpu-blocklist: force GPU acceleration even if Edge blocklists this
 #     device's GPU (prime suspect for 3D working in Chrome but not Edge; verify the
 #     actual failure via chrome://gpu / CDP console before assuming)
@@ -27,7 +29,7 @@
 #
 --process-per-site
 --renderer-process-limit=4
---disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray
+--disable-features=OomIntervention,MobileCopilot,MobileCopilotButton,MobileCopilotChat,OmniboxPedalSuggestionsUi,EdgeCopilot,EdgeCopilotChat,EdgeCopilotNewTabPageCard,EdgeDiscoverFeed,msEdgeCopilotEntryPointsOverall,msEdgeCopilotSystemtray,msEdgeMobileBingNotification,msEdgeMobileBingNotificationWeather
 --js-flags=--max-old-space-size=4096
 --ignore-gpu-blocklist
 --force-gpu-mem-available-mb=2048
