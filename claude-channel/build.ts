@@ -12,6 +12,7 @@ const SHELL_TOOLS: Record<string, string> = {
   "install-antigravity-termux": "install-antigravity-termux.sh",
   "migrate-termux": "migrate-termux.sh",
   "threads-dl": "threads-dl.mjs",
+  "phone-share": "phone-share.sh",
 };
 
 const out = await Bun.build({
@@ -40,3 +41,7 @@ for (const [name, source] of Object.entries(SHELL_TOOLS)) {
   chmodSync(dest, 0o755);
   console.log(`staged bin/${name} <- scripts/${source}`);
 }
+// `npx termux-tools <command>` dispatcher (.mjs: the package is not type=module).
+copyFileSync(path.join("src", "termux-tools-dispatch.mjs"), path.join("bin", "termux-tools.mjs"));
+chmodSync(path.join("bin", "termux-tools.mjs"), 0o755);
+console.log("staged bin/termux-tools.mjs <- src/termux-tools-dispatch.mjs");

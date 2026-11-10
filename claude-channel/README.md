@@ -140,6 +140,11 @@ Also installed as commands by this package (the same files as `scripts/` in the 
 | `install-antigravity-termux` | The original one-shot Antigravity installer; `agx` supersedes it for upgrades |
 | `migrate-termux backup\|restore` | Clone a Termux install to another device |
 | `threads-dl <url>` | Download public Threads videos (no yt-dlp extractor exists) |
+| `phone-share setup\|start\|stop\|status` | Serve Termux home + shared storage (port 8022) and, via wireless ADB/Shizuku, `Android/data` (port 8023) as SFTP drives a PC can mount (Windows: WinFsp + SSHFS-Win) |
+
+Every command is also reachable through the package-named dispatcher, so nothing
+needs a global install: `npx termux-tools phone-share start`,
+`bunx termux-tools migrate-termux backup`. `npx termux-tools` lists the commands.
 
 ## Development
 

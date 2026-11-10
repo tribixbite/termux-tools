@@ -21,6 +21,7 @@
     "release-pinning"
   ],
   "bin": {
+    "termux-tools": "bin/termux-tools.mjs",
     "ccx": "dist/cli.js",
     "cdx": "dist/codex-cli.js",
     "agx": "dist/antigravity-cli.js",
@@ -28,7 +29,8 @@
     "install-ghostty-termux": "bin/install-ghostty-termux",
     "install-antigravity-termux": "bin/install-antigravity-termux",
     "migrate-termux": "bin/migrate-termux",
-    "threads-dl": "bin/threads-dl"
+    "threads-dl": "bin/threads-dl",
+    "phone-share": "bin/phone-share"
   },
   "files": [
     "dist/",
