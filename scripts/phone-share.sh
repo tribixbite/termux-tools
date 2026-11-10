@@ -54,14 +54,42 @@ write_state() {
 # stdout is the binary SFTP stream: never print anything else to it.
 REMOTE='cd /storage/emulated/0 2>/dev/null; LD_LIBRARY_PATH=/data/local/tmp/sftpd exec /data/local/tmp/sftpd/sftp-server -d /storage/emulated/0'
 LOG="$PREFIX/var/log/phone-share-bridge.log"
+readonly REMOTE_DIR=/data/local/tmp/sftpd
 
 serial="${PHONE_SHARE_SERIAL:-}"
 ip=$(ifconfig 2>/dev/null | awk '/^wlan0/{f=1} f&&/inet /{print $2; exit}')
 find_serial() {
   adb devices 2>/dev/null | awk -v p="$ip:" 'index($1,p)==1 && $2=="device"{print $1; exit}'
 }
+try_rish() {
+  # The probe MUST read /dev/null: rish forwards stdin from the moment it starts,
+  # so a probe sharing the SFTP pipe swallows the client's INIT packet and the
+  # real sftp-server then waits forever.
+  command -v rish >/dev/null 2>&1 && timeout 10 rish -c true </dev/null >/dev/null 2>&1 || return 0
+  # rish cannot carry the stream itself: in non-tty mode (Shizuku 13.6) both its
+  # stdout and stderr relays read the remote stdout pipe, so output arrives split
+  # across the two and reordered. Use rish only to launch sftp-server as shell,
+  # and carry SFTP over loopback TCP: Termux listens, the shell side dials in
+  # (an app that raced to the port could only impersonate the server, never gain
+  # shell access). mksh's coprocess (|& ... <&p >&p) joins toybox nc and
+  # sftp-server into a loop; the shell uid may not mkfifo in /data/local/tmp.
+  local port
+  port=$((40000 + RANDOM % 20000))
+  echo "$(date '+%F %T') rish via 127.0.0.1:$port" >>"$LOG"
+  (
+    sleep 0.3  # let nc -l bind first
+    rish -c "cd /storage/emulated/0 2>/dev/null
+      LD_LIBRARY_PATH=$REMOTE_DIR $REMOTE_DIR/sftp-server -d /storage/emulated/0 |&
+      toybox nc 127.0.0.1 $port <&p >&p" </dev/null >>"$LOG" 2>&1
+    # If the shell side never connected, nc -l (exec'd as this PID) waits forever.
+    [ "$(cat /proc/$$/comm 2>/dev/null)" = nc ] && kill $$ 2>/dev/null
+  ) </dev/null >/dev/null 2>&1 &
+  exec nc -l -N 127.0.0.1 "$port"
+}
 if [ -z "$serial" ] && [ -n "$ip" ]; then
   serial=$(find_serial)
+  # Shizuku survives adb drops and is instant; try it before a port scan.
+  [ -z "$serial" ] && try_rish
   if [ -z "$serial" ]; then
     # Wireless-debugging port rotates: drop stale entries, scan, reconnect.
     echo "$(date '+%F %T') no adb link, scanning $ip" >>"$LOG"
@@ -79,11 +107,7 @@ if [ -n "$serial" ]; then
   echo "$(date '+%F %T') adb $serial" >>"$LOG"
   exec adb -s "$serial" shell -T "$REMOTE" 2>>"$LOG"
 fi
-if command -v rish >/dev/null 2>&1; then
-  echo "$(date '+%F %T') rish" >>"$LOG"
-  exec rish -c "$REMOTE" 2>>"$LOG"
-fi
-echo "$(date '+%F %T') no adb device for this phone and no rish" >>"$LOG"
+echo "$(date '+%F %T') no adb link to this phone and Shizuku/rish unavailable" >>"$LOG"
 exit 1
 BRIDGE_EOF
   chmod 755 "$BRIDGE"
@@ -98,21 +122,37 @@ Subsystem sftp $BRIDGE
 CONF_EOF
 }
 
+rish_ok() { command -v rish >/dev/null 2>&1 && timeout 10 rish -c true </dev/null >/dev/null 2>&1; }
+remote_deployed() {
+  local s; s=$(self_serial)
+  if [ -n "$s" ]; then adb -s "$s" shell "test -x $REMOTE_DIR/sftp-server" 2>/dev/null
+  elif rish_ok; then rish -c "test -x $REMOTE_DIR/sftp-server" 2>/dev/null
+  else return 0; fi  # nothing to check with; leave it to the bridge
+}
+
 deploy() {
   local s t
   s=${PHONE_SHARE_SERIAL:-$(self_serial)}
-  if [ -z "$s" ]; then
-    echo "deploy: no adb connection to this phone ($(wlan_ip)). Enable Wireless debugging, then:"
-    echo "  adb pair 127.0.0.1:<pairing-port>   # once, with the 6-digit code"
-    echo "  adb connect $(wlan_ip):<port>       # port shown on the Wireless debugging screen"
-    return 1
-  fi
   t="$PREFIX/tmp/phone-share-sftpd"; mkdir -p "$t"
   cp "$PREFIX/libexec/sftp-server" "$PREFIX/lib/libandroid-support.so" "$t/"
-  adb -s "$s" shell "mkdir -p $REMOTE_DIR" &&
-    adb -s "$s" push "$t/." "$REMOTE_DIR/" >/dev/null &&
-    adb -s "$s" shell "chmod 755 $REMOTE_DIR/sftp-server" &&
-    echo "deployed sftp-server to $s:$REMOTE_DIR"
+  if [ -n "$s" ]; then
+    adb -s "$s" shell "mkdir -p $REMOTE_DIR" &&
+      adb -s "$s" push "$t/." "$REMOTE_DIR/" >/dev/null &&
+      adb -s "$s" shell "chmod 755 $REMOTE_DIR/sftp-server" &&
+      echo "deployed sftp-server to $s:$REMOTE_DIR"
+  elif rish_ok; then
+    # Shizuku runs as shell, which can read shared storage: stage there and copy.
+    local stage=/storage/emulated/0/Download/.phone-share-stage
+    mkdir -p "$stage" && cp "$t"/* "$stage/" &&
+      rish -c "mkdir -p $REMOTE_DIR && cp $stage/* $REMOTE_DIR/ && chmod 755 $REMOTE_DIR/sftp-server" 2>&1 &&
+      echo "deployed sftp-server to $REMOTE_DIR via Shizuku"
+    rm -rf "$stage"
+  else
+    echo "deploy: neither an adb connection to this phone ($(wlan_ip)) nor Shizuku/rish. Either:"
+    echo "  start Shizuku and export rish into PATH (Shizuku > Use Shizuku in terminal apps), or"
+    echo "  enable Wireless debugging, then: adb pair 127.0.0.1:<pairing-port>; adb connect $(wlan_ip):<port>"
+    return 1
+  fi
 }
 
 setup() {
@@ -134,13 +174,15 @@ status() {
   echo "Phone IP: ${ip:-unknown}   user: $u"
   if port_up 8022; then echo "  8022 (Termux view): UP"; else echo "  8022 (Termux view): down"; fi
   if port_up 8023; then echo "  8023 (shell view):  UP"; else echo "  8023 (shell view):  down"; fi
-  echo "  adb self-connection: ${s:-none (8023 will rescan, then try rish/Shizuku)}"
+  echo "  adb self-connection: ${s:-none}"
+  if rish_ok; then echo "  Shizuku (rish):      OK"; else echo "  Shizuku (rish):      unavailable"; fi
   cat <<EOF
 
 Windows (WinFsp + SSHFS-Win), Explorer > Map network drive:
   \\\\sshfs.r\\$u@$ip!8022\\storage\\emulated\\0              shared storage
   \\\\sshfs.r\\$u@$ip!8022\\data\\data\\com.termux\\files\\home   Termux home
-  \\\\sshfs.r\\$u@$ip!8023\\storage\\emulated\\0              shared storage incl. Android/data (ADB)
+  \\\\sshfs.r\\$u@$ip!8023\\storage\\emulated\\0              shared storage incl. Android/data (ADB/Shizuku)
+  \\\\sshfs.r\\$u@$ip!8023\\                                   whole filesystem as the shell user
 Password = your Termux password (change with: passwd)
 EOF
 }
@@ -153,10 +195,7 @@ start() {
   fi
   [ -f "$HOME/.termux_authinfo" ] || echo "warning: no Termux password set yet; run: passwd"
   write_state
-  s=$(self_serial)
-  if [ -n "$s" ] && ! adb -s "$s" shell "test -x $REMOTE_DIR/sftp-server" 2>/dev/null; then
-    deploy
-  fi
+  remote_deployed || deploy
   command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
   port_up 8022 || sshd
   port_up 8023 || sshd -f "$CONF"
