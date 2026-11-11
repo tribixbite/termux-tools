@@ -2,8 +2,11 @@
 # phone-share — expose this phone's files to a PC as mountable SFTP drives.
 #
 #   8022  Termux uid: Termux home + shared storage (/storage/emulated/0)
-#   8023  Android shell uid via wireless ADB to this same phone (Shizuku/rish
-#         fallback): adds Android/data, Android/obb, /data/local/tmp, ...
+#   8023  Android shell uid: adds Android/data, Android/obb, /data/local/tmp
+#         and a read-only view of /system etc. Reached through wireless ADB to
+#         this same phone, else Shizuku (rish), which is tried before a scan
+#         for the rotating wireless-debugging port. Not root: only what the
+#         shell uid can reach.
 #
 # Windows: install WinFsp + SSHFS-Win, then Explorer > Map network drive with
 # the \\sshfs.r\... paths printed by `phone-share status`. SMB is not an option:
