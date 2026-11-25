@@ -261,6 +261,13 @@ const CDP_MAX_BACKOFF_ATTEMPTS = 10;
 const CDP_TARGET_CACHE_TTL_MS = 10_000;
 /** CDP WebSocket message timeout (ms) */
 const CDP_TIMEOUT_MS = 15_000;
+/** Process-name prefix of Edge's tab renderers (Chromium sandboxed processes) */
+const EDGE_RENDERER_PREFIX = "com.microsoft.emmx.canary:sandboxed_process";
+/** Minimum gap between renderer freezer sweeps; a new renderer is only frozen
+ *  after ~40-60 s in the cached state, so a 10 s sweep cannot miss one. */
+const RENDERER_THAW_INTERVAL_MS = 10_000;
+/** Cap on the adb shell call of one sweep */
+const RENDERER_THAW_TIMEOUT_MS = 5_000;
 
 /**
  * Manages CDP connection to Edge Android via ADB.
@@ -762,8 +769,12 @@ class CdpManager {
    * renderer surface (the actual page content), so it works even when the Edge
    * app is backgrounded. `Page.bringToFront` is REQUIRED first: a backgrounded
    * renderer has no compositor surface and `captureScreenshot` fails with
-   * "Internal error" until the tab is the active one — bringToFront wakes the
-   * renderer without foregrounding the Edge app itself.
+   * "Internal error" until the tab is the active one. bringToFront DOES bring
+   * the Edge app to the foreground on Edge 154 Android (measured 2026-11-25:
+   * focus moved from RustDesk and from Termux to ChromeTabbedActivity), so a
+   * screenshot taken while the user is in another app takes over the screen.
+   * TODO: record the focused activity before bringToFront and restore it after
+   * the capture, or offer a no-foreground mode that returns an error instead.
    *
    * Fallback — ADB `screencap`: grabs the whole device screen (so Edge must be
    * foregrounded to show the page). Used only when CDP is unavailable or the
@@ -1024,6 +1035,68 @@ class CdpManager {
   /** Check if CDP is connected and ready */
   isAvailable(): boolean {
     return this.state === "connected" && this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** Renderer pids already given a sticky unfreeze (it lasts their lifetime) */
+  private thawedRenderers = new Set<number>();
+  private lastThawSweep = 0;
+  private thawInFlight: Promise<void> | null = null;
+
+  /**
+   * Exempt Edge's tab renderers from Android's cached-apps freezer.
+   *
+   * When the Edge app is not in the foreground, Chromium drops its renderer
+   * processes to cached priority and Android freezes them at the cgroup level
+   * (cgroup.freeze=1) after ~40-60 s. A frozen renderer answers nothing: every
+   * CDP Runtime/Input command and every extension content-script call for its
+   * tabs waits until the 15 s / 30 s timeouts. `Page.setWebLifecycleState`
+   * cannot reach it, and `Page.bringToFront` only works by foregrounding the
+   * Edge app. `cmd activity unfreeze --sticky` (shell uid, via adb) thaws a
+   * process and keeps it thawed for its lifetime, so each renderer pid needs it
+   * once; later sweeps only pick up renderers spawned since.
+   *
+   * Callers do not need to await this: a command queued to a frozen renderer
+   * runs as soon as the sweep thaws it. Hidden-tab throttling still applies to
+   * a thawed tab (timers batched to ~1/min, no requestAnimationFrame).
+   */
+  thawRenderers(): Promise<void> {
+    if (this.thawInFlight) return this.thawInFlight;
+    if (Date.now() - this.lastThawSweep < RENDERER_THAW_INTERVAL_MS) return Promise.resolve();
+    this.lastThawSweep = Date.now();
+    const skip = [...this.thawedRenderers].join(" ");
+    // Prints "pid N" for every live renderer and "thawed N" for each one newly
+    // made sticky-unfrozen. Runs as one shell so a sweep is a single adb call.
+    const script =
+      `for p in $(ps -A -o PID,NAME | awk '$2 ~ /^${EDGE_RENDERER_PREFIX.replace(/\./g, "\\.")}/ {print $1}'); do ` +
+      `echo "pid $p"; case " ${skip} " in *" $p "*) continue;; esac; ` +
+      `cmd activity unfreeze --sticky "$p" >/dev/null 2>&1 && echo "thawed $p"; done`;
+    this.thawInFlight = (async () => {
+      try {
+        const proc = spawnProcess(adb("shell", script));
+        const timer = setTimeout(() => proc.kill(9), RENDERER_THAW_TIMEOUT_MS);
+        const out = proc.stdout ? await new Response(proc.stdout).text() : "";
+        await proc.exited;
+        clearTimeout(timer);
+        const live = new Set<number>();
+        const newlyThawed: number[] = [];
+        for (const line of out.split("\n")) {
+          const [kind, pidText] = line.trim().split(" ");
+          const pid = parseInt(pidText, 10);
+          if (isNaN(pid)) continue;
+          if (kind === "pid") live.add(pid);
+          else if (kind === "thawed") newlyThawed.push(pid);
+        }
+        // Forget dead renderers so pid reuse cannot skip a new process.
+        for (const pid of this.thawedRenderers) if (!live.has(pid)) this.thawedRenderers.delete(pid);
+        for (const pid of newlyThawed) this.thawedRenderers.add(pid);
+        if (newlyThawed.length) log("info", `CDP: exempted Edge renderer(s) ${newlyThawed.join(", ")} from the Android freezer`);
+      } catch (err) {
+        log("debug", `CDP: renderer thaw sweep failed — ${(err as Error).message}`);
+      } finally {
+        this.thawInFlight = null;
+      }
+    })();
+    return this.thawInFlight;
   }
 
   /** Get status info for /health endpoint */
@@ -1750,6 +1823,11 @@ function handleNativeMessage(json: string, reply: (json: string) => boolean = se
       log("debug", `Unwrapped execute_tool → ${parsed.method}`);
     }
 
+    // Every tool ends up in an Edge renderer (CDP intercepts and extension
+    // content scripts alike); make sure Android has not frozen it. Not awaited:
+    // a frozen renderer runs the queued command once the sweep thaws it.
+    if (parsed.type === "tool_request") void cdpManager.thawRenderers();
+
     // CDP intercept: handle javascript_tool via CDP when available.
     // CDP bypasses MV3 CSP limitations — full eval, async/await, fetch, etc.
     if (parsed.type === "tool_request" && parsed.method === "javascript_tool" && cdpManager.isAvailable()) {
@@ -2201,6 +2279,8 @@ const server: BridgeServer = createBridgeServer({
 
         lastToolName = body.method;
         lastToolTime = new Date().toISOString();
+        // The screenshot intercept below bypasses handleNativeMessage's sweep.
+        void cdpManager.thawRenderers();
 
         // Screenshot / zoom intercept. The extension can't capture on Edge
         // Android (no captureVisibleTab, CDP page endpoints unreachable from the
