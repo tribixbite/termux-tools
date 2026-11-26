@@ -1,3 +1,44 @@
+# Session handoff — 2026-11-10 → 11-26 (phone-share, CFC freezer, operad CI)
+
+State: termux-tools `main` = origin (`0e24605`) plus this handoff entry;
+operad `main` = origin (`ca3b4dea`) plus the CHANGELOG commit `a9f984b9`
+(both unpushed). operad's uncommitted `.claude/settings.json` and
+`sprints/advance.sh` belong to another session.
+
+## Done
+- **phone-share on the SM-X730 tablet (192.168.0.68)** — 8022 and 8023 work, via
+  adb and via Shizuku with adb disconnected (20–30 MB round trips byte-identical).
+  Root cause of the Shizuku hang: rish 13.6 non-tty splits remote stdout across its
+  stdout+stderr, and a `rish -c true` probe ate the SFTP INIT. Fix `68be9d1`: rish
+  only launches `sftp-server |& toybox nc 127.0.0.1 PORT <&p >&p`, dialing a Termux
+  `nc -l -N`. Released as termux-tools **1.1.1** on npm (1.0.1/1.1.0 never
+  published; trusted publisher was stage-only until the user fixed it 11-11).
+  This phone's ssh key is in the tablet's `~/.ssh/authorized_keys`.
+- **CFC tools timing out while Edge is backgrounded** — cause: Android's cached-apps
+  freezer (`cgroup.freeze=1`) suspends Edge's `:sandboxed_process` renderers ~40–60 s
+  after Edge leaves the foreground; no CDP/extension call reaches a frozen renderer.
+  Not Chromium (`StopInBackground` flag tried and reverted; `setWebLifecycleState`
+  can't reach it). Fix `0e24605`: bridge `CdpManager.thawRenderers()` runs
+  `cmd activity unfreeze --sticky` on new renderer pids per tool request (≤ every
+  10 s, via adb). Live bridge runs it.
+- **operad**: soft-restart section of `docs/persistence.md` points at its code
+  (`8f624634`); CI fixed on all runners (`ca29df05` title-cache mtime pinning,
+  `d5ae86f6` Windows sqlite/413/longpaths, `ca3b4dea` Windows test fixes).
+
+## Open / TODO
+- **CFC end-to-end test of the thaw is still unrun**: a real `/tool` call against a
+  frozen renderer through the new bridge. Blocked 11-25 because LMK killed Edge
+  within 30–70 s of each launch (another session's `node scripts/engine-smoke.ts`
+  at up to 3 GB + a Gradle JVM). Proven pieces: manual unfreeze (eval 11 ms after,
+  TIMEOUT before) and a read-only dry run of the sweep script.
+- `captureScreenshot()`'s `Page.bringToFront` **foregrounds the Edge app** (measured;
+  the old "without foregrounding" note was wrong). TODO in `claude-chrome-bridge.ts`:
+  restore the prior activity after capture, or a no-foreground mode.
+- A thawed hidden tab is still throttled (timers ~1/min, no rAF): page JS waiting on
+  those stays slow.
+- Each sticky-unfrozen renderer keeps running while Edge is backgrounded; watch for a
+  memory/battery cost.
+
 # Pen-stroke bridge upgrade — 2026-09-29
 
 - Added typed per-point pressure, tilt X/Y, twist and timing validation, a
