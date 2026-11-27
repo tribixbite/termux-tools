@@ -1,3 +1,39 @@
+# Session handoff — 2026-11-27 (bridge 1.7.0 / extension 1.13.0 release)
+
+State: everything below is committed and pushed; `bridge-v1.7.0` tagged (publishes
+`claude-chrome-android@1.7.0` with the 1.13.0 CRX). Live bridge and the device's
+`/data/local/tmp/cfc-ext` run this release; Edge restarted so it registered 1.13.0.
+
+## Done
+- **Wake on by default** (user decision): when a tab is frozen by Edge after the renderer
+  thaw, `ensurePageAwake()` wakes it (bringToFront + refocus) before page tools,
+  `javascript_tool` and `computer` input. Safety: never with the screen off, the keyguard
+  up or a call active; at most one wake per 5 s; concurrent requests share one wake.
+  `BRIDGE_WAKE_FROZEN_TABS=0` → fail fast (~2 s) with the reason. Verified: frozen tab →
+  `get_page_text` 2.3 s via wake.
+- Screenshots refocus the previous app after `bringToFront` (verified: back to Termux).
+- `/health` → `cdp.background`: renderers exempted, sweep failures, frozen pages, wakes,
+  skipped wakes + last reason.
+- `edge-fix/scripts/push-extension.sh`: keeps the manifest `key` (from the device copy or
+  derived from `edge-claude-ext.pem`); without it the unpacked copy got a different id.
+  Picks this phone by boot_id instead of the first `adb devices` line.
+- The device had stale `launcher.js`/`popup.js` (Aug 29, missing the Sep 27 startup/share
+  fixes); the whole extension is now deployed from the repo.
+- Docs: bridge README (env vars, "Working while Edge is in the background", 1.7.0
+  changelog), site `/bridge` (env table, background card), skill `cfc-edge-bridge.md`.
+
+## Open / TODO
+- Untested on the device: the wake-skip paths (screen off / locked / in call), and
+  `javascript_tool` with an `await` on a frozen tab (same `ensurePageAwake` path as the
+  tested page tools).
+- What triggers Edge's page freeze is unknown (not every hidden tab, not battery saver,
+  not `EdgeSleepingTabs`).
+- `executeInMainWorld` (JS fallback without CDP) unmeasured on hidden tabs; hover/drag on
+  hidden tabs untested.
+- No rAF in hidden tabs.
+- The bridge is started by hand (`cd bridge && node dist/cli.js`, log
+  `~/claudetmp/cfc-bridge.log`), not by operad; a reboot or kill leaves it down.
+
 # Session handoff — 2026-11-27 (CFC background tabs, second pass)
 
 State: termux-tools `main` = origin (`0e24605`) plus `7687967` (handoff), `7de7f5d`
@@ -33,13 +69,12 @@ extension files are deployed to `/data/local/tmp/cfc-ext` and loaded.
   hidden-tab notes on input results, per-tool duration logging.
 
 ## Open / TODO
-- Decide `BRIDGE_WAKE_FROZEN_TABS` default (user). The launcher that starts the
-  bridge would need the env var if enabled.
+- ~~Decide `BRIDGE_WAKE_FROZEN_TABS` default~~ — on by default since 1.7.0 (see above).
 - What triggers Edge's page freeze is unknown (not every hidden tab; not battery
   saver; `EdgeSleepingTabs`/`AutoDiscardSleepingTabsEnabled` exist in base.apk).
 - `executeInMainWorld` (JS fallback without CDP) unmeasured in hidden tabs (TODO in
   content.js). `hover`/drag `mouseMoved` on hidden tabs untested.
-- Screenshot `bringToFront` still foregrounds Edge (TODO in the bridge).
+- ~~Screenshot `bringToFront` still foregrounds Edge~~ — refocuses the previous app since 1.7.0.
 - No rAF in hidden tabs; page JS waiting on it stays stalled.
 
 # Session handoff — 2026-11-10 → 11-26 (phone-share, CFC freezer, operad CI)

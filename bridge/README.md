@@ -159,8 +159,46 @@ The bridge serves the CRX at `http://127.0.0.1:18963/ext/crx` — open this URL 
 | `BRIDGE_TOKEN` | *(empty)* | Optional shared secret for auth |
 | `BRIDGE_LOG_LEVEL` | `info` | debug, info, warn, error |
 | `CDP_PORT` | `9223` | ADB forward port for Chrome DevTools Protocol |
+| `BRIDGE_ADB_SERIAL` | *(this phone)* | adb serial of the device to automate. Unset, the bridge picks the attached device whose `boot_id` matches the phone it runs on, then the first one running Edge Canary |
+| `BRIDGE_WAKE_FROZEN_TABS` | `1` | `0` makes tools fail fast on a tab Edge has frozen instead of briefly showing Edge to wake it |
+
+## Working while Edge is in the background
+
+Tools keep working when another app (Termux, a game, anything) is in front.
+Android and Edge get in the way in three ways, and the bridge handles each:
+
+1. **Android freezes Edge's tab processes** about 40–60 s after Edge leaves the
+   foreground. Before each tool the bridge exempts new ones with
+   `cmd activity unfreeze --sticky` over adb (once per process, at most every 10 s).
+2. **Edge freezes some hidden pages itself**, often within a couple of minutes.
+   Such a page still answers synchronous `javascript_tool` code but runs no timers,
+   promises or extension page tools. The bridge checks the target page first and,
+   if it is frozen, wakes it: Edge shows for about a second, then the app you were
+   using comes back. It does not wake while the screen is off, the phone is
+   locked or a call is active, nor more than once every 5 s. In those cases (or
+   with `BRIDGE_WAKE_FROZEN_TABS=0`) page tools fail in about 2 s with the reason,
+   instead of timing out after 30 s.
+3. **Hidden tabs are throttled**: timers fire about once a minute and
+   `requestAnimationFrame` never fires. Click and scroll results on a hidden tab
+   say so; re-read the page before relying on what the input changed.
+
+Screenshots have to bring Edge forward to render a frame; the previously
+focused app is restored afterwards. `GET /health` reports these layers under
+`cdp.background` (renderers exempted, frozen pages found, wakes, skipped wakes
+and the last reason).
 
 ## Changelog
+
+### 1.7.0
+
+- Tools work while Edge is not the foreground app: Edge's renderer processes are exempted from Android's cached-apps freezer; tabs Edge froze itself are detected and woken (screen on, unlocked, no call; refocuses the previous app), or fail in ~2 s with the reason (`BRIDGE_WAKE_FROZEN_TABS=0`)
+- Tab ids always resolve to their own tab: an unknown URL is refreshed from the extension instead of falling back to the first page, and duplicate URLs prefer an unclaimed target
+- Screenshots restore the previously focused app after `Page.bringToFront`; the adb screencap fallback refuses to capture another app
+- adb device choice prefers the phone the bridge runs on (`boot_id` match) when several devices are attached
+- Per-tool outcome and duration in the bridge log; background-layer counters in `/health`
+- Extension 1.13.0: page requests no longer wait on a throttled timer, page-script waits fit inside the 30 s tool timeout, tab-less tools skip the per-tab queue, `navigate` reports a load that did not finish
+
+### 1.6.0
 
 ### 1.6.0
 

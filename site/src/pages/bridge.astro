@@ -78,7 +78,7 @@ import Footer from "../components/Footer.astro";
 <span class="text-terminal-dim">└──────────────────────────────────────────────────────────────┘</span></code></pre>
         </div>
 
-        <div class="mt-6 grid gap-4 sm:grid-cols-3">
+        <div class="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
             <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan">Multi-Session</h3>
             <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
@@ -99,6 +99,14 @@ import Footer from "../components/Footer.astro";
               Lazy-spawn native host on first connection.<br>
               Auto-restart on crash, 15s heartbeat.<br>
               CDP reconnect with exponential backoff.
+            </p>
+          </div>
+          <div class="rounded-lg border border-terminal-border/50 bg-terminal-surface/50 p-4">
+            <h3 class="mb-2 font-[family-name:var(--font-mono)] text-sm font-medium text-terminal-cyan">Works in the Background</h3>
+            <p class="font-[family-name:var(--font-mono)] text-xs text-terminal-dim">
+              Exempts Edge's renderers from Android's app freezer.<br>
+              Detects tabs Edge froze; wakes them briefly, then refocuses your app.<br>
+              Never wakes with the screen off, the phone locked or during a call.
             </p>
           </div>
         </div>
@@ -165,8 +173,10 @@ import Footer from "../components/Footer.astro";
                 { name: "BRIDGE_TOKEN", def: "(empty)", desc: "Optional shared secret for auth" },
                 { name: "BRIDGE_LOG_LEVEL", def: "info", desc: "debug | info | warn | error" },
                 { name: "CDP_PORT", def: "9223", desc: "ADB forward port for Chrome DevTools Protocol" },
-              ].map((v, i) => (
-                <tr class={i < 4 ? "border-b border-terminal-border/30" : ""}>
+                { name: "BRIDGE_ADB_SERIAL", def: "(this phone)", desc: "adb serial of the target device; default matches this phone's boot_id" },
+                { name: "BRIDGE_WAKE_FROZEN_TABS", def: "1", desc: "0 = fail fast instead of briefly showing Edge to wake a tab Edge froze" },
+              ].map((v, i, all) => (
+                <tr class={i < all.length - 1 ? "border-b border-terminal-border/30" : ""}>
                   <td class="px-4 py-2.5 text-terminal-bright">{v.name}</td>
                   <td class="px-4 py-2.5 text-terminal-amber">{v.def}</td>
                   <td class="px-4 py-2.5 text-terminal-dim">{v.desc}</td>

@@ -71,8 +71,13 @@ nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>
 Verify:
 ```bash
 curl -s http://127.0.0.1:18963/health | python3 -m json.tool
-# Expected: {"status":"ok","version":"1.10.0","clients":1,...}
+# Expected: {"status":"ok","version":"1.13.0","clients":1,"cdp":{"state":"connected",...,"background":{...}}}
 ```
+
+Check the extension Edge actually loaded (its background page over CDP), not only the files on disk:
+`chrome.runtime.getManifest().version`. Edge re-reads the unpacked files on
+`chrome.runtime.reload()`, but **a changed manifest (e.g. a version bump) only registers after an
+Edge restart** — until then `getManifest()` reports an older version while the new scripts run.
 
 ### 3. Push extension to device
 
@@ -256,7 +261,31 @@ adb shell am start -n com.microsoft.emmx.canary/com.google.android.apps.chrome.I
 
 ### Tools timing out
 
-Navigate to a new page to reset the content script port. The FIFO queue may be stuck — check bridge logs for errors.
+First check `/health` → `cdp.background` and the bridge log (each `/tool` call logs its
+outcome and duration). Since bridge 1.7.0 a timeout is no longer the expected symptom of
+background trouble; see "Edge in the background" below. Otherwise navigate to a new page to
+reset the content script port; the per-tab queue may be stuck behind a hung request.
+
+## Edge in the background (bridge 1.7.0+)
+
+Three separate layers stop page work while Edge is not the foreground app:
+
+| Layer | Symptom | Handling |
+|---|---|---|
+| Android cached-apps freezer (`cgroup.freeze=1` on `:sandboxed_process` renderers, ~40–60 s after Edge leaves the front) | every CDP call and content-script tool hangs, even sync `document.title` | `thawRenderers()`: `cmd activity unfreeze --sticky` on each new renderer, swept before tools (≤ every 10 s) |
+| Edge freezes the hidden page itself (Page Lifecycle `freeze`, often ~45–110 s; not every tab) | sync CDP answers; timers, MessageChannel, content-script messages never run | `ensurePageAwake()`: MessageChannel probe (1.5 s), then `Page.bringToFront` + refocus of the previous app. Skipped (tool fails in ~2 s with the reason) when the screen is off, locked, in a call, within 5 s of the last wake, or `BRIDGE_WAKE_FROZEN_TABS=0` |
+| Ordinary hidden-tab throttling | timers ~1/min, no `requestAnimationFrame` | input results carry a "tab hidden" note; re-read the page |
+
+Not fixable by flags: `Page.setWebLifecycleState active`, `StopInBackground`,
+`IntensiveWakeUpThrottling`, `--disable-background-timer-throttling`,
+`--disable-renderer-backgrounding` and `--disable-features=EdgeSleepingTabs` were all tested
+against a no-flag control (2026-11-27) and changed nothing.
+
+Testing these: reproduce the OS freezer with `cmd activity freeze --sticky <renderer pid>`;
+create two tabs so the first is hidden and poll it with a MessageChannel round trip to see Edge's
+freeze; probe pages through `ws://127.0.0.1:9223/devtools/page/<json id>` (a second client's
+browser-level `Target.attachToTarget` gets a session but no replies). `/json/list` keeps stale rows
+for closed tabs; `Target.getTargets` lists only live ones (the bridge uses the latter).
 
 ### "Content port disconnected" errors
 
