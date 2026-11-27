@@ -17,8 +17,17 @@
 - Not upgraded on purpose: TypeScript 7 (no Android ARM64 native compiler here; stays 5.9.3).
 
 ## Open / TODO
-- `site/` (private, deployed): 71 advisories (1 critical) in astro 5 / svelte / tailwind
-  deps; needs astro 7 + @astrojs/svelte 9 majors — separate task.
+- ~~`site/` 71 advisories~~ — done 2026-11-27: astro 5.18 → 7.4.13, @astrojs/svelte 7 → 9,
+  svelte 5.59, tailwind 4.3.5 (Vite 8 / rolldown). `npm audit` of a fresh CI-style resolution:
+  0 vulnerabilities. `compressHTML: true` keeps Astro 5 whitespace (Astro 7's `'jsx'` default
+  glued inline elements together on 5 pages). Text, `<pre>` and island count identical to the
+  Astro 5 build on all 6 pages; screenshots identical at 412/1280 px except the pulsing cursor.
+  Deploy workflow on Node 24 (Astro 7 needs ≥ 22.23.4). `fix-android-binaries.mjs` now finds
+  every `*android-arm64` optional binding (rolldown, Rust compiler, Sätteri, oxide, lightningcss,
+  esbuild, rollup) and installs the exact version beside each copy.
+- Local site installs: bun with the bunfig `~` cache resolved stale metadata (vulnerable
+  picomatch/source-map-js, old h3) and then could not download (`FailedToOpenSocket`); `npm install`
+  (what CI runs) installs cleanly, android natives included.
 - `~/.bun/bin/bunfig.toml` `[install.cache] dir = "~/.bun/install/cache"` is not expanded
   in some invocations, so bun writes a literal `./~/.bun/install/cache` into the cwd (seen
   in bridge/ and claude-channel/, removed). Use an absolute path there.
