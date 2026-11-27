@@ -10,7 +10,7 @@
  *   CRX_PEM="base64..." node scripts/build-crx.js  # uses PEM from env (CI)
  */
 
-const { readFileSync, writeFileSync, mkdirSync } = require("fs");
+const { readFileSync, readdirSync, writeFileSync, mkdirSync } = require("fs");
 const { join, resolve } = require("path");
 const crx3 = require("crx3");
 
@@ -34,7 +34,12 @@ async function main() {
   const outPath = join(DIST_DIR, OUT_NAME);
 
   try {
-    await crx3([EXT_DIR], {
+    // Pack only what Edge loads: the store listing, privacy and tester notes
+    // (*.md) live next to the extension but do not belong in the CRX.
+    const files = readdirSync(EXT_DIR)
+      .filter((name) => !name.endsWith(".md"))
+      .map((name) => join(EXT_DIR, name));
+    await crx3(files, {
       keyPath: pemPath,
       crxPath: outPath,
     });
