@@ -64,6 +64,11 @@ build({
     }
     console.log(`Copied ${copied} extension files → dist/edge-claude-ext/`);
   }
+
+  // The package declares MIT; ship the licence text itself (npm includes a
+  // root LICENSE automatically). Generated, so git-ignored.
+  copyFileSync(resolve(__dirname, "../LICENSE"), resolve(__dirname, "LICENSE"));
+  console.log("Copied LICENSE");
 }).catch((err) => {
   console.error("Build failed:", err);
   process.exit(1);

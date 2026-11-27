@@ -189,6 +189,13 @@ and the last reason).
 
 ## Changelog
 
+### 1.7.1
+
+- After waking a tab or taking a screenshot, the bridge brings back the task that was in front through its root package's launcher intent. Starting the focused activity by component left Edge on top of apps that run inside another app's task, such as a Chrome web app
+- Bundles `ws` 8.23.0 (fixes GHSA-96hv-2xvq-fx4p memory-exhaustion DoS and GHSA-58qx-3vcg-4xpx uninitialised-memory disclosure in the bridge's WebSocket server); builds with esbuild 0.28; drops the unused `@anthropic-ai/claude-code` dev dependency
+- The package now ships its MIT `LICENSE`
+- Extension 1.13.1: the CRX contains only the files Edge loads (no store listing, privacy or tester notes); built with crx3 2.0
+
 ### 1.7.0
 
 - Tools work while Edge is not the foreground app: Edge's renderer processes are exempted from Android's cached-apps freezer; tabs Edge froze itself are detected and woken (screen on, unlocked, no call; refocuses the previous app), or fail in ~2 s with the reason (`BRIDGE_WAKE_FROZEN_TABS=0`)

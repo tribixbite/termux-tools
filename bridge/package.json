@@ -1,7 +1,7 @@
 {
   "name": "claude-chrome-android",
-  "version": "1.7.0",
-  "description": "Claude Code Browser Bridge for Android \u2014 connects Claude Code CLI to Chrome/Edge via WebSocket",
+  "version": "1.7.1",
+  "description": "Claude Code Browser Bridge for Android — connects Claude Code CLI to Chrome/Edge via WebSocket",
   "author": "willstone",
   "license": "MIT",
   "repository": {
@@ -23,13 +23,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "*",
-    "@types/bun": "1.4.3",
-    "@types/node": "26.6.5",
+    "@types/bun": "1.4.5",
+    "@types/node": "26.6.11",
     "@types/ws": "8.18.2",
-    "esbuild": "^0.24.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
-    "ws": "^8.18.0"
+    "ws": "^8.23.0"
   },
   "keywords": [
     "claude",
