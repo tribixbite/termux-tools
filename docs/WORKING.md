@@ -28,9 +28,10 @@
 - Local site installs: bun with the bunfig `~` cache resolved stale metadata (vulnerable
   picomatch/source-map-js, old h3) and then could not download (`FailedToOpenSocket`); `npm install`
   (what CI runs) installs cleanly, android natives included.
-- `~/.bun/bin/bunfig.toml` `[install.cache] dir = "~/.bun/install/cache"` is not expanded
-  in some invocations, so bun writes a literal `./~/.bun/install/cache` into the cwd (seen
-  in bridge/ and claude-channel/, removed). Use an absolute path there.
+- ~~bunfig literal `~` cache path~~ — fixed 2026-11-27: removed `[install.cache] dir` from
+  `~/.bunfig.toml` (the global config, which bun loads on top of `--config`) and from
+  bun-on-termux `config/bunfig.toml` (`94d7c17`, copied to `~/.bun/bin/`). Bun's default
+  resolves `~/.bun/install/cache` correctly; verified with `bun pm cache` and a test install.
 
 # Session handoff — 2026-11-27 (bridge 1.7.0 / extension 1.13.0 release)
 
