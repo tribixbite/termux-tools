@@ -1,6 +1,50 @@
+# Session handoff — 2026-11-27 (CFC background tabs, second pass)
+
+State: termux-tools `main` = origin (`0e24605`) plus `7687967` (handoff), `7de7f5d`
+(extension) and `54a5265` (bridge), all unpushed. Live bridge runs `54a5265`
+(`node dist/cli.js` in `bridge/`, log `~/claudetmp/cfc-bridge.log`); the edited
+extension files are deployed to `/data/local/tmp/cfc-ext` and loaded.
+
+## Done
+- Another agent reported `0e24605` "not comprehensive"; a Fable review plus an
+  end-to-end test against frozen tabs found three more layers, now fixed:
+  1. Content script started every request with `setTimeout(0)`; hidden-tab timers
+     run ~1/min, so page tools timed out (`7de7f5d`: microtask). Background page
+     waited 30+30 s per dead tab and queued tab-less tools behind it (now 12+12 s,
+     tab-less tools unqueued).
+  2. `resolveTarget` fell back to the first page target when a tab's URL was unknown,
+     so JS/clicks/scrolls hit an unrelated user tab (`54a5265`: refresh from the
+     extension, then fail rather than guess). Verified: new tab resolves; unknown
+     id → "no target found".
+  3. **Edge freezes some hidden pages itself** (Page Lifecycle `freeze`, ~45–110 s
+     after hiding): sync CDP still answers, but timers, MessageChannel and all
+     content-script requests wait until visible. Nothing found undoes it except
+     `Page.bringToFront` (foregrounds Edge) or a reload. Ruled out by tests:
+     `setWebLifecycleState active`; `StopInBackground`/`IntensiveWakeUpThrottling`/
+     `--disable-background-timer-throttling`/`--disable-renderer-backgrounding`
+     (a no-flag control behaved the same); `--disable-features=EdgeSleepingTabs`
+     (still froze at ~100 s). All flag experiments reverted on device and in repo.
+     Bridge now probes page tools' target (MessageChannel, 1.5 s) and fails in
+     ~1.7 s with an explanation; `BRIDGE_WAKE_FROZEN_TABS=1` wakes via
+     bringToFront + refocus of the previous app (verified 1.8 s, Termux refocused).
+     **Default is off — awaiting the user's decision.**
+  Also: boot_id-based adb serial choice, sweep pid+starttime keys and retry on
+  failure, /pen-stroke sweep, screencap fallback refuses non-Edge foreground,
+  hidden-tab notes on input results, per-tool duration logging.
+
+## Open / TODO
+- Decide `BRIDGE_WAKE_FROZEN_TABS` default (user). The launcher that starts the
+  bridge would need the env var if enabled.
+- What triggers Edge's page freeze is unknown (not every hidden tab; not battery
+  saver; `EdgeSleepingTabs`/`AutoDiscardSleepingTabsEnabled` exist in base.apk).
+- `executeInMainWorld` (JS fallback without CDP) unmeasured in hidden tabs (TODO in
+  content.js). `hover`/drag `mouseMoved` on hidden tabs untested.
+- Screenshot `bringToFront` still foregrounds Edge (TODO in the bridge).
+- No rAF in hidden tabs; page JS waiting on it stays stalled.
+
 # Session handoff — 2026-11-10 → 11-26 (phone-share, CFC freezer, operad CI)
 
-State: termux-tools `main` = origin (`0e24605`) plus this handoff entry;
+State (as of 11-26): termux-tools `main` = origin (`0e24605`) plus this handoff entry;
 operad `main` = origin (`ca3b4dea`) plus the CHANGELOG commit `a9f984b9`
 (both unpushed). operad's uncommitted `.claude/settings.json` and
 `sprints/advance.sh` belong to another session.
@@ -26,11 +70,8 @@ operad `main` = origin (`ca3b4dea`) plus the CHANGELOG commit `a9f984b9`
   `d5ae86f6` Windows sqlite/413/longpaths, `ca3b4dea` Windows test fixes).
 
 ## Open / TODO
-- **CFC end-to-end test of the thaw is still unrun**: a real `/tool` call against a
-  frozen renderer through the new bridge. Blocked 11-25 because LMK killed Edge
-  within 30–70 s of each launch (another session's `node scripts/engine-smoke.ts`
-  at up to 3 GB + a Gradle JVM). Proven pieces: manual unfreeze (eval 11 ms after,
-  TIMEOUT before) and a read-only dry run of the sweep script.
+- ~~CFC end-to-end test of the thaw~~ — done 11-27: production log shows sweeps
+  exempting renderers; a bridge sweep thawed a deliberately frozen renderer.
 - `captureScreenshot()`'s `Page.bringToFront` **foregrounds the Edge app** (measured;
   the old "without foregrounding" note was wrong). TODO in `claude-chrome-bridge.ts`:
   restore the prior activity after capture, or a no-foreground mode.
