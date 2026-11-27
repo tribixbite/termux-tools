@@ -1,3 +1,28 @@
+# Session handoff — 2026-11-27 (package audit: bridge 1.7.1, extension 1.13.1, termux-tools 1.1.2)
+
+## Done
+- Audit of everything termux-tools publishes (no pip packages exist; npm:
+  `claude-chrome-android`, `termux-tools`; CRX via the bridge release):
+  - bridge: bundled `ws` 8.19 → 8.23 (GHSA-96hv-2xvq-fx4p DoS, GHSA-58qx-3vcg-4xpx disclosure);
+    esbuild 0.24 → 0.28; dropped the unused `@anthropic-ai/claude-code` dev dep (5 high
+    advisories, never imported); `bun audit` clean. Package now ships `LICENSE`.
+  - root CRX tooling: crx3 1.1.3 → 2.0.0 (clears protocol-buffers-schema prototype
+    pollution; needs Node ≥ 22, so `build-crx.yml` moved 20 → 24); `npm audit` clean. CRX
+    now packs only runtime files (no *.md).
+  - termux-tools: @types/bun 1.4.5, @types/node 22.20.7; 75 tests pass; audit clean.
+  - Bug found while testing on the device: refocus by `am start -n <activity>` did not bring
+    back a Chrome web app (its activity lives in the webapk's task) and left Edge on top.
+    Fixed: resume the top task's root package via its launcher intent (verified on the
+    web app: Edge flashed, task t58138 came back).
+- Not upgraded on purpose: TypeScript 7 (no Android ARM64 native compiler here; stays 5.9.3).
+
+## Open / TODO
+- `site/` (private, deployed): 71 advisories (1 critical) in astro 5 / svelte / tailwind
+  deps; needs astro 7 + @astrojs/svelte 9 majors — separate task.
+- `~/.bun/bin/bunfig.toml` `[install.cache] dir = "~/.bun/install/cache"` is not expanded
+  in some invocations, so bun writes a literal `./~/.bun/install/cache` into the cwd (seen
+  in bridge/ and claude-channel/, removed). Use an absolute path there.
+
 # Session handoff — 2026-11-27 (bridge 1.7.0 / extension 1.13.0 release)
 
 State: everything below is committed and pushed; `bridge-v1.7.0` tagged (publishes

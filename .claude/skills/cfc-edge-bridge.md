@@ -71,7 +71,7 @@ nohup bun ~/git/termux-tools/claude-chrome-bridge.ts > $PREFIX/tmp/bridge.log 2>
 Verify:
 ```bash
 curl -s http://127.0.0.1:18963/health | python3 -m json.tool
-# Expected: {"status":"ok","version":"1.13.0","clients":1,"cdp":{"state":"connected",...,"background":{...}}}
+# Expected: {"status":"ok","version":"1.13.1","clients":1,"cdp":{"state":"connected",...,"background":{...}}}
 ```
 
 Check the extension Edge actually loaded (its background page over CDP), not only the files on disk:
@@ -280,6 +280,13 @@ Not fixable by flags: `Page.setWebLifecycleState active`, `StopInBackground`,
 `IntensiveWakeUpThrottling`, `--disable-background-timer-throttling`,
 `--disable-renderer-backgrounding` and `--disable-features=EdgeSleepingTabs` were all tested
 against a no-flag control (2026-11-27) and changed nothing.
+
+Restoring the user's app after a wake or screenshot (1.7.1+): the bridge records the top task's
+ROOT package (`topResumedActivity` → task id → its `intent=… cmp=` in `dumpsys activity recents`)
+and relaunches it with `monkey -p <pkg> -c android.intent.category.LAUNCHER 1`, which resumes the
+existing task. `am start -n <focused activity>` alone fails for activities hosted in another
+app's task (a Chrome web app's `SameTaskWebApkActivity` lives in the
+`org.chromium.webapk.<id>` task) and left Edge in front.
 
 Testing these: reproduce the OS freezer with `cmd activity freeze --sticky <renderer pid>`;
 create two tabs so the first is hidden and poll it with a MessageChannel round trip to see Edge's
