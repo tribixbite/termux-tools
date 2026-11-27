@@ -292,9 +292,15 @@ const RENDERER_THAW_INTERVAL_MS = 10_000;
 const RENDERER_THAW_TIMEOUT_MS = 5_000;
 /** How long a page gets to answer a liveness probe before it counts as frozen */
 const PAGE_PROBE_TIMEOUT_MS = 1_500;
-/** Opt-in: wake a frozen tab with Page.bringToFront (shows Edge on screen for
- *  a moment, then refocuses the previous app) instead of failing the tool */
-const WAKE_FROZEN_TABS = process.env.BRIDGE_WAKE_FROZEN_TABS === "1";
+/** Wake a tab Edge has frozen with Page.bringToFront (shows Edge on screen for
+ *  a moment, then refocuses the previous app) when thawing the renderer was not
+ *  enough. On by default; BRIDGE_WAKE_FROZEN_TABS=0 makes such tools fail fast. */
+const WAKE_FROZEN_TABS = process.env.BRIDGE_WAKE_FROZEN_TABS !== "0";
+/** Minimum gap between two wakes, so a burst of tool calls cannot flicker the screen */
+const WAKE_MIN_INTERVAL_MS = 5_000;
+/** Resolves only when the page's task queues run (a frozen page never answers) */
+const MESSAGE_CHANNEL_PROBE =
+  "new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(1); c.port2.postMessage(0); })";
 /** Extension tools that run inside the page and therefore stall on a frozen one */
 const EXTENSION_PAGE_TOOLS = new Set(["get_page_text", "read_page", "find", "form_input"]);
 
@@ -835,9 +841,9 @@ class CdpManager {
    * "Internal error" until the tab is the active one. bringToFront DOES bring
    * the Edge app to the foreground on Edge 154 Android (measured 2026-11-25:
    * focus moved from RustDesk and from Termux to ChromeTabbedActivity), so a
-   * screenshot taken while the user is in another app takes over the screen.
-   * TODO: record the focused activity before bringToFront and restore it after
-   * the capture, or offer a no-foreground mode that returns an error instead.
+   * screenshot taken while the user is in another app briefly takes over the
+   * screen; the previously focused activity is started again after capture
+   * (not possible for the lock screen or notification shade).
    *
    * Fallback — ADB `screencap`: grabs the whole device screen (so Edge must be
    * foregrounded to show the page). Used only when CDP is unavailable or the
@@ -856,9 +862,16 @@ class CdpManager {
             sessionId = attach.sessionId;
             this.sessionMap.set(targetId, sessionId);
           }
-          // Wake the renderer so a backgrounded tab can produce a frame.
-          try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
-          const shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId) as { data?: string };
+          // Wake the renderer so a backgrounded tab can produce a frame. This
+          // brings the Edge app forward, so refocus the previous app after.
+          const before = this.readDeviceState();
+          let shot: { data?: string };
+          try {
+            try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
+            shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId) as { data?: string };
+          } finally {
+            this.refocus(before.focus, "captured screenshot");
+          }
           if (shot?.data) {
             log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
             return { data: normalizeScreenshot(shot.data) };
@@ -1028,8 +1041,8 @@ class CdpManager {
     }
   }
 
-  /** Attached CDP session for an extension tab, or null when it has no target */
-  private async sessionForTab(tabId: number): Promise<string | null> {
+  /** Attached CDP session for an extension tab (or the active one), or null when it has no target */
+  private async sessionForTab(tabId?: number): Promise<string | null> {
     const targetId = await this.resolveTarget(tabId);
     if (!targetId) return null;
     let sessionId = this.sessionMap.get(targetId);
@@ -1060,48 +1073,115 @@ class CdpManager {
    * it does not even answer synchronously (an OS-frozen or dead renderer is a
    * different problem, handled by thawRenderers).
    */
-  async pageIsFrozen(tabId: number): Promise<boolean> {
+  async pageIsFrozen(tabId?: number): Promise<boolean> {
     try {
       const sessionId = await this.sessionForTab(tabId);
       if (!sessionId) return false;
       if (await this.evaluateWithin(sessionId, "1", false, PAGE_PROBE_TIMEOUT_MS) === null) return false;
-      const roundTrip = await this.evaluateWithin(sessionId,
-        "new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(1); c.port2.postMessage(0); })",
-        true, PAGE_PROBE_TIMEOUT_MS);
-      return roundTrip === null;
+      return await this.evaluateWithin(sessionId, MESSAGE_CHANNEL_PROBE, true, PAGE_PROBE_TIMEOUT_MS) === null;
     } catch {
       return false;
     }
   }
 
+  /** Counters for /health: how often each background layer was hit */
+  private backgroundStats = {
+    renderersExempted: 0,
+    sweepFailures: 0,
+    frozenPagesDetected: 0,
+    wakes: 0,
+    wakesSkipped: 0,
+    lastWakeSkipReason: null as string | null,
+  };
+  private lastWakeAt = 0;
+  private wakeInFlight: Promise<boolean> | null = null;
+
+  /**
+   * One adb call for everything a wake decision needs: whether the screen is
+   * on, whether the keyguard (lock screen) is showing, whether a phone call is
+   * active, and the focused activity ("pkg/cls", or null for system windows
+   * such as the notification shade).
+   */
+  private readDeviceState(): { awake: boolean; keyguard: boolean; inCall: boolean; focus: string | null } {
+    const out = runSync(adb("shell",
+      "dumpsys power | grep -m1 mWakefulness=; dumpsys window | grep -E -m2 'mCurrentFocus|isKeyguardShowing'; " +
+      "dumpsys telephony.registry | grep -m1 mCallState"), { timeoutMs: 4000 }).stdout.toString();
+    const focusLine = out.split("\n").find((l) => l.includes("mCurrentFocus")) ?? "";
+    return {
+      awake: /mWakefulness=Awake/.test(out),
+      keyguard: /isKeyguardShowing=true/.test(out),
+      inCall: /mCallState=[12]\b/.test(out),
+      focus: /\s(\S+\/\S+)\}/.exec(focusLine)?.[1] ?? null,
+    };
+  }
+
+  /** Start the previously focused activity again after Edge was brought forward. */
+  private refocus(previous: string | null, why: string): void {
+    if (!previous || previous.startsWith("com.microsoft.emmx.canary/")) return;
+    runSync(adb("shell", "am", "start", "-n", previous), { timeoutMs: 5000 });
+    log("info", `CDP: ${why}; refocused ${previous}`);
+  }
+
   /**
    * Wake a frozen tab: Page.bringToFront makes it visible (Chromium resumes
    * it), which also brings the Edge app to the foreground, so afterwards the
-   * previously focused activity is started again. That restore cannot return
-   * to the lock screen or notification shade. Returns true once the page
-   * answers a MessageChannel round trip.
+   * previously focused activity is started again. Refuses (returns a reason)
+   * when the screen is off, the lock screen is up or a call is active: the
+   * restore could not return there, and taking over the screen mid-call is
+   * worse than a failed tool. Concurrent requests share one wake, and wakes
+   * are at least WAKE_MIN_INTERVAL_MS apart.
    */
-  async wakeFrozenTab(tabId: number): Promise<boolean> {
+  async wakeFrozenTab(tabId?: number): Promise<{ ok: boolean; reason?: string }> {
+    if (this.wakeInFlight) return { ok: await this.wakeInFlight, reason: "shared wake" };
+    if (Date.now() - this.lastWakeAt < WAKE_MIN_INTERVAL_MS) return this.skipWake("another wake ran under 5 s ago");
+    const state = this.readDeviceState();
+    if (!state.awake) return this.skipWake("the screen is off");
+    if (state.keyguard) return this.skipWake("the phone is locked");
+    if (state.inCall) return this.skipWake("a phone call is active");
     const sessionId = await this.sessionForTab(tabId);
-    if (!sessionId) return false;
-    const focus = runSync(adb("shell", "dumpsys", "window"), { timeoutMs: 3000 }).stdout.toString()
-      .split("\n").find((l) => l.includes("mCurrentFocus")) ?? "";
-    const previous = /\s(\S+\/\S+)\}/.exec(focus)?.[1] ?? null;
+    if (!sessionId) return this.skipWake("the tab has no CDP target");
+    this.lastWakeAt = Date.now();
+    this.wakeInFlight = (async () => {
+      try {
+        await this.sendCommand("Page.bringToFront", {}, sessionId);
+        for (let i = 0; i < 6; i++) {
+          if (await this.evaluateWithin(sessionId, MESSAGE_CHANNEL_PROBE, true, 500) !== null) return true;
+        }
+        return false;
+      } catch {
+        return false;
+      } finally {
+        this.refocus(state.focus, `woke frozen tab ${tabId ?? "active"}`);
+      }
+    })();
     try {
-      await this.sendCommand("Page.bringToFront", {}, sessionId);
-      for (let i = 0; i < 6; i++) {
-        const ok = await this.evaluateWithin(sessionId,
-          "new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(1); c.port2.postMessage(0); })",
-          true, 500);
-        if (ok !== null) return true;
-      }
-      return false;
+      const ok = await this.wakeInFlight;
+      if (ok) this.backgroundStats.wakes++;
+      return ok ? { ok } : { ok, reason: "the page did not resume after bringToFront" };
     } finally {
-      if (previous && !previous.startsWith("com.microsoft.emmx.canary/")) {
-        runSync(adb("shell", "am", "start", "-n", previous), { timeoutMs: 5000 });
-        log("info", `CDP: woke frozen tab ${tabId}; refocused ${previous}`);
-      }
+      this.wakeInFlight = null;
     }
+  }
+
+  private skipWake(reason: string): { ok: false; reason: string } {
+    this.backgroundStats.wakesSkipped++;
+    this.backgroundStats.lastWakeSkipReason = reason;
+    return { ok: false, reason };
+  }
+
+  /**
+   * Make sure a tab can run page work before a tool touches it: thaw Edge's
+   * renderers (Android freezer), then, if Edge has frozen the page itself,
+   * wake it (unless disabled or unsafe). `ok: false` carries why; callers that
+   * only need synchronous CDP may proceed anyway.
+   */
+  async ensurePageAwake(tabId?: number): Promise<{ ok: boolean; frozen: boolean; reason?: string }> {
+    await this.thawRenderers();
+    if (!(await this.pageIsFrozen(tabId))) return { ok: true, frozen: false };
+    this.backgroundStats.frozenPagesDetected++;
+    if (!WAKE_FROZEN_TABS) return { ok: false, frozen: true, reason: "waking is disabled (BRIDGE_WAKE_FROZEN_TABS=0)" };
+    const woke = await this.wakeFrozenTab(tabId);
+    return { ok: woke.ok, frozen: true, reason: woke.reason };
   }
 
   /**
@@ -1276,12 +1356,14 @@ class CdpManager {
         // Forget renderers that have exited so the set cannot grow without bound.
         for (const key of this.thawedRenderers) if (!live.has(key)) this.thawedRenderers.delete(key);
         for (const key of newlyThawed) this.thawedRenderers.add(key);
+        this.backgroundStats.renderersExempted += newlyThawed.length;
         if (newlyThawed.length) {
           log("info", `CDP: exempted Edge renderer(s) ${newlyThawed.map((k) => k.split(":")[0]).join(", ")} from the Android freezer`);
         }
       } catch (err) {
         // Let the next tool request retry at once instead of waiting out the interval.
         this.lastThawSweep = 0;
+        this.backgroundStats.sweepFailures++;
         log("warn", `CDP: renderer freezer sweep failed — ${(err as Error).message}; frozen tabs will time out until a sweep succeeds`);
       } finally {
         this.thawInFlight = null;
@@ -1291,8 +1373,12 @@ class CdpManager {
   }
 
   /** Get status info for /health endpoint */
-  getStatus(): { state: string; edgePid: number | null; port: number; targets: number; deviceSerial: string | null; penBusy: boolean } {
+  getStatus(): {
+    state: string; edgePid: number | null; port: number; targets: number; deviceSerial: string | null; penBusy: boolean;
+    background: CdpManager["backgroundStats"] & { wakeFrozenTabs: boolean; renderersTracked: number };
+  } {
     return {
+      background: { ...this.backgroundStats, wakeFrozenTabs: WAKE_FROZEN_TABS, renderersTracked: this.thawedRenderers.size },
       state: this.state,
       edgePid: this.edgePid,
       port: CDP_PORT,
@@ -2050,7 +2136,9 @@ function handleNativeMessage(json: string, reply: (json: string) => boolean = se
       const tabId = parsed.params?.tabId as number | undefined;
       log("info", `CDP: intercepting javascript_tool (${code.slice(0, 80)})`);
 
-      cdpManager.evaluateJS(code, tabId).then((cdpResult) => {
+      // A frozen page still runs synchronous code, but anything the code awaits
+      // (timers, fetch callbacks, frameworks) would stall; wake it first.
+      cdpManager.ensurePageAwake(tabId).then(() => cdpManager.evaluateJS(code, tabId)).then((cdpResult) => {
         const response = JSON.stringify({ type: "tool_response", result: cdpResult });
         log("debug", `CDP→native: ${response.slice(0, 200)}`);
         try { reply(response); } catch (e) {
@@ -2165,7 +2253,11 @@ function handleNativeMessage(json: string, reply: (json: string) => boolean = se
       const action = parsed.params!.action as string;
       const tabId = parsed.params?.tabId as number | undefined;
       log("info", `CDP: intercepting computer ${action} (tab ${tabId ?? "active"})`);
-      cdpManager.dispatchComputerAction(action, (parsed.params ?? {}) as Record<string, unknown>, tabId).then(async (cdpResult) => {
+      // Input reaches a frozen page, but its handlers would not run until it
+      // resumes; wake it first so the next read sees the page's reaction.
+      cdpManager.ensurePageAwake(tabId)
+        .then(() => cdpManager.dispatchComputerAction(action, (parsed.params ?? {}) as Record<string, unknown>, tabId))
+        .then(async (cdpResult) => {
         if (cdpResult.result) {
           const note = await cdpManager.hiddenTabNote(tabId);
           try {
@@ -2236,21 +2328,18 @@ function handleNativeMessage(json: string, reply: (json: string) => boolean = se
         typeof parsed.params?.tabId === "number" && cdpManager.isAvailable()) {
       const tabId = parsed.params.tabId as number;
       void (async () => {
-        await cdpManager.thawRenderers();
-        if (await cdpManager.pageIsFrozen(tabId)) {
-          const woke = WAKE_FROZEN_TABS && await cdpManager.wakeFrozenTab(tabId);
-          if (!woke) {
-            log("warn", `${parsed.method}: tab ${tabId} is frozen by Edge; ${WAKE_FROZEN_TABS ? "wake failed" : "not woken (BRIDGE_WAKE_FROZEN_TABS unset)"}`);
-            try {
-              reply(JSON.stringify({
-                type: "tool_response",
-                error: `Tab ${tabId} is frozen by Edge (hidden while Edge is not the foreground app), so its page cannot run ${parsed.method}. ` +
-                  "Select the tab in Edge or bring Edge to the front and retry; javascript_tool and computer still work on it. " +
-                  "Set BRIDGE_WAKE_FROZEN_TABS=1 on the bridge to wake such tabs automatically (briefly shows Edge).",
-              }));
-            } catch { /* caller gone */ }
-            return;
-          }
+        const awake = await cdpManager.ensurePageAwake(tabId);
+        if (!awake.ok) {
+          log("warn", `${parsed.method}: tab ${tabId} is frozen by Edge and was not woken: ${awake.reason}`);
+          try {
+            reply(JSON.stringify({
+              type: "tool_response",
+              error: `Tab ${tabId} is frozen by Edge (hidden while Edge is not the foreground app), so its page cannot run ${parsed.method}, ` +
+                `and it was not woken because ${awake.reason}. Select the tab in Edge or bring Edge to the front and retry; ` +
+                "synchronous javascript_tool code and computer input still reach it.",
+            }));
+          } catch { /* caller gone */ }
+          return;
         }
         for (const client of wsClients) { try { client.send(outJson); } catch {} }
       })();
