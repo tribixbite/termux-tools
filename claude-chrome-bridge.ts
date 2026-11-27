@@ -870,7 +870,7 @@ class CdpManager {
             try { await this.sendCommand("Page.bringToFront", {}, sessionId); } catch { /* non-fatal */ }
             shot = await this.sendCommand("Page.captureScreenshot", { format: "png" }, sessionId) as { data?: string };
           } finally {
-            this.refocus(before.focus, "captured screenshot");
+            this.refocus(before, "captured screenshot");
           }
           if (shot?.data) {
             log("info", `CDP: Page.captureScreenshot captured ~${Math.round(shot.data.length * 3 / 4)} bytes`);
@@ -1097,29 +1097,61 @@ class CdpManager {
   private wakeInFlight: Promise<boolean> | null = null;
 
   /**
-   * One adb call for everything a wake decision needs: whether the screen is
-   * on, whether the keyguard (lock screen) is showing, whether a phone call is
-   * active, and the focused activity ("pkg/cls", or null for system windows
-   * such as the notification shade).
+   * Everything a wake decision needs, in two small adb calls: whether the
+   * screen is on, whether the keyguard (lock screen) is showing, whether a
+   * phone call is active, and what to bring back afterwards. `focus` is the
+   * focused activity ("pkg/cls", or null for system windows such as the
+   * notification shade); `taskPackage` is the package at the ROOT of the top
+   * task. They differ for activities that run inside another app's task, e.g.
+   * a Chrome web app (focus com.android.chrome/...SameTaskWebApkActivity,
+   * root org.chromium.webapk.<id>): starting such an activity by component
+   * does not bring the task back, while the root package's launcher intent
+   * resumes the existing task.
    */
-  private readDeviceState(): { awake: boolean; keyguard: boolean; inCall: boolean; focus: string | null } {
+  private readDeviceState(): { awake: boolean; keyguard: boolean; inCall: boolean; focus: string | null; taskPackage: string | null } {
     const out = runSync(adb("shell",
       "dumpsys power | grep -m1 mWakefulness=; dumpsys window | grep -E -m2 'mCurrentFocus|isKeyguardShowing'; " +
-      "dumpsys telephony.registry | grep -m1 mCallState"), { timeoutMs: 4000 }).stdout.toString();
+      "dumpsys telephony.registry | grep -m1 mCallState; dumpsys activity activities | grep -m1 topResumedActivity"),
+      { timeoutMs: 4000 }).stdout.toString();
     const focusLine = out.split("\n").find((l) => l.includes("mCurrentFocus")) ?? "";
+    const taskId = /topResumedActivity=.*\st(\d+)\}/.exec(out)?.[1] ?? null;
+    let taskPackage: string | null = null;
+    if (taskId) {
+      // Recent-task headers and their root intents, in order; the line after a
+      // matching header that carries `intent=` holds the root component.
+      const recents = runSync(adb("shell", "dumpsys activity recents | grep -E 'Recent #|^    intent='"),
+        { timeoutMs: 4000 }).stdout.toString().split("\n");
+      const header = recents.findIndex((l) => l.includes(` #${taskId} `));
+      const intentLine = header >= 0 ? recents[header + 1] ?? "" : "";
+      taskPackage = /cmp=([^/\s}]+)\//.exec(intentLine)?.[1] ?? null;
+    }
     return {
       awake: /mWakefulness=Awake/.test(out),
       keyguard: /isKeyguardShowing=true/.test(out),
       inCall: /mCallState=[12]\b/.test(out),
       focus: /\s(\S+\/\S+)\}/.exec(focusLine)?.[1] ?? null,
+      taskPackage,
     };
   }
 
-  /** Start the previously focused activity again after Edge was brought forward. */
-  private refocus(previous: string | null, why: string): void {
-    if (!previous || previous.startsWith("com.microsoft.emmx.canary/")) return;
-    runSync(adb("shell", "am", "start", "-n", previous), { timeoutMs: 5000 });
-    log("info", `CDP: ${why}; refocused ${previous}`);
+  /**
+   * Bring back what was in front before Edge was brought forward: relaunch the
+   * top task's root package through its launcher intent (resumes the task as
+   * it was), falling back to starting the focused activity by component.
+   */
+  private refocus(previous: { focus: string | null; taskPackage: string | null }, why: string): void {
+    const edge = "com.microsoft.emmx.canary";
+    if (previous.taskPackage && previous.taskPackage !== edge) {
+      const launch = runSync(adb("shell", "monkey", "-p", previous.taskPackage, "-c", "android.intent.category.LAUNCHER", "1"),
+        { timeoutMs: 8000 });
+      if (launch.exitCode === 0 && !/No activities found|aborted/i.test(launch.stdout.toString())) {
+        log("info", `CDP: ${why}; resumed task of ${previous.taskPackage}`);
+        return;
+      }
+    }
+    if (!previous.focus || previous.focus.startsWith(`${edge}/`)) return;
+    runSync(adb("shell", "am", "start", "-n", previous.focus), { timeoutMs: 5000 });
+    log("info", `CDP: ${why}; refocused ${previous.focus}`);
   }
 
   /**
@@ -1151,7 +1183,7 @@ class CdpManager {
       } catch {
         return false;
       } finally {
-        this.refocus(state.focus, `woke frozen tab ${tabId ?? "active"}`);
+        this.refocus(state, `woke frozen tab ${tabId ?? "active"}`);
       }
     })();
     try {
