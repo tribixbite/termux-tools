@@ -89,8 +89,11 @@ function connectPort() {
 
   port.onMessage.addListener((msg) => {
     if (!msg.action || !msg._reqId) return;
-    // Decouple from port message handler to avoid blocking
-    setTimeout(() => {
+    // Decouple from the port message handler. A microtask, not setTimeout(0):
+    // while Edge is not the foreground app the tab is hidden and Chromium runs
+    // its timers about once a minute, so a timer-deferred request outlived the
+    // bridge's 30 s tool timeout (and still ran afterwards).
+    queueMicrotask(() => {
       handleAction(msg.action, msg.params || {})
         .then((result) => {
           try { port.postMessage({ _reqId: msg._reqId, result }); } catch {}
@@ -98,7 +101,7 @@ function connectPort() {
         .catch((err) => {
           try { port.postMessage({ _reqId: msg._reqId, result: { error: err.message || String(err) } }); } catch {}
         });
-    }, 0);
+    });
   });
 
   port.onDisconnect.addListener(() => {
@@ -117,11 +120,12 @@ connectPort();
 // Keep legacy onMessage as fallback for backward compatibility
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg.action) return;
-  setTimeout(() => {
+  // Microtask for the same reason as the port handler above.
+  queueMicrotask(() => {
     handleAction(msg.action, msg.params || {})
       .then((result) => { try { sendResponse(result); } catch {} })
       .catch((err) => { try { sendResponse({ error: err.message || String(err) }); } catch {} });
-  }, 0);
+  });
   return true;
 });
 
@@ -489,6 +493,10 @@ function formInput(params) {
  */
 const MAIN_WORLD_TIMEOUT_MS = 5000;
 
+// TODO: the result comes back through window.postMessage, which a hidden tab
+// (Edge not in the foreground) may defer like its timers and MessageChannel;
+// measure it before relying on this path while Edge is backgrounded. It only
+// runs when the bridge has no CDP connection.
 function executeInMainWorld(code) {
   return new Promise((resolve, reject) => {
     const id = (crypto?.randomUUID && crypto.randomUUID()) ||

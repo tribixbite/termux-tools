@@ -15,7 +15,13 @@ const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const KEEPALIVE_INTERVAL_MS = 20000;
 const SCRIPTING_TIMEOUT_MS = 10000;
-const CONTENT_SCRIPT_TIMEOUT_MS = 30000;
+// Per attempt: the port request and its sendMessage fallback each get this
+// long, so both together (24 s) finish inside the bridge's 30 s tool timeout.
+// At 30 s each, a dead tab held its queue for 60 s after the caller had already
+// been told "timed out", and every later request for that tab waited behind it.
+const CONTENT_SCRIPT_TIMEOUT_MS = 12000;
+/** Tools that never touch a tab's page; they must not wait in a tab's queue. */
+const TAB_AGNOSTIC_TOOLS = new Set(["tabs_context_mcp", "tabs_create_mcp", "update_plan", "shortcuts_list"]);
 
 // --- State -------------------------------------------------------------------
 
@@ -222,7 +228,10 @@ async function handleToolRequest(msg) {
     });
   }
 
-  // Queue tab-targeting tools so they execute sequentially per tab
+  // Queue tab-targeting tools so they execute sequentially per tab. Tab-less
+  // tools run at once: resolveTabId() falls back to the active MCP tab, which
+  // queued e.g. tabs_context_mcp behind a hung request on that tab.
+  if (TAB_AGNOSTIC_TOOLS.has(method)) return executeToolRequest(msg);
   const tabId = resolveTabId(params?.tabId);
   if (tabId != null) {
     return enqueueToolForTab(tabId, () => executeToolRequest(msg));
@@ -367,21 +376,28 @@ async function handleNavigate(params) {
 
   await chrome.tabs.update(tid, { url: fullUrl });
 
-  await new Promise((resolve) => {
+  // Resolves true on load complete, false when the 15 s wait gives up (a slow
+  // page, or a hidden tab whose renderer is throttled while Edge is not the
+  // foreground app). Report the difference instead of claiming success.
+  const loaded = await new Promise((resolve) => {
     const listener = (updatedTabId, changeInfo) => {
       if (updatedTabId === tid && changeInfo.status === "complete") {
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
+        resolve(true);
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
     setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
+      resolve(false);
     }, 15000);
   });
 
-  return { result: `Navigated to ${fullUrl}` };
+  return {
+    result: loaded
+      ? `Navigated to ${fullUrl}`
+      : `Navigation to ${fullUrl} started, but the page had not finished loading after 15 s; re-read it before relying on its content`,
+  };
 }
 
 async function handleFormInput(params) {
