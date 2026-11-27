@@ -4,12 +4,19 @@ on:
   push:
     branches: [main]
     paths:
+      # The bridge's main sources live at the repo root and are bundled by bridge/build.cjs.
+      - 'claude-chrome-bridge.ts'
+      - 'compat.ts'
       - 'bridge/src/**'
+      - 'bridge/build.cjs'
+      - 'bridge/tsconfig.json'
       - 'bridge/package.json'
       - 'claude-channel/**'
       - '.github/workflows/ci.yml'
   pull_request:
     paths:
+      - 'claude-chrome-bridge.ts'
+      - 'compat.ts'
       - 'bridge/**'
       - 'claude-channel/**'
 
