@@ -10,10 +10,10 @@
     "postinstall": "node scripts/fix-android-binaries.mjs"
   },
   "dependencies": {
-    "@astrojs/svelte": "^7.2.5",
-    "@tailwindcss/vite": "^4.2.1",
-    "astro": "^5.18.0",
-    "svelte": "^5.53.6",
-    "tailwindcss": "^4.2.1"
+    "@astrojs/svelte": "^9.1.6",
+    "@tailwindcss/vite": "^4.3.5",
+    "astro": "^7.4.13",
+    "svelte": "^5.59.2",
+    "tailwindcss": "^4.3.5"
   }
 }
