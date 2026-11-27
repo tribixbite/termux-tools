@@ -3975,6 +3975,17 @@ function getAdbSerial() {
       _adbSerial = lines[0]?.split("	")[0] ?? "";
       return _adbSerial;
     }
+    const localBootId = readLocalBootId();
+    if (localBootId) {
+      for (const line of lines) {
+        const serial = line.split("	")[0];
+        const check = runSync([ADB_PATH, "-s", serial, "shell", "cat", "/proc/sys/kernel/random/boot_id"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
+        if (check.exitCode === 0 && check.stdout.toString().trim() === localBootId) {
+          _adbSerial = serial;
+          return _adbSerial;
+        }
+      }
+    }
     for (const line of lines) {
       const serial = line.split("	")[0];
       const check = runSync([ADB_PATH, "-s", serial, "shell", "pidof", "com.microsoft.emmx.canary"], { timeoutMs: ADB_CALL_TIMEOUT_MS });
@@ -3988,6 +3999,14 @@ function getAdbSerial() {
   } catch {
     _adbSerial = "";
     return _adbSerial;
+  }
+}
+function readLocalBootId() {
+  try {
+    const { readFileSync: readFileSync2 } = require("fs");
+    return readFileSync2("/proc/sys/kernel/random/boot_id", "utf-8").trim();
+  } catch {
+    return "";
   }
 }
 function adb(...args) {
@@ -4483,6 +4502,24 @@ function drainTabQueue(tabId) {
     next.resolve({ type: "tool_response", error: "All bridge clients disconnected before dispatch" });
   }
 }
+function refreshTabUrlsFromExtension() {
+  if (wsClients.size === 0) return Promise.resolve();
+  const requestId = `req_${++toolRequestCounter}_${Date.now()}_tabs`;
+  return new Promise((resolve3) => {
+    const timeout = setTimeout(() => {
+      pendingToolMap.delete(requestId);
+      resolve3();
+    }, TAB_URL_REFRESH_TIMEOUT_MS);
+    pendingToolMap.set(requestId, { resolve: () => resolve3(), timeout, tabId: -1 });
+    const request = JSON.stringify({ type: "tool_request", method: "tabs_context_mcp", params: {}, requestId });
+    for (const client of wsClients) {
+      try {
+        client.send(request);
+      } catch {
+      }
+    }
+  });
+}
 function spawnNativeHost() {
   if (nativeHost) {
     log("warn", "Native host already running, killing first");
@@ -4608,6 +4645,12 @@ function handleNativeMessage(json, reply = sendToNativeHost) {
               }
             }
           }
+        } else if (cdpResult.final) {
+          log("warn", `CDP screenshot failed: ${cdpResult.error}`);
+          try {
+            reply(JSON.stringify({ type: "tool_response", error: cdpResult.error }));
+          } catch {
+          }
         } else {
           log("warn", `CDP screenshot failed: ${cdpResult.error}`);
           for (const client of wsClients) {
@@ -4636,6 +4679,13 @@ function handleNativeMessage(json, reply = sendToNativeHost) {
       cdpManager.captureScreenshot(tabId).then((cdpResult) => {
         if (!cdpResult.data) {
           log("warn", `CDP zoom screenshot failed: ${cdpResult.error}`);
+          if (cdpResult.final) {
+            try {
+              reply(JSON.stringify({ type: "tool_response", error: cdpResult.error }));
+            } catch {
+            }
+            return;
+          }
           for (const client of wsClients) {
             try {
               client.send(outJson);
@@ -4706,12 +4756,13 @@ function handleNativeMessage(json, reply = sendToNativeHost) {
       const action = parsed.params.action;
       const tabId = parsed.params?.tabId;
       log("info", `CDP: intercepting computer ${action} (tab ${tabId ?? "active"})`);
-      cdpManager.dispatchComputerAction(action, parsed.params ?? {}, tabId).then((cdpResult) => {
+      cdpManager.dispatchComputerAction(action, parsed.params ?? {}, tabId).then(async (cdpResult) => {
         if (cdpResult.result) {
+          const note = await cdpManager.hiddenTabNote(tabId);
           try {
             reply(JSON.stringify({
               type: "tool_response",
-              result: { result: cdpResult.result }
+              result: { result: cdpResult.result + note }
             }));
           } catch (e) {
             log("warn", `sendToNativeHost failed after CDP ${action}: ${e.message}`);
@@ -4787,6 +4838,33 @@ function handleNativeMessage(json, reply = sendToNativeHost) {
         return;
       }
     }
+    if (parsed.type === "tool_request" && EXTENSION_PAGE_TOOLS.has(parsed.method) && typeof parsed.params?.tabId === "number" && cdpManager.isAvailable()) {
+      const tabId = parsed.params.tabId;
+      void (async () => {
+        await cdpManager.thawRenderers();
+        if (await cdpManager.pageIsFrozen(tabId)) {
+          const woke = WAKE_FROZEN_TABS && await cdpManager.wakeFrozenTab(tabId);
+          if (!woke) {
+            log("warn", `${parsed.method}: tab ${tabId} is frozen by Edge; ${WAKE_FROZEN_TABS ? "wake failed" : "not woken (BRIDGE_WAKE_FROZEN_TABS unset)"}`);
+            try {
+              reply(JSON.stringify({
+                type: "tool_response",
+                error: `Tab ${tabId} is frozen by Edge (hidden while Edge is not the foreground app), so its page cannot run ${parsed.method}. Select the tab in Edge or bring Edge to the front and retry; javascript_tool and computer still work on it. Set BRIDGE_WAKE_FROZEN_TABS=1 on the bridge to wake such tabs automatically (briefly shows Edge).`
+              }));
+            } catch {
+            }
+            return;
+          }
+        }
+        for (const client of wsClients) {
+          try {
+            client.send(outJson);
+          } catch {
+          }
+        }
+      })();
+      return;
+    }
   } catch {
   }
   for (const ws of wsClients) {
@@ -4832,7 +4910,7 @@ function shutdown() {
   log("info", "Bridge stopped");
   process.exit(0);
 }
-var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, NATIVE_HOST_WRAPPER, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, EDGE_RENDERER_PREFIX, RENDERER_THAW_INTERVAL_MS, RENDERER_THAW_TIMEOUT_MS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, nativeHostKillTimer, stdoutDecoder, wsClients, server, TEST_PAGE_HTML;
+var import_path, import_node_zlib, SCRIPT_DIR, MANIFEST_PATH, BRIDGE_VERSION, WS_PORT, WS_HOST, BRIDGE_TOKEN, MAX_MESSAGE_SIZE, RECONNECT_DELAY_MS, HEARTBEAT_INTERVAL_MS, TERMUX_PREFIX, TERMUX_BIN, ADB_PATH, _adbSerial, _adbSerialTs, ADB_SERIAL_TTL_MS, NATIVE_HOST_WRAPPER, BUN_GLOBAL_CLI, NPM_GLOBAL_CLI, CLI_PATH, RUNTIME_PATH, LOG_LEVEL, LOG_PRIORITY, NativeMessageDecoder, CDP_PORT, CDP_PID_CHECK_INTERVAL_MS, CDP_MAX_BACKOFF_ATTEMPTS, CDP_TARGET_CACHE_TTL_MS, CDP_TIMEOUT_MS, EDGE_RENDERER_PREFIX, RENDERER_THAW_INTERVAL_MS, RENDERER_THAW_TIMEOUT_MS, PAGE_PROBE_TIMEOUT_MS, WAKE_FROZEN_TABS, EXTENSION_PAGE_TOOLS, CdpManager, cdpManager, crc32Table, toolRequestCounter, pendingToolMap, busyTabs, HTTP_TOOL_TIMEOUT_MS, lastToolName, lastToolTime, nativeHost, nativeHostKillTimer, stdoutDecoder, wsClients, TAB_URL_REFRESH_TIMEOUT_MS, server, TEST_PAGE_HTML;
 var init_claude_chrome_bridge = __esm({
   "../claude-chrome-bridge.ts"() {
     init_import_meta_shim();
@@ -4930,6 +5008,9 @@ var init_claude_chrome_bridge = __esm({
     EDGE_RENDERER_PREFIX = "com.microsoft.emmx.canary:sandboxed_process";
     RENDERER_THAW_INTERVAL_MS = 1e4;
     RENDERER_THAW_TIMEOUT_MS = 5e3;
+    PAGE_PROBE_TIMEOUT_MS = 1500;
+    WAKE_FROZEN_TABS = process.env.BRIDGE_WAKE_FROZEN_TABS === "1";
+    EXTENSION_PAGE_TOOLS = /* @__PURE__ */ new Set(["get_page_text", "read_page", "find", "form_input"]);
     CdpManager = class {
       penBusy = false;
       ws = null;
@@ -5170,7 +5251,9 @@ var init_claude_chrome_bridge = __esm({
           if (r.description) return { result: r.description };
           return { result: String(r) };
         } catch (err) {
-          return { error: `CDP eval failed: ${err.message}` };
+          const message = err.message;
+          const hint = message.startsWith("CDP timeout") ? " (if the code awaited setTimeout, requestAnimationFrame or a MessageChannel-based library: a hidden tab \u2014 Edge not in the foreground \u2014 defers those; its side effects may still happen later)" : "";
+          return { error: `CDP eval failed: ${message}${hint}` };
         }
       }
       /** Resolve an extension tabId to a CDP targetId by URL matching */
@@ -5183,22 +5266,42 @@ var init_claude_chrome_bridge = __esm({
           return this.tabTargetMap.get(tabId);
         }
         if (tabId !== void 0) {
-          const tabUrl = this.tabUrlCache.get(tabId);
-          if (tabUrl) {
-            const target = this.cachedTargets.find((t) => t.url === tabUrl && t.type === "page");
-            if (target) {
-              this.tabTargetMap.set(tabId, target.targetId);
-              log("debug", `CDP: resolveTarget(${tabId}) \u2192 URL match ${target.targetId.slice(0, 16)}... (${tabUrl})`);
-              return target.targetId;
-            }
-            log("debug", `CDP: resolveTarget(${tabId}) \u2014 URL ${tabUrl} not found in ${this.cachedTargets.length} targets`);
-          } else {
-            log("debug", `CDP: resolveTarget(${tabId}) \u2014 no cached URL (cache size: ${this.tabUrlCache.size})`);
+          let target = this.matchTabByUrl(tabId);
+          if (!target && this.tabUrlRefresher) {
+            await this.tabUrlRefresher();
+            await this.refreshTargets();
+            target = this.matchTabByUrl(tabId);
           }
+          if (target) {
+            this.tabTargetMap.set(tabId, target);
+            return target;
+          }
+          log("warn", `CDP: no target found for tab ${tabId} (url ${this.tabUrlCache.get(tabId) ?? "unknown"})`);
+          return null;
         }
         const firstPage = this.cachedTargets.find((t) => t.type === "page");
         log("debug", `CDP: resolveTarget(${tabId ?? "none"}) \u2192 fallback to first page: ${firstPage?.url ?? "none"}`);
         return firstPage?.targetId ?? null;
+      }
+      /** Asks the extension for current tab URLs (fills tabUrlCache); set by the server */
+      tabUrlRefresher = null;
+      setTabUrlRefresher(refresher) {
+        this.tabUrlRefresher = refresher;
+      }
+      /**
+       * Target for an extension tab by its cached URL. When several page targets
+       * share the URL (the same page open twice), prefer one not already mapped to
+       * a different tab.
+       */
+      matchTabByUrl(tabId) {
+        const tabUrl = this.tabUrlCache.get(tabId);
+        if (!tabUrl) return null;
+        const candidates = this.cachedTargets.filter((t) => t.url === tabUrl && t.type === "page");
+        if (candidates.length === 0) return null;
+        const claimed = new Set(
+          [...this.tabTargetMap].filter(([otherTab]) => otherTab !== tabId).map(([, targetId]) => targetId)
+        );
+        return (candidates.find((t) => !claimed.has(t.targetId)) ?? candidates[0]).targetId;
       }
       /** Fetch CDP targets via Target.getTargets (not /json/list — those IDs differ) */
       async refreshTargets() {
@@ -5206,9 +5309,10 @@ var init_claude_chrome_bridge = __esm({
           const result = await this.sendCommand("Target.getTargets");
           this.cachedTargets = result.targetInfos;
           this.targetsLastFetched = Date.now();
-          for (const [tabId, url] of this.tabUrlCache) {
-            const target = this.cachedTargets.find((t) => t.url === url && t.type === "page");
-            if (target) this.tabTargetMap.set(tabId, target.targetId);
+          for (const tabId of this.tabUrlCache.keys()) {
+            const target = this.matchTabByUrl(tabId);
+            if (target) this.tabTargetMap.set(tabId, target);
+            else this.tabTargetMap.delete(tabId);
           }
         } catch (err) {
           log("debug", `CDP: refreshTargets failed \u2014 ${err.message}`);
@@ -5302,10 +5406,21 @@ var init_claude_chrome_bridge = __esm({
           }
         }
         try {
+          const focus = runSync(adb("shell", "dumpsys", "window"), { timeoutMs: 3e3 });
+          const focusLine = focus.stdout.toString().split("\n").find((l) => l.includes("mCurrentFocus")) ?? "";
+          if (focus.exitCode === 0 && !focusLine.includes("com.microsoft.emmx.canary")) {
+            return {
+              error: "Screenshot not available: CDP capture failed and Edge is not the foreground app, so ADB screencap would capture a different app",
+              final: true
+            };
+          }
+        } catch {
+        }
+        try {
           const tmpPath = "/data/data/com.termux/files/usr/tmp/cdp-screencap.png";
-          const cap = runSync(adb("shell", "screencap", "-p", "/sdcard/cdp-screencap.png"));
+          const cap = runSync(adb("shell", "screencap", "-p", "/sdcard/cdp-screencap.png"), { timeoutMs: 1e4 });
           if (cap.exitCode === 0) {
-            const pull = runSync(adb("pull", "/sdcard/cdp-screencap.png", tmpPath));
+            const pull = runSync(adb("pull", "/sdcard/cdp-screencap.png", tmpPath), { timeoutMs: 1e4 });
             if (pull.exitCode === 0 && await fileExists(tmpPath)) {
               const { readFile: rf } = await import("node:fs/promises");
               const buf = await rf(tmpPath);
@@ -5455,6 +5570,107 @@ var init_claude_chrome_bridge = __esm({
           return { error: `CDP input failed: ${err.message}` };
         }
       }
+      /** Attached CDP session for an extension tab, or null when it has no target */
+      async sessionForTab(tabId) {
+        const targetId = await this.resolveTarget(tabId);
+        if (!targetId) return null;
+        let sessionId = this.sessionMap.get(targetId);
+        if (!sessionId) {
+          const attach = await this.sendCommand("Target.attachToTarget", { targetId, flatten: true });
+          sessionId = attach.sessionId;
+          this.sessionMap.set(targetId, sessionId);
+        }
+        return sessionId;
+      }
+      /** Runtime.evaluate that gives up after `ms`; null means no answer in time */
+      async evaluateWithin(sessionId, expression, awaitPromise, ms) {
+        const call = this.sendCommand("Runtime.evaluate", { expression, returnByValue: true, awaitPromise }, sessionId).then((r) => r.result?.value ?? "undefined");
+        const timeout = new Promise((resolve3) => setTimeout(() => resolve3(null), ms));
+        return Promise.race([call, timeout]).catch(() => null);
+      }
+      /**
+       * True when Edge has frozen the tab's page (Page Lifecycle "frozen"): it
+       * still answers synchronous CDP evaluation, but its task queues are
+       * suspended, so timers, MessageChannel and every extension content-script
+       * request wait until the tab becomes visible. Observed on hidden tabs
+       * within ~45 s to hours of Edge leaving the foreground, not on every tab;
+       * neither Page.setWebLifecycleState nor the Chromium background-throttling
+       * switches undo it (2026-11-27). False when the page answers, and also when
+       * it does not even answer synchronously (an OS-frozen or dead renderer is a
+       * different problem, handled by thawRenderers).
+       */
+      async pageIsFrozen(tabId) {
+        try {
+          const sessionId = await this.sessionForTab(tabId);
+          if (!sessionId) return false;
+          if (await this.evaluateWithin(sessionId, "1", false, PAGE_PROBE_TIMEOUT_MS) === null) return false;
+          const roundTrip = await this.evaluateWithin(
+            sessionId,
+            "new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(1); c.port2.postMessage(0); })",
+            true,
+            PAGE_PROBE_TIMEOUT_MS
+          );
+          return roundTrip === null;
+        } catch {
+          return false;
+        }
+      }
+      /**
+       * Wake a frozen tab: Page.bringToFront makes it visible (Chromium resumes
+       * it), which also brings the Edge app to the foreground, so afterwards the
+       * previously focused activity is started again. That restore cannot return
+       * to the lock screen or notification shade. Returns true once the page
+       * answers a MessageChannel round trip.
+       */
+      async wakeFrozenTab(tabId) {
+        const sessionId = await this.sessionForTab(tabId);
+        if (!sessionId) return false;
+        const focus = runSync(adb("shell", "dumpsys", "window"), { timeoutMs: 3e3 }).stdout.toString().split("\n").find((l) => l.includes("mCurrentFocus")) ?? "";
+        const previous = /\s(\S+\/\S+)\}/.exec(focus)?.[1] ?? null;
+        try {
+          await this.sendCommand("Page.bringToFront", {}, sessionId);
+          for (let i = 0; i < 6; i++) {
+            const ok = await this.evaluateWithin(
+              sessionId,
+              "new Promise((r) => { const c = new MessageChannel(); c.port1.onmessage = () => r(1); c.port2.postMessage(0); })",
+              true,
+              500
+            );
+            if (ok !== null) return true;
+          }
+          return false;
+        } finally {
+          if (previous && !previous.startsWith("com.microsoft.emmx.canary/")) {
+            runSync(adb("shell", "am", "start", "-n", previous), { timeoutMs: 5e3 });
+            log("info", `CDP: woke frozen tab ${tabId}; refocused ${previous}`);
+          }
+        }
+      }
+      /**
+       * A note to append to an input result when the tab is hidden (Edge is not
+       * the foreground app). The input itself is delivered, but the page's timers
+       * run about once a minute and requestAnimationFrame / MessageChannel tasks
+       * stall, so handlers that continue through them (e.g. React's scheduler)
+       * may not have updated the page yet. Returns "" for a visible tab or when
+       * the check does not answer within 1.5 s.
+       */
+      async hiddenTabNote(tabId) {
+        try {
+          const targetId = await this.resolveTarget(tabId);
+          const sessionId = targetId ? this.sessionMap.get(targetId) : void 0;
+          if (!sessionId) return "";
+          const check = this.sendCommand("Runtime.evaluate", {
+            expression: "document.visibilityState",
+            returnByValue: true
+          }, sessionId);
+          const timeout = new Promise((resolve3) => setTimeout(() => resolve3(null), 1500));
+          const r = await Promise.race([check, timeout]);
+          if (r?.result?.value !== "hidden") return "";
+          return " (tab hidden: Edge is not the foreground app, so page timers run about once a minute and animation frames do not run; the page may not have reacted yet, re-read it before relying on the result)";
+        } catch {
+          return "";
+        }
+      }
       /** Parse modifier string like "ctrl+shift" into CDP modifier flags */
       parseModifiers(mods) {
         if (!mods) return {};
@@ -5551,7 +5767,8 @@ var init_claude_chrome_bridge = __esm({
       isAvailable() {
         return this.state === "connected" && this.ws?.readyState === WebSocket.OPEN;
       }
-      /** Renderer pids already given a sticky unfreeze (it lasts their lifetime) */
+      /** Renderers already given a sticky unfreeze (it lasts their lifetime),
+       *  keyed "pid:starttime" so a reused pid is never mistaken for a handled one */
       thawedRenderers = /* @__PURE__ */ new Set();
       lastThawSweep = 0;
       thawInFlight = null;
@@ -5565,40 +5782,47 @@ var init_claude_chrome_bridge = __esm({
        * tabs waits until the 15 s / 30 s timeouts. `Page.setWebLifecycleState`
        * cannot reach it, and `Page.bringToFront` only works by foregrounding the
        * Edge app. `cmd activity unfreeze --sticky` (shell uid, via adb) thaws a
-       * process and keeps it thawed for its lifetime, so each renderer pid needs it
+       * process and keeps it thawed for its lifetime, so each renderer needs it
        * once; later sweeps only pick up renderers spawned since.
        *
        * Callers do not need to await this: a command queued to a frozen renderer
-       * runs as soon as the sweep thaws it. Hidden-tab throttling still applies to
-       * a thawed tab (timers batched to ~1/min, no requestAnimationFrame).
+       * runs as soon as the sweep thaws it (a healthy sweep takes ~70-200 ms).
+       * Hidden-tab throttling still applies to a thawed tab: timers are batched to
+       * about once a minute, and requestAnimationFrame / MessageChannel tasks did
+       * not run within 8 s in measurements.
        */
       thawRenderers() {
         if (this.thawInFlight) return this.thawInFlight;
         if (Date.now() - this.lastThawSweep < RENDERER_THAW_INTERVAL_MS) return Promise.resolve();
         this.lastThawSweep = Date.now();
         const skip = [...this.thawedRenderers].join(" ");
-        const script = `for p in $(ps -A -o PID,NAME | awk '$2 ~ /^${EDGE_RENDERER_PREFIX.replace(/\./g, "\\.")}/ {print $1}'); do echo "pid $p"; case " ${skip} " in *" $p "*) continue;; esac; cmd activity unfreeze --sticky "$p" >/dev/null 2>&1 && echo "thawed $p"; done`;
+        const script = `for p in $(ps -A -o PID,NAME | awk '$2 ~ /^${EDGE_RENDERER_PREFIX.replace(/\./g, "\\.")}/ {print $1}'); do k="$p:$(cut -d' ' -f22 /proc/$p/stat 2>/dev/null)"; echo "live $k"; case " ${skip} " in *" $k "*) continue;; esac; cmd activity unfreeze --sticky "$p" >/dev/null 2>&1 && echo "thawed $k"; done; echo "sweep-done"`;
         this.thawInFlight = (async () => {
           try {
             const proc = spawnProcess(adb("shell", script));
             const timer = setTimeout(() => proc.kill(9), RENDERER_THAW_TIMEOUT_MS);
             const out = proc.stdout ? await new Response(proc.stdout).text() : "";
-            await proc.exited;
+            const exitCode = await proc.exited;
             clearTimeout(timer);
+            if (exitCode !== 0 || !out.includes("sweep-done")) {
+              throw new Error(`adb shell exited ${exitCode}${out.includes("sweep-done") ? "" : ", sweep incomplete"}`);
+            }
             const live = /* @__PURE__ */ new Set();
             const newlyThawed = [];
             for (const line of out.split("\n")) {
-              const [kind, pidText] = line.trim().split(" ");
-              const pid = parseInt(pidText, 10);
-              if (isNaN(pid)) continue;
-              if (kind === "pid") live.add(pid);
-              else if (kind === "thawed") newlyThawed.push(pid);
+              const [kind, key] = line.trim().split(" ");
+              if (!key || !/^\d+:\d+$/.test(key)) continue;
+              if (kind === "live") live.add(key);
+              else if (kind === "thawed") newlyThawed.push(key);
             }
-            for (const pid of this.thawedRenderers) if (!live.has(pid)) this.thawedRenderers.delete(pid);
-            for (const pid of newlyThawed) this.thawedRenderers.add(pid);
-            if (newlyThawed.length) log("info", `CDP: exempted Edge renderer(s) ${newlyThawed.join(", ")} from the Android freezer`);
+            for (const key of this.thawedRenderers) if (!live.has(key)) this.thawedRenderers.delete(key);
+            for (const key of newlyThawed) this.thawedRenderers.add(key);
+            if (newlyThawed.length) {
+              log("info", `CDP: exempted Edge renderer(s) ${newlyThawed.map((k) => k.split(":")[0]).join(", ")} from the Android freezer`);
+            }
           } catch (err) {
-            log("debug", `CDP: renderer thaw sweep failed \u2014 ${err.message}`);
+            this.lastThawSweep = 0;
+            log("warn", `CDP: renderer freezer sweep failed \u2014 ${err.message}; frozen tabs will time out until a sweep succeeds`);
           } finally {
             this.thawInFlight = null;
           }
@@ -5797,6 +6021,8 @@ var init_claude_chrome_bridge = __esm({
     nativeHostKillTimer = null;
     stdoutDecoder = new NativeMessageDecoder();
     wsClients = /* @__PURE__ */ new Set();
+    TAB_URL_REFRESH_TIMEOUT_MS = 5e3;
+    cdpManager.setTabUrlRefresher(refreshTabUrlsFromExtension);
     server = createBridgeServer({
       hostname: WS_HOST,
       port: WS_PORT,
@@ -5834,6 +6060,7 @@ var init_claude_chrome_bridge = __esm({
             if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("Expected a stroke object");
             lastToolName = "pen_stroke";
             lastToolTime = (/* @__PURE__ */ new Date()).toISOString();
+            await cdpManager.thawRenderers();
             const result = await cdpManager.penStroke(params);
             return Response.json({ result });
           } catch (error) {
@@ -5986,7 +6213,8 @@ var init_claude_chrome_bridge = __esm({
           }
           try {
             const body = await req.json();
-            const requestId = `req_${++toolRequestCounter}_${Date.now()}`;
+            const toolStart = Date.now();
+            const requestId = `req_${++toolRequestCounter}_${toolStart}`;
             const tabId = body.params?.tabId || 0;
             const toolRequest = JSON.stringify({
               type: "tool_request",
@@ -6026,6 +6254,12 @@ var init_claude_chrome_bridge = __esm({
                     type: "tool_response",
                     result: { content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: imgData } }] }
                   }),
+                  { headers: { "Content-Type": "application/json" } }
+                );
+              }
+              if (shot.final) {
+                return new Response(
+                  JSON.stringify({ type: "tool_response", error: shot.error }),
                   { headers: { "Content-Type": "application/json" } }
                 );
               }
@@ -6075,6 +6309,12 @@ var init_claude_chrome_bridge = __esm({
                 }
               }
             });
+            const toolError = result;
+            const errText = toolError?.error ?? toolError?.result?.error;
+            log(
+              errText ? "warn" : "info",
+              `HTTP /tool: ${body.method} [${requestId}] ${errText ? `failed: ${String(errText).slice(0, 160)}` : "ok"} in ${Date.now() - toolStart} ms`
+            );
             return new Response(
               JSON.stringify(result),
               { headers: { "Content-Type": "application/json" } }
