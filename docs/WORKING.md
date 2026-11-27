@@ -1,3 +1,43 @@
+# Session handoff — 2026-11-26 → 11-27 (operad: heat, notifications, unfreeze, restarts)
+
+State: operad `main` = origin `c74498bd`, CI green on all 7 jobs. The live daemon
+runs `1b8964b2` (the later commit only changes tests). operad's uncommitted
+`.claude/settings.json` and `sprints/advance.sh` belong to another session.
+
+## Done (operad)
+- **Status notification at most once a minute** (`b008113d`): it was re-posted on every
+  active/idle flip, about every 17 s (94 posts in 27 min with the screen off, each a
+  termux-api app_process). Newest state is posted when the 60 s window ends. Verified live:
+  2 posts in 3 min, 59 s apart.
+- **`tmx upgrade` rebuilds the dashboard from any shell** (`af23fc85`): builds now run with
+  `cleanEnv()`, which restores `LD_PRELOAD=libtermux-exec.so`. Without it `vite`'s
+  `#!/usr/bin/env node` failed ("bad interpreter", exit 126) and the old dashboard stayed live.
+- **`tmx unfreeze <name>`** (`d2321a89`, also `POST /api/unfreeze/:name` and a keyboard-icon
+  dashboard button): SIGCONT stopped (T) processes in the session tree, leave copy/view mode,
+  re-enable pane input, clear the suspended flags. Every suspend now logs "via REST API" or
+  "via IPC (CLI)". Cause found 11-27: cleverkeys' 29 processes were SIGSTOPped for 5 h by an
+  explicit suspend nobody recorded (not memory pressure, not the user).
+- **Daemon restarts** (`1b8964b2`): a single `tmx stop <name>` is persisted (`user_stops` in
+  state.json) and boot leaves it stopped until `tmx start <name>`; boot adopts sessions already
+  live in tmux that recency would not start; `cmdOpen` only reuses same-runtime sessions at a
+  path and names `<dir>-claude` when a service owns the directory name.
+- **x2d**: the bare service is `enabled = false` in `~/.config/tmx/tmx.toml` (user's request;
+  backup in `$PREFIX/tmp/tmx.toml.bak-*`). The user's x2d Claude was running inside tmux session
+  `match`; renamed and registered as **`x2d-claude`** (same process). `match` is user-stopped.
+- Memory sweep 11-26: killed a hung termux-notification, 3 stale x2d `_mobile_daemon.py` and one
+  headless Chromium tree (~690 MB). Heat 11-26: Termux was 86% of battery use (wake lock held the
+  whole time, swapping, a cellular radio kept awake by small packets on Wi-Fi).
+
+## Open / TODO
+- `termux-x11` (~100 MB) runs after every restart; `playwright` depends on it, so it is
+  deliberately not user-stopped.
+- Don't unpin a service with `autostart off`: it records a manual close for the PATH, which also
+  hides a Claude session in the same directory. Use `enabled = false` or `tmx stop`.
+- The dashboard's 12 px Stop and Pause icons sit next to each other on phones; worth larger
+  targets or a confirm on Pause (not changed).
+- The remaining unknown: what sent cleverkeys' SIGSTOP at 00:37 on 11-27. The new suspend-source
+  logging will name the path next time.
+
 # Session handoff — 2026-11-27 (package audit: bridge 1.7.1, extension 1.13.1, termux-tools 1.1.2)
 
 ## Done
@@ -114,10 +154,7 @@ extension files are deployed to `/data/local/tmp/cfc-ext` and loaded.
 
 # Session handoff — 2026-11-10 → 11-26 (phone-share, CFC freezer, operad CI)
 
-State (as of 11-26): termux-tools `main` = origin (`0e24605`) plus this handoff entry;
-operad `main` = origin (`ca3b4dea`) plus the CHANGELOG commit `a9f984b9`
-(both unpushed). operad's uncommitted `.claude/settings.json` and
-`sprints/advance.sh` belong to another session.
+State: all of it is pushed (termux-tools and operad, 11-26/27).
 
 ## Done
 - **phone-share on the SM-X730 tablet (192.168.0.68)** — 8022 and 8023 work, via
@@ -142,9 +179,8 @@ operad `main` = origin (`ca3b4dea`) plus the CHANGELOG commit `a9f984b9`
 ## Open / TODO
 - ~~CFC end-to-end test of the thaw~~ — done 11-27: production log shows sweeps
   exempting renderers; a bridge sweep thawed a deliberately frozen renderer.
-- `captureScreenshot()`'s `Page.bringToFront` **foregrounds the Edge app** (measured;
-  the old "without foregrounding" note was wrong). TODO in `claude-chrome-bridge.ts`:
-  restore the prior activity after capture, or a no-foreground mode.
+- ~~`captureScreenshot()`'s `Page.bringToFront` foregrounds the Edge app~~ — fixed by
+  `2599fb3`/`65e3f2f` (bridge 1.7.0): screenshots and wakes bring back the previous task.
 - A thawed hidden tab is still throttled (timers ~1/min, no rAF): page JS waiting on
   those stays slow.
 - Each sticky-unfrozen renderer keeps running while Edge is backgrounded; watch for a
